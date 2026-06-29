@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import Ajv, { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
 import type { ToolDefinition, ToolInvocation, ToolResult, ActionProposal } from './agent.types';
@@ -33,7 +33,7 @@ export class AgentService implements OnModuleInit {
     private readonly settingsService: SettingsService,
     private readonly proposalService: ProposalService,
     private readonly schedulerService: SchedulerService,
-    private readonly scheduledAnalysisService: ScheduledAnalysisService,
+    @Inject(forwardRef(() => ScheduledAnalysisService)) private readonly scheduledAnalysisService: ScheduledAnalysisService,
     private readonly auditService: AuditService,
   ) {
     this.ajv = new Ajv({ allErrors: true });

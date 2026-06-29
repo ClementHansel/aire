@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, forwardRef } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { SettingsService } from '../settings/settings.service';
@@ -66,7 +66,7 @@ export class ScheduledAnalysisService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly settingsService: SettingsService,
     private readonly llmRouterService: LLMRouterService,
-    private readonly agentService: AgentService,
+    @Inject(forwardRef(() => AgentService)) private readonly agentService: AgentService,
     private readonly auditService: AuditService,
   ) {}
 
