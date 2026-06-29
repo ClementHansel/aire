@@ -11,6 +11,7 @@
  */
 
 import pg from 'pg';
+import bcrypt from 'bcryptjs';
 
 const { Client } = pg;
 
@@ -70,8 +71,10 @@ async function seed(): Promise<void> {
     console.log('  ✓ Outlets created (2)');
 
     // Users
-    // Password hash for "password123" using bcrypt
-    const demoPasswordHash = '$2b$10$dummyhashfordevseeding000000000000000000000000000000';
+    // Real bcrypt hashes generated at runtime.
+    // Login password: "password123"  |  Admin PIN: "1234"
+    const demoPasswordHash = await bcrypt.hash('password123', 10);
+    const demoPinHash = await bcrypt.hash('1234', 10);
 
     await client.query(`
       INSERT INTO users (id, tenant_id, outlet_id, email, password_hash, name, role, admin_pin_hash, is_active)
@@ -84,7 +87,7 @@ async function seed(): Promise<void> {
           $2,
           'Demo Owner',
           'tenant_owner',
-          '$2b$10$pinhashdemo000000000000000000000000000000000000000000',
+          $3,
           true
         ),
         (
@@ -95,7 +98,7 @@ async function seed(): Promise<void> {
           $2,
           'Admin Sudirman',
           'outlet_admin',
-          '$2b$10$pinhashdemo000000000000000000000000000000000000000000',
+          $3,
           true
         ),
         (
@@ -109,9 +112,9 @@ async function seed(): Promise<void> {
           NULL,
           true
         )
-      ON CONFLICT (email) DO NOTHING;
-    `, [tenantId, demoPasswordHash]);
-    console.log('  ✓ Users created (3)');
+      ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_active = true;
+    `, [tenantId, demoPasswordHash, demoPinHash]);
+    console.log('  ✓ Users created (3) — login: owner@demo.com / password123');
 
     // Services
     await client.query(`

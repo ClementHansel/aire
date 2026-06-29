@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 
 const navItems = [
   { id: 'overview', label: 'Overview', href: '/dashboard', icon: '📊' },
@@ -11,8 +13,31 @@ const navItems = [
   { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
 ];
 
+function initials(name: string): string {
+  return name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase();
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      window.location.href = '/';
+      return;
+    }
+    setUser(getUser());
+    setChecked(true);
+  }, []);
+
+  if (!checked) {
+    return (
+      <div className="min-h-screen bg-surface flex items-center justify-center">
+        <p className="text-sm text-text-muted">Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface flex" data-testid="dashboard-layout">
@@ -52,15 +77,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Bottom section */}
         <div className="p-4 border-t border-border">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
-              <span className="text-xs font-medium text-primary-700">TO</span>
+              <span className="text-xs font-medium text-primary-700">{user ? initials(user.name) : '··'}</span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-text-primary truncate">Tenant Owner</p>
-              <p className="text-xs text-text-muted truncate">owner@aire.com</p>
+              <p className="text-sm font-medium text-text-primary truncate">{user?.name ?? 'User'}</p>
+              <p className="text-xs text-text-muted truncate capitalize">{user?.role?.replace(/_/g, ' ') ?? ''}</p>
             </div>
           </div>
+          <button onClick={logout} className="btn-ghost w-full text-xs justify-start">
+            ↩ Sign out
+          </button>
         </div>
       </aside>
 
@@ -74,10 +102,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             <span className="font-semibold text-sm text-text-primary">AIRE</span>
           </Link>
+          <button onClick={logout} className="text-xs text-text-secondary">Sign out</button>
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-6 lg:p-8 overflow-auto" data-testid="dashboard-content">
+        <main className="flex-1 p-6 lg:p-8 overflow-auto pb-20 lg:pb-8" data-testid="dashboard-content">
           {children}
         </main>
 

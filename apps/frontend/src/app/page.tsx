@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { api } from '@/lib/api';
+import { setSession, type AuthSession } from '@/lib/auth';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState('owner@demo.com');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -14,20 +16,14 @@ export default function LoginPage() {
     setError('');
 
     try {
-      // TODO: Replace with actual auth API call
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (res.ok) {
-        window.location.href = '/dashboard';
-      } else {
-        setError('Invalid email or password');
-      }
-    } catch {
-      setError('Unable to connect. Please try again.');
+      const session = await api.post<AuthSession>('/auth/login', { email, password });
+      setSession(session);
+      window.location.href = '/dashboard';
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Login failed';
+      setError(message.includes('credentials') || message.includes('401')
+        ? 'Invalid email or password'
+        : message);
     } finally {
       setLoading(false);
     }
@@ -118,9 +114,7 @@ export default function LoginPage() {
         {/* Demo access hint */}
         <div className="mt-6 text-center">
           <p className="text-xs text-text-muted">
-            Demo: Navigate to{' '}
-            <a href="/dashboard" className="text-primary-500 hover:underline">/dashboard</a>
-            {' '}to explore
+            Demo credentials: <span className="font-medium">owner@demo.com</span> / <span className="font-medium">password123</span>
           </p>
         </div>
       </div>
