@@ -38,14 +38,21 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Use pnpm deploy to create a self-contained deployment
+# Copy all build artifacts with workspace structure intact
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/backend/node_modules ./apps/backend/node_modules
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
 COPY --from=build /app/apps/backend/package.json ./apps/backend/
 COPY --from=build /app/packages/shared ./packages/shared
 COPY --from=build /app/package.json ./
-COPY --from=build /app/pnpm-workspace.yaml ./
+
+# Replace workspace symlink with actual content for @aire/shared
+RUN rm -rf /app/apps/backend/node_modules/@aire/shared 2>/dev/null; \
+    rm -rf /app/node_modules/@aire/shared 2>/dev/null; \
+    mkdir -p /app/node_modules/@aire && \
+    cp -r /app/packages/shared /app/node_modules/@aire/shared && \
+    mkdir -p /app/apps/backend/node_modules/@aire && \
+    cp -r /app/packages/shared /app/apps/backend/node_modules/@aire/shared
 
 WORKDIR /app/apps/backend
 EXPOSE 4000
