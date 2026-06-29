@@ -43,4 +43,4 @@ COPY --from=build /app/apps/iot-gateway/package.json ./
 COPY --from=build /app/apps/iot-gateway/node_modules ./node_modules
 
 EXPOSE 4002
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/index.js"]
