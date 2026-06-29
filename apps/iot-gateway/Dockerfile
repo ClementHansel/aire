@@ -40,11 +40,9 @@ ENV NODE_ENV=production
 
 COPY --from=build /app/apps/iot-gateway/dist ./dist
 COPY --from=build /app/apps/iot-gateway/package.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/iot-gateway/node_modules ./apps-node_modules
 
-# Merge workspace node_modules — mqtt is hoisted to root
-RUN if [ -d apps-node_modules ]; then cp -r apps-node_modules/* node_modules/ 2>/dev/null || true; rm -rf apps-node_modules; fi
+# Install production dependency directly (mqtt is the only runtime dep)
+RUN npm install --omit=dev --ignore-scripts 2>/dev/null
 
 EXPOSE 4002
 CMD ["node", "dist/index.js"]
