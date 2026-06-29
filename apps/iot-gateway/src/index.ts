@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { AireMqttClient } from './mqtt-client';
 import { MessageHandler } from './message-handler';
 import { IoTGatewayConfig, BayStatusEvent } from './types';
@@ -42,6 +43,26 @@ function createWebSocketBroadcaster(): (event: BayStatusEvent) => void {
 }
 
 /**
+ * Start a minimal HTTP health check server.
+ */
+function startHealthServer(port: number, mqttClient: AireMqttClient): http.Server {
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health' && req.method === 'GET') {
+      const status = mqttClient.isConnected() ? 'ok' : 'degraded';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status, service: 'iot-gateway', mqtt_connected: mqttClient.isConnected() }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  server.listen(port, () => {
+    console.log(`[IoT Gateway] Health endpoint listening on :${port}/health`);
+  });
+  return server;
+}
+
+/**
  * Start the IoT gateway service.
  */
 async function main(): Promise<void> {
@@ -73,9 +94,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Start HTTP health endpoint
+  const healthServer = startHealthServer(config.websocketPort, mqttClient);
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log('[IoT Gateway] Shutting down...');
+    healthServer.close();
     await mqttClient.disconnect();
     process.exit(0);
   };

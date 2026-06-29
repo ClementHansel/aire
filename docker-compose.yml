@@ -162,58 +162,6 @@ services:
     networks:
       - aire-network
 
-  worker:
-    build:
-      context: .
-      dockerfile: ./apps/backend/Dockerfile
-      target: development
-    container_name: aire-worker
-    restart: unless-stopped
-    command: ["node", "dist/worker.js"]
-    environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgres://${POSTGRES_USER:-aire}:${POSTGRES_PASSWORD:-aire_secret}@postgres:5432/${POSTGRES_DB:-aire}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-aire_redis_secret}@redis:6379
-      MINIO_ENDPOINT: minio
-      MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-aire_minio}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-aire_minio_secret}
-      MINIO_BUCKET: ${MINIO_BUCKET:-aire-storage}
-      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-}
-      WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - aire-network
-
-  alpr:
-    build:
-      context: ./apps/alpr
-      dockerfile: Dockerfile
-    container_name: aire-alpr
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-aire}:${POSTGRES_PASSWORD:-aire_secret}@postgres:5432/${POSTGRES_DB:-aire}
-      MINIO_ENDPOINT: minio
-      MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-aire_minio}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-aire_minio_secret}
-      MINIO_BUCKET: ${MINIO_BUCKET:-aire-storage}
-      ALPR_CONFIDENCE_HIGH: ${ALPR_CONFIDENCE_HIGH:-0.9}
-      ALPR_CONFIDENCE_LOW: ${ALPR_CONFIDENCE_LOW:-0.5}
-    ports:
-      - "${ALPR_PORT:-5000}:5000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    networks:
-      - aire-network
-
   iot-gateway:
     build:
       context: .
@@ -239,38 +187,6 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4002/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    networks:
-      - aire-network
-
-  ai-service:
-    build:
-      context: .
-      dockerfile: ./apps/ai-service/Dockerfile
-      target: development
-    container_name: aire-ai-service
-    restart: unless-stopped
-    environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      PORT: 4003
-      DATABASE_URL: postgres://${POSTGRES_USER:-aire}:${POSTGRES_PASSWORD:-aire_secret}@postgres:5432/${POSTGRES_DB:-aire}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-aire_redis_secret}@redis:6379
-      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-openai/gpt-4o-mini}
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-    ports:
-      - "${AI_SERVICE_PORT:-4003}:4003"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4003/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
