@@ -9,6 +9,7 @@ import { ScheduledAnalysisService } from './scheduled-analysis.service';
 import { SettingsModule } from '../settings/settings.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationModule } from '../notification/notification.module';
+import { DatabasePoolProvider } from '../auth/database.provider';
 
 /**
  * AI Agent Module.
@@ -22,7 +23,7 @@ import { NotificationModule } from '../notification/notification.module';
 @Module({
   imports: [SettingsModule, AuditModule, NotificationModule],
   controllers: [AgentController],
-  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService],
+  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, DatabasePoolProvider],
   exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService],
 })
 export class AgentModule {}
