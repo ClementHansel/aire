@@ -3,6 +3,7 @@ import {
   Get,
   Query,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   JWTPayload,
@@ -12,10 +13,12 @@ import {
   VALID_ORDER_STATUSES,
   Role,
 } from '@aire/shared';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { OrderListService } from './order-list.service';
 
 @Controller('api/orders')
+@UseGuards(JwtAuthGuard)
 export class OrderController {
   constructor(private readonly orderListService: OrderListService) {}
 

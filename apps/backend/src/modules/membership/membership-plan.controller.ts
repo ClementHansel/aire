@@ -10,14 +10,17 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { JWTPayload, ERR_VALIDATION_FAILED } from '@aire/shared';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { MembershipPlanService } from './membership-plan.service';
 import { CreateMembershipPlanDto, UpdateMembershipPlanDto } from './dto';
 import { MembershipPlan } from './interfaces';
 
 @Controller('api/membership-plans')
+@UseGuards(JwtAuthGuard)
 export class MembershipPlanController {
   constructor(private readonly membershipPlanService: MembershipPlanService) {}
 

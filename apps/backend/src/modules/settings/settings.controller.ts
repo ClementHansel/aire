@@ -9,6 +9,7 @@ import {
 import { Role, JWTPayload } from '@aire/shared';
 import { Roles, CurrentUser } from '../../common/decorators';
 import { RolesGuard, RlsContextGuard } from '../../common/guards';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { SettingsService } from './settings.service';
 import type { TenantAutomationSettings } from './settings.interfaces';
 
@@ -22,7 +23,7 @@ import type { TenantAutomationSettings } from './settings.interfaces';
  * Requirements: 1.5, 12.2
  */
 @Controller('api/settings')
-@UseGuards(RlsContextGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
 @Roles(Role.TenantOwner)
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}

@@ -5,8 +5,10 @@ import {
   Body,
   Query,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { JWTPayload } from '@aire/shared';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { AIService, AIResponse, Anomaly } from './ai.service';
 
@@ -27,6 +29,7 @@ interface QueryInsightsBody {
  * Requirements: 32.1, 32.2
  */
 @Controller('api/ai')
+@UseGuards(JwtAuthGuard)
 export class AIController {
   constructor(private readonly aiService: AIService) {}
 

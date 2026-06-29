@@ -8,8 +8,10 @@ import {
   Body,
   Query,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { JWTPayload } from '@aire/shared';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import {
   InvoiceService,
@@ -24,6 +26,7 @@ import {
 const VALID_INVOICE_STATUSES: InvoiceStatus[] = ['draft', 'issued', 'paid', 'cancelled'];
 
 @Controller('api')
+@UseGuards(JwtAuthGuard)
 export class InvoiceController {
   constructor(private readonly invoiceService: InvoiceService) {}
 

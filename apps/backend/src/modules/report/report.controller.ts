@@ -4,9 +4,11 @@ import {
   Query,
   Res,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { SummaryResponse, JWTPayload, Role } from '@aire/shared';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { ReportService } from './report.service';
 
@@ -20,6 +22,7 @@ import { ReportService } from './report.service';
  * Requirements: 23.1, 23.2, 23.3, 23.4, 23.5, 23.6
  */
 @Controller('api/reports')
+@UseGuards(JwtAuthGuard)
 export class ReportController {
   constructor(private readonly reportService: ReportService) {}
 
