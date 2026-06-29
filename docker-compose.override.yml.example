@@ -1,0 +1,38 @@
+# =============================================================================
+# Docker Compose Override - Development Extras
+# =============================================================================
+# Copy to docker-compose.override.yml to enable development tools.
+# This file is git-ignored by default.
+
+services:
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: aire-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@aire.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_LISTEN_PORT: 5050
+    ports:
+      - "5050:5050"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aire-network
+
+  # Redis Commander for Redis inspection
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: aire-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:${REDIS_PASSWORD:-aire_redis_secret}
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - aire-network

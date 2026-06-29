@@ -1,0 +1,61 @@
+# ─── Dependencies ──────────────────────────────────────────────────
+node_modules/
+
+# ─── Build Outputs ────────────────────────────────────────────────
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# ─── Environment & Secrets ────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+
+# ─── Kiro (AI agent workspace state) ─────────────────────────────
+.kiro/
+
+# ─── IDE & Editor ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS Generated ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# ─── Test & Coverage ──────────────────────────────────────────────
+coverage/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# ─── Docker ───────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ─── Infrastructure Secrets ───────────────────────────────────────
+infrastructure/nginx/ssl/*.pem
+infrastructure/nginx/ssl/*.key
+infrastructure/nginx/ssl/*.crt
+
+# ─── Logs ─────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Misc ─────────────────────────────────────────────────────────
+*.tgz
+*.gz
+.turbo/
+.vercel/
+.cache/

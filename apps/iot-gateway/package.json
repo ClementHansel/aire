@@ -1,0 +1,23 @@
+{
+  "name": "@aire/iot-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "fast-check": "^3.23.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

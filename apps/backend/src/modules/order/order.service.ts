@@ -1,0 +1,526 @@
+import {
+  Injectable,
+  Inject,
+  BadRequestException,
+} from '@nestjs/common';
+import { Pool } from 'pg';
+import { DATABASE_POOL } from '../auth/database.provider';
+import {
+  CreateOrderRequest,
+  OrderStatus,
+  JWTPayload,
+  validateOrder,
+  OrderValidationInput,
+  calculateCartSummary,
+  CartItem,
+  CartConfig,
+  applyMembershipPricing,
+  MembershipBenefit,
+  assignCustomerTags,
+  CustomerTag,
+  ERR_VALIDATION_FAILED,
+} from '@aire/shared';
+import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
+
+/**
+ * Database row shape for orders table.
+ */
+interface OrderRow {
+  id: string;
+  tenant_id: string;
+  outlet_id: string;
+  operator_id: string;
+  customer_id: string | null;
+  order_number: string;
+  status: string;
+  customer_name: string;
+  customer_phone: string;
+  license_plate: string | null;
+  vehicle_brand: string | null;
+  vehicle_model: string | null;
+  subtotal: string;
+  service_charge: string;
+  tax: string;
+  voucher_discount: string;
+  promo_discount: string;
+  total: string;
+  payment_method: string | null;
+  payment_reference: string | null;
+  amount_received: string | null;
+  change_amount: string | null;
+  note: string | null;
+  membership_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Database row shape for services table.
+ */
+interface ServiceRow {
+  id: string;
+  name: string;
+  category: string;
+  price: string;
+  is_main_service: boolean;
+  is_active: boolean;
+}
+
+/**
+ * Database row shape for membership with benefits.
+ */
+interface MembershipRow {
+  id: string;
+  plan_id: string;
+  status: string;
+  uses_count: number;
+  max_uses: number;
+  daily_limit: number;
+}
+
+interface MembershipPlanRow {
+  id: string;
+  free_service_ids: string[] | null;
+  discounted_services: Array<{ serviceId: string; discountPct: number }>;
+  name: string;
+}
+
+/**
+ * Represents the created order response returned to the client.
+ */
+export interface CreatedOrderResponse {
+  id: string;
+  orderNumber: string;
+  status: OrderStatus;
+  customerName: string;
+  customerPhone: string;
+  licensePlate: string | null;
+  vehicleBrand: string | null;
+  vehicleModel: string | null;
+  subtotal: number;
+  serviceCharge: number;
+  tax: number;
+  voucherDiscount: number;
+  promoDiscount: number;
+  total: number;
+  note: string | null;
+  membershipId: string | null;
+  items: Array<{
+    id: string;
+    serviceId: string;
+    serviceName: string;
+    quantity: number;
+    unitPrice: number;
+    discount: number;
+    subtotal: number;
+    isMemberPricing: boolean;
+  }>;
+  tags: CustomerTag[];
+  createdAt: Date;
+}
+
+@Injectable()
+export class OrderService {
+  private readonly stateMachine = new OrderStateMachine();
+
+  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Creates a new order.
+   *
+   * 1. Validates input using shared validateOrder
+   * 2. Looks up services by ID to get prices and isMainService flags
+   * 3. Applies membership pricing if membershipId is provided
+   * 4. Applies voucher discounts (placeholder - voucher resolution is in voucher module)
+   * 5. Calculates cart summary
+   * 6. Creates order record with status 'ordered'
+   * 7. Creates order_items records
+   * 8. Returns the created order with ID and calculated totals
+   */
+  async createOrder(
+    request: CreateOrderRequest,
+    user: JWTPayload,
+  ): Promise<CreatedOrderResponse> {
+    // Step 1: Look up services by ID to get prices and isMainService flags
+    const serviceIds = request.items.map((item) => item.serviceId);
+    const services = await this.lookupServices(serviceIds);
+
+    // Step 2: Build validation input
+    const validationInput: OrderValidationInput = {
+      customerName: request.customer.name,
+      customerPhone: request.customer.phone,
+      items: request.items.map((item) => {
+        const service = services.get(item.serviceId);
+        return {
+          serviceId: item.serviceId,
+          quantity: item.quantity,
+          isMainService: service?.is_main_service ?? false,
+        };
+      }),
+      voucherCodes: request.voucherCodes,
+    };
+
+    // If membership is provided, look up plates for validation
+    if (request.membershipId) {
+      const memberPlates = await this.getMembershipPlates(request.membershipId);
+      validationInput.memberPlates = memberPlates;
+      validationInput.selectedPlate = request.selectedPlate;
+    }
+
+    // Step 3: Run validation
+    const validationResult = validateOrder(validationInput);
+    if (!validationResult.valid) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: ERR_VALIDATION_FAILED,
+        message: 'Order validation failed',
+        details: validationResult.errors,
+      });
+    }
+
+    // Step 4: Build cart items from services
+    let cartItems: CartItem[] = request.items.map((item) => {
+      const service = services.get(item.serviceId);
+      if (!service) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: ERR_VALIDATION_FAILED,
+          message: `Service not found: ${item.serviceId}`,
+        });
+      }
+      return {
+        serviceId: item.serviceId,
+        serviceName: service.name,
+        quantity: item.quantity,
+        unitPrice: parseFloat(service.price),
+        discount: item.manualDiscount ?? 0,
+        isMainService: service.is_main_service,
+      };
+    });
+
+    // Step 5: Apply membership pricing if membershipId is provided
+    let membershipApplied = false;
+    if (request.membershipId) {
+      const benefits = await this.getMembershipBenefits(request.membershipId);
+      if (benefits.length > 0) {
+        const pricingResult = applyMembershipPricing(cartItems, benefits);
+        cartItems = pricingResult.items;
+        membershipApplied = pricingResult.appliedPricing.length > 0;
+      }
+    }
+
+    // Step 6: Apply voucher discounts (calculate voucher discount amount)
+    let voucherDiscount = 0;
+    if (request.voucherCodes && request.voucherCodes.length > 0) {
+      voucherDiscount = await this.calculateVoucherDiscount(
+        request.voucherCodes,
+        cartItems,
+      );
+    }
+
+    // Step 7: Get outlet config for charges
+    const outletConfig = await this.getOutletConfig(user.outlet_id!);
+
+    // Step 8: Calculate cart summary
+    const cartSummary = calculateCartSummary(
+      cartItems,
+      outletConfig,
+      voucherDiscount,
+      0, // promo discount (campaigns handled separately)
+    );
+
+    // Step 9: Generate order number
+    const orderNumber = await this.generateOrderNumber(user.outlet_id!);
+
+    // Step 10: Create order and items in a transaction
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Insert order
+      const orderResult = await client.query<OrderRow>(
+        `INSERT INTO orders
+          (tenant_id, outlet_id, operator_id, order_number, status,
+           customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
+           subtotal, service_charge, tax, voucher_discount, promo_discount, total,
+           note, membership_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         RETURNING *`,
+        [
+          user.tenant_id,
+          user.outlet_id,
+          user.sub,
+          orderNumber,
+          OrderStatus.Ordered,
+          request.customer.name,
+          request.customer.phone,
+          request.customer.licensePlate ?? request.selectedPlate ?? null,
+          request.customer.brand ?? null,
+          request.customer.model ?? null,
+          cartSummary.subtotal,
+          cartSummary.serviceCharge,
+          cartSummary.tax,
+          cartSummary.voucherDiscount,
+          cartSummary.promoDiscount,
+          cartSummary.total,
+          request.note ?? null,
+          request.membershipId ?? null,
+        ],
+      );
+
+      const order = orderResult.rows[0]!;
+
+      // Insert order items
+      const orderItems: Array<{
+        id: string;
+        serviceId: string;
+        serviceName: string;
+        quantity: number;
+        unitPrice: number;
+        discount: number;
+        subtotal: number;
+        isMemberPricing: boolean;
+      }> = [];
+
+      for (let i = 0; i < cartItems.length; i++) {
+        const cartItem = cartItems[i]!;
+        const itemSubtotal = Math.max(
+          0,
+          cartItem.quantity * cartItem.unitPrice - cartItem.discount,
+        );
+        const originalItem = request.items[i]!;
+        const isMemberPricing =
+          membershipApplied && cartItem.discount > (originalItem.manualDiscount ?? 0);
+
+        const itemResult = await client.query<{ id: string }>(
+          `INSERT INTO order_items
+            (order_id, service_id, quantity, unit_price, discount, subtotal,
+             is_member_pricing, membership_id, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id`,
+          [
+            order.id,
+            cartItem.serviceId,
+            cartItem.quantity,
+            cartItem.unitPrice,
+            cartItem.discount,
+            itemSubtotal,
+            isMemberPricing,
+            isMemberPricing ? request.membershipId : null,
+            i,
+          ],
+        );
+
+        orderItems.push({
+          id: itemResult.rows[0]!.id,
+          serviceId: cartItem.serviceId,
+          serviceName: cartItem.serviceName,
+          quantity: cartItem.quantity,
+          unitPrice: cartItem.unitPrice,
+          discount: cartItem.discount,
+          subtotal: itemSubtotal,
+          isMemberPricing,
+        });
+      }
+
+      // Record initial status log entry
+      const logEntry: StatusLogEntry = this.stateMachine.createLogEntry(
+        order.id,
+        OrderStatus.Ordered,
+        OrderStatus.Ordered,
+        user.sub,
+      );
+
+      await client.query(
+        `INSERT INTO order_status_logs (order_id, from_status, to_status, operator_id, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          logEntry.orderId,
+          logEntry.fromStatus,
+          logEntry.toStatus,
+          logEntry.operatorId,
+          logEntry.timestamp,
+        ],
+      );
+
+      await client.query('COMMIT');
+
+      // Determine customer type tags (will be persisted on payment)
+      const tags = assignCustomerTags({
+        hasVoucherPackPurchase: false,
+        hasNewMembership: false,
+        hasMembershipRenewal: false,
+        hasVoucherRedemption:
+          (request.voucherCodes?.length ?? 0) > 0 && voucherDiscount > 0,
+        hasMemberBenefitsApplied: membershipApplied,
+      });
+
+      return {
+        id: order.id,
+        orderNumber: order.order_number,
+        status: OrderStatus.Ordered,
+        customerName: order.customer_name,
+        customerPhone: order.customer_phone,
+        licensePlate: order.license_plate,
+        vehicleBrand: order.vehicle_brand,
+        vehicleModel: order.vehicle_model,
+        subtotal: parseFloat(order.subtotal),
+        serviceCharge: parseFloat(order.service_charge),
+        tax: parseFloat(order.tax),
+        voucherDiscount: parseFloat(order.voucher_discount),
+        promoDiscount: parseFloat(order.promo_discount),
+        total: parseFloat(order.total),
+        note: order.note,
+        membershipId: order.membership_id,
+        items: orderItems,
+        tags,
+        createdAt: order.created_at,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ─── Private Helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Looks up services by their IDs and returns a map of serviceId → ServiceRow.
+   */
+  private async lookupServices(
+    serviceIds: string[],
+  ): Promise<Map<string, ServiceRow>> {
+    if (serviceIds.length === 0) {
+      return new Map();
+    }
+
+    const placeholders = serviceIds.map((_, i) => `$${i + 1}`).join(', ');
+    const result = await this.pool.query<ServiceRow>(
+      `SELECT id, name, category, price, is_main_service, is_active
+       FROM services
+       WHERE id IN (${placeholders})`,
+      serviceIds,
+    );
+
+    const map = new Map<string, ServiceRow>();
+    for (const row of result.rows) {
+      map.set(row.id, row);
+    }
+    return map;
+  }
+
+  /**
+   * Gets membership plates for validation (multi-plate selection check).
+   */
+  private async getMembershipPlates(membershipId: string): Promise<string[]> {
+    const result = await this.pool.query<{ plate_normalized: string }>(
+      'SELECT plate_normalized FROM membership_plates WHERE membership_id = $1',
+      [membershipId],
+    );
+    return result.rows.map((r) => r.plate_normalized);
+  }
+
+  /**
+   * Gets membership benefits for applying pricing.
+   */
+  private async getMembershipBenefits(
+    membershipId: string,
+  ): Promise<MembershipBenefit[]> {
+    // Look up the membership and its plan
+    const membershipResult = await this.pool.query<MembershipRow>(
+      `SELECT id, plan_id, status, uses_count, max_uses, daily_limit
+       FROM memberships WHERE id = $1 AND status = 'active'`,
+      [membershipId],
+    );
+
+    if (membershipResult.rows.length === 0) {
+      return [];
+    }
+
+    const membership = membershipResult.rows[0]!;
+
+    // Get the plan details
+    const planResult = await this.pool.query<MembershipPlanRow>(
+      `SELECT id, name, free_service_ids, discounted_services
+       FROM membership_plans WHERE id = $1`,
+      [membership.plan_id],
+    );
+
+    if (planResult.rows.length === 0) {
+      return [];
+    }
+
+    const plan = planResult.rows[0]!;
+
+    return [
+      {
+        membershipId: membership.id,
+        planName: plan.name,
+        freeServiceIds: plan.free_service_ids ?? [],
+        discountedServices: plan.discounted_services ?? [],
+      },
+    ];
+  }
+
+  /**
+   * Calculates voucher discount amount.
+   * This is a simplified implementation - full voucher resolution
+   * happens in the voucher module. Here we look up applied voucher values.
+   */
+  private async calculateVoucherDiscount(
+    _voucherCodes: string[],
+    _cartItems: CartItem[],
+  ): Promise<number> {
+    // Voucher discount calculation is handled by the voucher module
+    // For now, return 0 as the voucher module will handle full resolution
+    // In a complete implementation, this would call the voucher service
+    return 0;
+  }
+
+  /**
+   * Gets outlet configuration for service charge and tax percentages.
+   */
+  private async getOutletConfig(outletId: string): Promise<CartConfig> {
+    const result = await this.pool.query<{ settings: Record<string, unknown> }>(
+      'SELECT settings FROM outlets WHERE id = $1',
+      [outletId],
+    );
+
+    if (result.rows.length === 0) {
+      // Default config if outlet not found
+      return { serviceChargePct: 0, taxPct: 0 };
+    }
+
+    const settings = result.rows[0]!.settings ?? {};
+    return {
+      serviceChargePct:
+        typeof settings.service_charge_pct === 'number'
+          ? settings.service_charge_pct
+          : 0,
+      taxPct: typeof settings.tax_pct === 'number' ? settings.tax_pct : 0,
+    };
+  }
+
+  /**
+   * Generates a sequential order number for the outlet per day.
+   * Format: ORD-YYYYMMDD-NNN
+   */
+  private async generateOrderNumber(outletId: string): Promise<string> {
+    const today = new Date();
+    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+
+    const result = await this.pool.query<{ count: string }>(
+      `SELECT COUNT(*) as count FROM orders
+       WHERE outlet_id = $1
+       AND DATE(created_at) = CURRENT_DATE`,
+      [outletId],
+    );
+
+    const count = parseInt(result.rows[0]!.count, 10) + 1;
+    const paddedCount = count.toString().padStart(3, '0');
+
+    return `ORD-${dateStr}-${paddedCount}`;
+  }
+}

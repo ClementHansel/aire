@@ -1,0 +1,30 @@
+{
+  "name": "aire-operations-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AIRE Operations Platform - Multi-tenant POS and operations management system",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @aire/backend dev & pnpm --filter @aire/frontend dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "test": "pnpm -r test",
+    "test:watch": "pnpm -r test:watch",
+    "db:migrate": "pnpm --filter @aire/database migrate",
+    "db:migrate:status": "pnpm --filter @aire/database migrate:status",
+    "db:seed": "pnpm --filter @aire/database seed",
+    "db:reset": "pnpm --filter @aire/database reset"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.1",
+    "typescript-eslint": "^8.62.0"
+  }
+}

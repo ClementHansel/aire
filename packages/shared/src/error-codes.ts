@@ -1,0 +1,106 @@
+/**
+ * Machine-readable error codes for consistent API error handling.
+ * Format: DOMAIN_SPECIFIC_ERROR
+ */
+
+// ─── Authentication Errors ────────────────────────────────────────────────────
+
+export const ERR_AUTH_INVALID_CREDENTIALS = 'AUTH_INVALID_CREDENTIALS';
+export const ERR_AUTH_TOKEN_EXPIRED = 'AUTH_TOKEN_EXPIRED';
+export const ERR_AUTH_TOKEN_INVALID = 'AUTH_TOKEN_INVALID';
+export const ERR_AUTH_REFRESH_TOKEN_INVALID = 'AUTH_REFRESH_TOKEN_INVALID';
+export const ERR_AUTH_REFRESH_TOKEN_EXPIRED = 'AUTH_REFRESH_TOKEN_EXPIRED';
+export const ERR_AUTH_INSUFFICIENT_ROLE = 'AUTH_INSUFFICIENT_ROLE';
+export const ERR_AUTH_OUTLET_MISMATCH = 'AUTH_OUTLET_MISMATCH';
+export const ERR_AUTH_TENANT_MISMATCH = 'AUTH_TENANT_MISMATCH';
+
+// ─── Order Validation Errors ──────────────────────────────────────────────────
+
+export const ERR_ORDER_CUSTOMER_NAME_REQUIRED = 'ORDER_CUSTOMER_NAME_REQUIRED';
+export const ERR_ORDER_CUSTOMER_PHONE_INVALID = 'ORDER_CUSTOMER_PHONE_INVALID';
+export const ERR_ORDER_CART_EMPTY = 'ORDER_CART_EMPTY';
+export const ERR_ORDER_NO_MAIN_SERVICE = 'ORDER_NO_MAIN_SERVICE';
+export const ERR_ORDER_INVALID_SERVICE = 'ORDER_INVALID_SERVICE';
+export const ERR_ORDER_INVALID_QUANTITY = 'ORDER_INVALID_QUANTITY';
+export const ERR_ORDER_PLATE_SELECTION_REQUIRED = 'ORDER_PLATE_SELECTION_REQUIRED';
+export const ERR_ORDER_VOUCHER_MIN_ORDER = 'ORDER_VOUCHER_MIN_ORDER';
+export const ERR_ORDER_INVALID_TRANSITION = 'ORDER_INVALID_TRANSITION';
+export const ERR_ORDER_NOT_FOUND = 'ORDER_NOT_FOUND';
+export const ERR_ORDER_ALREADY_PAID = 'ORDER_ALREADY_PAID';
+export const ERR_ORDER_ALREADY_CANCELLED = 'ORDER_ALREADY_CANCELLED';
+
+// ─── Payment Errors ───────────────────────────────────────────────────────────
+
+export const ERR_PAYMENT_AMOUNT_INSUFFICIENT = 'PAYMENT_AMOUNT_INSUFFICIENT';
+export const ERR_PAYMENT_REFERENCE_REQUIRED = 'PAYMENT_REFERENCE_REQUIRED';
+export const ERR_PAYMENT_METHOD_INVALID = 'PAYMENT_METHOD_INVALID';
+export const ERR_PAYMENT_GATEWAY_ERROR = 'PAYMENT_GATEWAY_ERROR';
+export const ERR_PAYMENT_ALREADY_PROCESSED = 'PAYMENT_ALREADY_PROCESSED';
+
+// ─── Void Errors ──────────────────────────────────────────────────────────────
+
+export const ERR_VOID_REASON_REQUIRED = 'VOID_REASON_REQUIRED';
+export const ERR_VOID_PIN_REQUIRED = 'VOID_PIN_REQUIRED';
+export const ERR_VOID_PIN_INVALID = 'VOID_PIN_INVALID';
+export const ERR_VOID_NOT_ALLOWED = 'VOID_NOT_ALLOWED';
+
+// ─── Membership Errors ────────────────────────────────────────────────────────
+
+export const ERR_MEMBERSHIP_NOT_FOUND = 'MEMBERSHIP_NOT_FOUND';
+export const ERR_MEMBERSHIP_EXPIRED = 'MEMBERSHIP_EXPIRED';
+export const ERR_MEMBERSHIP_QUOTA_EXCEEDED = 'MEMBERSHIP_QUOTA_EXCEEDED';
+export const ERR_MEMBERSHIP_DAILY_LIMIT_REACHED = 'MEMBERSHIP_DAILY_LIMIT_REACHED';
+export const ERR_MEMBERSHIP_PLATE_NOT_REGISTERED = 'MEMBERSHIP_PLATE_NOT_REGISTERED';
+export const ERR_MEMBERSHIP_SERVICE_NOT_COVERED = 'MEMBERSHIP_SERVICE_NOT_COVERED';
+export const ERR_MEMBERSHIP_MAX_PLATES_EXCEEDED = 'MEMBERSHIP_MAX_PLATES_EXCEEDED';
+export const ERR_MEMBERSHIP_PLAN_NOT_FOUND = 'MEMBERSHIP_PLAN_NOT_FOUND';
+export const ERR_MEMBERSHIP_ONE_PLAN_PER_ORDER = 'MEMBERSHIP_ONE_PLAN_PER_ORDER';
+export const ERR_MEMBERSHIP_ALREADY_ACTIVE = 'MEMBERSHIP_ALREADY_ACTIVE';
+
+// ─── Voucher Errors ───────────────────────────────────────────────────────────
+
+export const ERR_VOUCHER_NOT_FOUND = 'VOUCHER_NOT_FOUND';
+export const ERR_VOUCHER_ALREADY_USED = 'VOUCHER_ALREADY_USED';
+export const ERR_VOUCHER_EXPIRED = 'VOUCHER_EXPIRED';
+export const ERR_VOUCHER_OUTLET_MISMATCH = 'VOUCHER_OUTLET_MISMATCH';
+export const ERR_VOUCHER_BRAND_MISMATCH = 'VOUCHER_BRAND_MISMATCH';
+export const ERR_VOUCHER_SERVICE_MISMATCH = 'VOUCHER_SERVICE_MISMATCH';
+export const ERR_VOUCHER_MIN_ORDER_NOT_MET = 'VOUCHER_MIN_ORDER_NOT_MET';
+export const ERR_VOUCHER_PACK_NOT_FOUND = 'VOUCHER_PACK_NOT_FOUND';
+
+// ─── Service Errors ───────────────────────────────────────────────────────────
+
+export const ERR_SERVICE_NOT_FOUND = 'SERVICE_NOT_FOUND';
+export const ERR_SERVICE_INACTIVE = 'SERVICE_INACTIVE';
+export const ERR_SERVICE_DUPLICATE_NAME = 'SERVICE_DUPLICATE_NAME';
+
+// ─── Customer Errors ──────────────────────────────────────────────────────────
+
+export const ERR_CUSTOMER_NOT_FOUND = 'CUSTOMER_NOT_FOUND';
+export const ERR_CUSTOMER_PHONE_DUPLICATE = 'CUSTOMER_PHONE_DUPLICATE';
+
+// ─── Bay/IoT Errors ───────────────────────────────────────────────────────────
+
+export const ERR_BAY_NOT_FOUND = 'BAY_NOT_FOUND';
+export const ERR_BAY_NOT_AVAILABLE = 'BAY_NOT_AVAILABLE';
+export const ERR_BAY_ALREADY_OCCUPIED = 'BAY_ALREADY_OCCUPIED';
+
+// ─── Tenant/Outlet Errors ─────────────────────────────────────────────────────
+
+export const ERR_TENANT_NOT_FOUND = 'TENANT_NOT_FOUND';
+export const ERR_OUTLET_NOT_FOUND = 'OUTLET_NOT_FOUND';
+export const ERR_OUTLET_INACTIVE = 'OUTLET_INACTIVE';
+
+// ─── User/Employee Errors ─────────────────────────────────────────────────────
+
+export const ERR_USER_NOT_FOUND = 'USER_NOT_FOUND';
+export const ERR_USER_EMAIL_DUPLICATE = 'USER_EMAIL_DUPLICATE';
+export const ERR_USER_ROLE_INVALID = 'USER_ROLE_INVALID';
+
+// ─── General Errors ───────────────────────────────────────────────────────────
+
+export const ERR_VALIDATION_FAILED = 'VALIDATION_FAILED';
+export const ERR_FORBIDDEN = 'FORBIDDEN';
+export const ERR_NOT_FOUND = 'NOT_FOUND';
+export const ERR_INTERNAL_SERVER_ERROR = 'INTERNAL_SERVER_ERROR';
+export const ERR_RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED';
