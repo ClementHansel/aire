@@ -34,24 +34,18 @@ RUN pnpm --filter @aire/shared build && pnpm --filter @aire/backend build
 
 # --- Production stage ---
 FROM node:20-alpine AS production
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy workspace structure for pnpm install
-COPY --from=build /app/pnpm-lock.yaml ./
-COPY --from=build /app/pnpm-workspace.yaml ./
-COPY --from=build /app/package.json ./
-COPY --from=build /app/apps/backend/package.json ./apps/backend/
-COPY --from=build /app/packages/shared/package.json ./packages/shared/
-
-# Install production deps only (flat node_modules)
-RUN pnpm install --prod --frozen-lockfile --shamefully-hoist
-
-# Copy built artifacts
+# Use pnpm deploy to create a self-contained deployment
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/backend/node_modules ./apps/backend/node_modules
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
-COPY --from=build /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build /app/apps/backend/package.json ./apps/backend/
+COPY --from=build /app/packages/shared ./packages/shared
+COPY --from=build /app/package.json ./
+COPY --from=build /app/pnpm-workspace.yaml ./
 
 WORKDIR /app/apps/backend
 EXPOSE 4000
