@@ -124,6 +124,9 @@ services:
       MIDTRANS_WEBHOOK_SECRET: ${MIDTRANS_WEBHOOK_SECRET:-}
       STRIPE_API_KEY: ${STRIPE_API_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # WhatsApp (WAHA self-host). Provider/number/session are set per-tenant in the UI.
+      WAHA_URL: ${WAHA_URL:-http://waha:3000}
+      KAPSO_URL: ${KAPSO_URL:-https://app.kapso.ai/api/v1}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-4000}:4000"
     volumes:
@@ -211,6 +214,26 @@ services:
   # Reverse Proxy
   # =============================================================================
 
+  # =============================================================================
+  # WHATSAPP GATEWAY (WAHA — unofficial, QR-scan). Optional: only needed when a
+  # tenant chooses the WAHA provider. Kapso (cloud) needs no container.
+  # =============================================================================
+
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: aire-waha
+    restart: unless-stopped
+    environment:
+      WHATSAPP_HOOK_URL: http://backend:4000/api/whatsapp/webhook
+      WHATSAPP_HOOK_EVENTS: message
+      WAHA_PRINT_QR: "false"
+    ports:
+      - "127.0.0.1:${WAHA_PORT:-3001}:3000"
+    volumes:
+      - waha-data:/app/.sessions
+    networks:
+      - aire-network
+
   nginx:
     image: nginx:alpine
     container_name: aire-nginx
@@ -249,6 +272,8 @@ volumes:
   mosquitto_data:
     driver: local
   mosquitto_log:
+    driver: local
+  waha-data:
     driver: local
 
 # =============================================================================

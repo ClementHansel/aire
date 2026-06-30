@@ -83,9 +83,7 @@ export default function AiAgentPage() {
                 <div><label className="block text-sm font-medium mb-1.5">WhatsApp number</label><input className="input-field" value={cfg.waNumber ?? ''} onChange={(e) => set('waNumber', e.target.value)} placeholder="628xxxx" /></div>
                 <div><label className="block text-sm font-medium mb-1.5">WAHA session name</label><input className="input-field" value={cfg.wahaSession ?? ''} onChange={(e) => set('wahaSession', e.target.value)} placeholder="default" /></div>
               </div>
-              <div className="rounded-lg bg-surface-sunken p-3 text-xs text-text-secondary">
-                Connect by scanning the QR from your WAHA instance for this session. (Live QR display requires the WAHA service to be running; settings are stored here.)
-              </div>
+              <WahaConnect />
             </div>
           ) : (
             <div className="space-y-3">
@@ -128,6 +126,47 @@ export default function AiAgentPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function WahaConnect() {
+  const [status, setStatus] = useState('');
+  const [qr, setQr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = async () => {
+    try { const s = await api.get<{ status: string }>('/whatsapp/status'); setStatus(s.status); } catch { setStatus('unreachable'); }
+  };
+  useEffect(() => { refresh(); }, []);
+
+  const connect = async () => {
+    setLoading(true);
+    try {
+      await api.post('/whatsapp/connect', {});
+      const res = await api.get<{ qr: string | null; status: string }>('/whatsapp/qr');
+      setQr(res.qr); setStatus(res.status);
+    } catch { setStatus('unreachable'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="rounded-lg bg-surface-sunken p-3 text-sm">
+      <div className="flex items-center justify-between">
+        <span className="text-text-secondary">Connection status: <span className="font-medium text-text-primary">{status || '—'}</span></span>
+        <div className="flex gap-2">
+          <button type="button" className="btn-ghost text-xs" onClick={refresh}>Refresh</button>
+          <button type="button" className="btn-primary text-xs py-1" onClick={connect} disabled={loading}>{loading ? 'Connecting…' : 'Connect / Get QR'}</button>
+        </div>
+      </div>
+      {qr && (
+        <div className="mt-3 text-center">
+          <p className="text-xs text-text-muted mb-2">Scan this with WhatsApp on the agent phone</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={qr} alt="WhatsApp QR" className="mx-auto rounded-lg border border-border" width={240} height={240} />
+        </div>
+      )}
+      <p className="text-xs text-text-muted mt-2">Save your number &amp; session above first. The QR comes from your WAHA service; once scanned, the agent is live.</p>
     </div>
   );
 }

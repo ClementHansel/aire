@@ -37,6 +37,7 @@ import { PromotionModule } from './modules/promotion';
 import { SettlementModule } from './modules/settlement';
 import { VehicleQueueModule } from './modules/vehicle-queue';
 import { AgentConfigModule } from './modules/agent-config';
+import { WhatsappModule } from './modules/whatsapp';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { AgentConfigModule } from './modules/agent-config';
     SettlementModule,
     VehicleQueueModule,
     AgentConfigModule,
+    WhatsappModule,
   ],
   controllers: [AppController],
   providers: [AppService],
