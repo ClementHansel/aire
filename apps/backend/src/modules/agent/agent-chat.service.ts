@@ -104,7 +104,7 @@ export class AgentChatService {
     let finalReply = '';
 
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-      const res = await this.llm.chat(tenantId, messages, { temperature: 0.4, max_tokens: 1200 });
+      const res = await this.llm.chat(tenantId, messages, { temperature: 0.4, max_tokens: 1200, outletId: outletId ?? null });
       if ('error' in res && (res as LLMErrorResponse).error === true) {
         finalReply = `I could not reach the AI model. Please check the AI connection in Settings. (${(res as LLMErrorResponse).errorMessage})`;
         break;

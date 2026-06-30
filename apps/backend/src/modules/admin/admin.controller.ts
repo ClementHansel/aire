@@ -76,6 +76,18 @@ export class AdminController {
     return this.metrics.getActivity(limit ? parseInt(limit, 10) : 50);
   }
 
+  /** GET /api/admin/timeseries?days= — platform revenue + tenant-growth series. */
+  @Get('timeseries')
+  async timeseries(@Query('days') days?: string) {
+    return this.metrics.getTimeseries(days ? parseInt(days, 10) : 30);
+  }
+
+  /** GET /api/admin/health — DB/WAHA reachability + counts. */
+  @Get('health')
+  async health() {
+    return this.metrics.getHealth();
+  }
+
   /** GET /api/admin/ai-usage?scope=global|tenant|branch&tenantId=&outletId=&days= */
   @Get('ai-usage')
   async aiUsage(

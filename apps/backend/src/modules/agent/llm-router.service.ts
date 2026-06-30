@@ -17,6 +17,8 @@ export interface LLMOptions {
   model?: string;
   temperature?: number;
   max_tokens?: number;
+  /** Optional branch attribution for per-outlet AI-usage monitoring. */
+  outletId?: string | null;
 }
 
 export interface LLMResponse {
@@ -81,6 +83,7 @@ export class LLMRouterService {
     const isError = 'error' in response && (response as LLMErrorResponse).error === true;
     await this.monitoring?.record({
       tenantId,
+      outletId: options?.outletId ?? null,
       kind: 'llm',
       name: response.model || options?.model || 'unknown',
       status: isError ? 'error' : 'success',

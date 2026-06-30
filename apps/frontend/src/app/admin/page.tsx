@@ -12,8 +12,22 @@ interface Overview {
   activeMemberships: number; estimatedMrr: number; aiCalls30d: number;
 }
 interface Activity { at: string; operation: string; entityType: string; tenantName: string | null }
+interface Timeseries { revenue: { day: string; revenue: number; orders: number }[]; tenants: { day: string; n: number }[] }
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
+
+function Bars({ data, valueKey, color, fmtVal }: { data: any[]; valueKey: string; color: string; fmtVal?: (n: number) => string }) {
+  const max = Math.max(1, ...data.map((d) => Number(d[valueKey])));
+  return (
+    <div className="flex items-end gap-1 h-28">
+      {data.length === 0 ? <p className="text-sm text-text-muted">No data.</p> : data.map((d, i) => (
+        <div key={i} className="flex-1 flex flex-col justify-end" title={`${d.day}: ${fmtVal ? fmtVal(Number(d[valueKey])) : d[valueKey]}`}>
+          <div style={{ height: `${(Number(d[valueKey]) / max) * 100}%`, background: color }} className="w-full rounded-t" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
@@ -27,6 +41,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 export default function AdminOverviewPage() {
   const [ov, setOv] = useState<Overview | null>(null);
   const [activity, setActivity] = useState<Activity[]>([]);
+  const [ts, setTs] = useState<Timeseries | null>(null);
   const [error, setError] = useState('');
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -34,11 +49,12 @@ export default function AdminOverviewPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [o, a] = await Promise.all([
+      const [o, a, t] = await Promise.all([
         api.get<Overview>('/admin/overview'),
         api.get<Activity[]>('/admin/activity?limit=15'),
+        api.get<Timeseries>('/admin/timeseries?days=30'),
       ]);
-      setOv(o); setActivity(a);
+      setOv(o); setActivity(a); setTs(t);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load';
       if (msg.includes('403') || msg.toLowerCase().includes('forbidden')) setForbidden(true);
@@ -84,6 +100,19 @@ export default function AdminOverviewPage() {
             <Stat label="AI Calls (30d)" value={ov.aiCalls30d.toLocaleString('id-ID')} />
             <Stat label="New Tenants (30d)" value={String(ov.tenants.new30d)} />
           </section>
+
+          {ts && (
+            <div className="grid lg:grid-cols-2 gap-4 mb-4">
+              <div className="bg-white rounded-xl border border-border p-5">
+                <h2 className="text-sm font-semibold text-text-primary mb-3">Platform revenue / day (30d)</h2>
+                <Bars data={ts.revenue} valueKey="revenue" color="#1652F0" fmtVal={fmt} />
+              </div>
+              <div className="bg-white rounded-xl border border-border p-5">
+                <h2 className="text-sm font-semibold text-text-primary mb-3">New tenants / day (30d)</h2>
+                <Bars data={ts.tenants} valueKey="n" color="#10b981" />
+              </div>
+            </div>
+          )}
 
           <div className="grid lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 bg-white rounded-xl border border-border p-5">

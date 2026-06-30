@@ -13,39 +13,57 @@ function today(): string {
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
 interface Summary { totalOrders: number; revenue: number; uniqueMembers: number }
+interface OutletLite { id: string; name: string }
 
 export default function DashboardHomePage() {
   const [tenantId, setTenantId] = useState<string | null>(null);
-  const [outlets, setOutlets] = useState<number | null>(null);
+  const [outletList, setOutletList] = useState<OutletLite[]>([]);
+  const [branch, setBranch] = useState<string>(''); // '' = all branches (global)
   const [summary, setSummary] = useState<Summary | null>(null);
 
   useEffect(() => {
     const u = getUser();
     if (u) setTenantId(u.tenantId);
-    const d = today();
-    api.get<{ id: string }[]>('/outlets').then((o) => setOutlets(o.length)).catch(() => setOutlets(null));
-    api.get<Summary>(`/reports/summary?dateFrom=${d}&dateTo=${d}`).then(setSummary).catch(() => setSummary(null));
+    api.get<OutletLite[]>('/outlets').then(setOutletList).catch(() => setOutletList([]));
   }, []);
+
+  useEffect(() => {
+    const d = today();
+    setSummary(null);
+    const qs = `dateFrom=${d}&dateTo=${d}${branch ? `&outletId=${branch}` : ''}`;
+    api.get<Summary>(`/reports/summary?${qs}`).then(setSummary).catch(() => setSummary(null));
+  }, [branch]);
 
   const stat = (v: number | null | undefined, render: (n: number) => string = (n) => String(n)) =>
     v == null ? '—' : render(v);
 
   return (
     <div data-testid="dashboard-home">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-text-primary" data-testid="dashboard-home-title">
-          Dashboard Overview
-        </h1>
-        <p className="mt-1 text-sm text-text-secondary" data-testid="dashboard-home-description">
-          Manage your outlets, services, memberships, and view reports from here.
-        </p>
+      <div className="flex items-start justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary" data-testid="dashboard-home-title">
+            Dashboard Overview
+          </h1>
+          <p className="mt-1 text-sm text-text-secondary" data-testid="dashboard-home-description">
+            Manage your outlets, services, memberships, and view reports from here.
+          </p>
+        </div>
+        <select
+          className="input-field max-w-[220px]"
+          data-testid="branch-filter"
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+        >
+          <option value="">All branches (global)</option>
+          {outletList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
       </div>
 
       {/* Quick Stats */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8" data-testid="dashboard-quick-stats">
         <div className="card" data-testid="stat-outlets">
           <p className="text-sm text-text-secondary">Outlets</p>
-          <p className="text-2xl font-bold text-text-primary mt-1">{stat(outlets)}</p>
+          <p className="text-2xl font-bold text-text-primary mt-1">{stat(outletList.length || null)}</p>
         </div>
         <div className="card" data-testid="stat-active-members">
           <p className="text-sm text-text-secondary">Members Served (Today)</p>

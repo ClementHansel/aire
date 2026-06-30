@@ -222,6 +222,65 @@ export class AdminMetricsService {
     return r.rows;
   }
 
+  /** Platform time series for the overview charts (global). */
+  async getTimeseries(days = 30) {
+    const win = `${days} days`;
+    const [revenue, tenants] = await Promise.all([
+      this.pool.query(
+        `SELECT to_char(date_trunc('day', created_at),'YYYY-MM-DD') AS day,
+                COALESCE(SUM(total) FILTER (WHERE status IN ${PAID}),0) AS revenue,
+                COUNT(*)::int AS orders
+         FROM orders WHERE created_at > NOW()-$1::interval GROUP BY 1 ORDER BY 1`,
+        [win],
+      ),
+      this.pool.query(
+        `SELECT to_char(date_trunc('day', created_at),'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+         FROM tenants WHERE created_at > NOW()-$1::interval GROUP BY 1 ORDER BY 1`,
+        [win],
+      ),
+    ]);
+    return {
+      revenue: revenue.rows.map((x: any) => ({ day: x.day, revenue: this.num(x.revenue), orders: x.orders })),
+      tenants: tenants.rows.map((x: any) => ({ day: x.day, n: x.n })),
+    };
+  }
+
+  /** System health: DB latency, WAHA reachability, and key counts. */
+  async getHealth() {
+    const start = Date.now();
+    let dbOk = false;
+    let counts = { tenants: 0, outlets: 0, orders: 0, agents: 0 };
+    try {
+      const r = await this.pool.query(
+        `SELECT
+           (SELECT COUNT(*) FROM tenants)::int AS tenants,
+           (SELECT COUNT(*) FROM outlets)::int AS outlets,
+           (SELECT COUNT(*) FROM orders)::int AS orders,
+           (SELECT COUNT(*) FROM agents)::int AS agents`,
+      );
+      dbOk = true;
+      counts = r.rows[0];
+    } catch { dbOk = false; }
+    const dbLatencyMs = Date.now() - start;
+
+    let waha = { ok: false, status: 'unreachable' };
+    const wahaUrl = process.env.WAHA_URL || 'http://waha:3000';
+    try {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(`${wahaUrl}/api/sessions`, { signal: controller.signal });
+      clearTimeout(tid);
+      waha = { ok: res.ok, status: res.ok ? 'reachable' : `http_${res.status}` };
+    } catch { waha = { ok: false, status: 'unreachable' }; }
+
+    return {
+      db: { ok: dbOk, latencyMs: dbLatencyMs },
+      waha,
+      counts,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   /** Build a scope-aware WHERE clause + params, numbering placeholders from 1. */
   private scopeWhere(
     opts: { scope: MetricScope; tenantId?: string; outletId?: string },

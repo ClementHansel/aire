@@ -11,6 +11,7 @@ const navItems = [
   { href: '/admin/tenants', label: 'Tenants' },
   { href: '/admin/monitoring', label: 'Monitoring' },
   { href: '/admin/ai-usage', label: 'AI Usage' },
+  { href: '/admin/health', label: 'System Health' },
   { href: '/admin/billing', label: 'Billing' },
   { href: '/admin/config', label: 'Platform Config' },
   { href: '/admin/support', label: 'Support' },

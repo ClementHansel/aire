@@ -6,6 +6,7 @@ export type InvocationKind = 'tool' | 'llm' | 'chat' | 'analysis';
 
 export interface RecordInvocationInput {
   tenantId?: string | null;
+  outletId?: string | null;
   kind: InvocationKind;
   name: string;
   status: 'success' | 'error';
@@ -31,10 +32,11 @@ export class MonitoringService {
     try {
       await this.pool.query(
         `INSERT INTO agent_invocations
-          (tenant_id, kind, name, status, duration_ms, prompt_tokens, completion_tokens, error, metadata)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          (tenant_id, outlet_id, kind, name, status, duration_ms, prompt_tokens, completion_tokens, error, metadata)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           input.tenantId ?? null,
+          input.outletId ?? null,
           input.kind,
           input.name,
           input.status,
