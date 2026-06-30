@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
+import { MonitoringService } from '../monitoring/monitoring.service';
 
 /**
  * Interfaces for LLM communication.
@@ -57,22 +58,79 @@ export class LLMRouterService {
   /** Request timeout in milliseconds */
   private readonly requestTimeoutMs: number;
 
-  constructor(private readonly settingsService: SettingsService) {
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly monitoring: MonitoringService,
+  ) {
     this.hermesAiEndpoint =
       process.env.HERMES_AI_ENDPOINT ?? 'http://localhost:11434/api/chat';
     this.requestTimeoutMs = parseInt(process.env.LLM_REQUEST_TIMEOUT_MS ?? '30000', 10);
   }
 
   /**
-   * Send a chat completion request routed to the tenant's configured LLM provider.
-   *
-   * 1. Fetches tenant settings to determine provider
-   * 2. Routes to OpenRouter or Hermes AI accordingly
-   * 3. Returns structured response or error
+   * Public entry point: routes the chat to the tenant's provider and records
+   * the invocation (latency, tokens, success/error) for the monitoring panel.
+   */
+  async chat(
+    tenantId: string,
+    messages: ChatMessage[],
+    options?: LLMOptions,
+  ): Promise<LLMResponse | LLMErrorResponse> {
+    const start = Date.now();
+    const response = await this.routeChat(tenantId, messages, options);
+    const isError = 'error' in response && (response as LLMErrorResponse).error === true;
+    await this.monitoring.record({
+      tenantId,
+      kind: 'llm',
+      name: response.model || options?.model || 'unknown',
+      status: isError ? 'error' : 'success',
+      durationMs: Date.now() - start,
+      promptTokens: response.usage?.prompt_tokens,
+      completionTokens: response.usage?.completion_tokens,
+      error: isError ? (response as LLMErrorResponse).errorMessage : undefined,
+    });
+    return response;
+  }
+
+  /**
+   * Validate the tenant's configured LLM connection with a minimal ping.
+   * Returns provider/model, latency, and a clear error if it fails — used by
+   * the "Test connection" button in AI settings.
+   */
+  async validateConnection(
+    tenantId: string,
+  ): Promise<{ ok: boolean; provider: string; model: string; latencyMs: number; message: string }> {
+    let provider = 'unknown';
+    try {
+      const settings = await this.settingsService.getSettings(tenantId);
+      provider = settings.llm_provider;
+    } catch {
+      /* fall through; routeChat will report */
+    }
+    const start = Date.now();
+    const res = await this.routeChat(
+      tenantId,
+      [
+        { role: 'system', content: 'You are a connectivity probe. Reply with the single word: OK.' },
+        { role: 'user', content: 'ping' },
+      ],
+      { max_tokens: 5, temperature: 0 },
+    );
+    const latencyMs = Date.now() - start;
+    const isError = 'error' in res && (res as LLMErrorResponse).error === true;
+    if (isError) {
+      const err = res as LLMErrorResponse;
+      return { ok: false, provider, model: res.model, latencyMs, message: `${err.errorType}: ${err.errorMessage}` };
+    }
+    return { ok: true, provider, model: res.model, latencyMs, message: 'Connection successful' };
+  }
+
+  /**
+   * Route a chat completion to the tenant's configured LLM provider.
    *
    * Requirements: 3.6, 3.7
    */
-  async chat(
+  private async routeChat(
     tenantId: string,
     messages: ChatMessage[],
     options?: LLMOptions,

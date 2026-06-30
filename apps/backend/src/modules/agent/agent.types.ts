@@ -19,7 +19,10 @@ export interface ToolDefinition {
   description: string;
   inputSchema: Record<string, unknown>; // JSON Schema
   outputSchema: Record<string, unknown>; // JSON Schema
-  automationKey: keyof AutomationToggles;
+  /** Automation toggle gating this tool. Omitted for read-only tools. */
+  automationKey?: keyof AutomationToggles;
+  /** Read-only tools (the agent's "eyes") bypass toggle/approval gating. */
+  readOnly?: boolean;
 }
 
 /**

@@ -13,7 +13,9 @@ import { SettingsService } from '../settings/settings.service';
 import { ProposalService } from './proposal.service';
 import { SchedulerService } from './scheduler.service';
 import { ScheduledAnalysisService } from './scheduled-analysis.service';
+import { AgentToolsService } from './agent-tools.service';
 import { AuditService } from '../audit/audit.service';
+import { MonitoringService } from '../monitoring/monitoring.service';
 
 /**
  * Agent Service.
@@ -35,6 +37,8 @@ export class AgentService implements OnModuleInit {
     private readonly schedulerService: SchedulerService,
     @Inject(forwardRef(() => ScheduledAnalysisService)) private readonly scheduledAnalysisService: ScheduledAnalysisService,
     private readonly auditService: AuditService,
+    private readonly agentToolsService: AgentToolsService,
+    private readonly monitoring: MonitoringService,
   ) {
     this.ajv = new Ajv({ allErrors: true });
     addFormats(this.ajv);
@@ -108,11 +112,12 @@ export class AgentService implements OnModuleInit {
       return { success: false, error: `Tool "${toolName}" not found in registry` };
     }
 
-    // 2. Ensure tenant_id and outlet_id are present (Req 5.4)
+    // 2. Ensure tenant_id is present (Req 5.4)
     if (!tenantId || tenantId.trim() === '') {
       return { success: false, error: 'tenant_id is required' };
     }
-    if (!outletId || outletId.trim() === '') {
+    // outlet_id is required for action tools (data scoping); read-only tools are exempt.
+    if (!tool.readOnly && (!outletId || outletId.trim() === '')) {
       return { success: false, error: 'outlet_id is required' };
     }
 
@@ -120,6 +125,11 @@ export class AgentService implements OnModuleInit {
     const validationError = this.validateToolInput(tool, parameters);
     if (validationError) {
       return { success: false, error: validationError };
+    }
+
+    // Read-only tools (the agent's "eyes") bypass toggle/approval gating.
+    if (tool.readOnly) {
+      return this.executeWithRetry(invocation, tool);
     }
 
     // 4. Check automation toggle is enabled (Req 5.2)
@@ -130,7 +140,7 @@ export class AgentService implements OnModuleInit {
     }
 
     // 5. Check approval_mode for this tool's automation key (Req 7.2)
-    const approvalMode = settings.approval_modes[tool.automationKey];
+    const approvalMode = tool.automationKey ? settings.approval_modes[tool.automationKey] : 'autonomous';
 
     if (approvalMode === 'autonomous') {
       // Execute immediately and audit-log (Req 7.2, 7.3)
@@ -214,6 +224,10 @@ export class AgentService implements OnModuleInit {
     try {
       const settings = await this.settingsService.getSettings(tenantId);
       const toggleKey = tool.automationKey;
+      if (!toggleKey) {
+        // Read-only / ungated tool — always allowed.
+        return settings;
+      }
       const isEnabled = settings.automation_toggles[toggleKey];
 
       if (!isEnabled) {
@@ -286,18 +300,26 @@ export class AgentService implements OnModuleInit {
   }
 
   /**
-   * Perform the actual tool execution.
-   * Currently a placeholder/stub that returns success.
-   * Will be replaced with real tool handlers in future tasks.
+   * Perform the actual tool execution by delegating to AgentToolsService,
+   * recording the invocation (latency, success/error) for monitoring.
    *
    * The invocation includes tenant_id and outlet_id for proper data scoping (Req 5.4).
    */
   private async performToolExecution(
-    _invocation: ToolInvocation,
+    invocation: ToolInvocation,
     _tool: ToolDefinition,
   ): Promise<ToolResult> {
-    // Stub: real execution will be wired to actual tool handlers in integration tasks
-    return { success: true, data: {} };
+    const start = Date.now();
+    const result = await this.agentToolsService.run(invocation);
+    await this.monitoring.record({
+      tenantId: invocation.tenantId,
+      kind: 'tool',
+      name: invocation.toolName,
+      status: result.success ? 'success' : 'error',
+      durationMs: Date.now() - start,
+      error: result.success ? undefined : result.error,
+    });
+    return result;
   }
 
   /**

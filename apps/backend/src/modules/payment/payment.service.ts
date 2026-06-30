@@ -1,8 +1,10 @@
-import { Injectable, Inject, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Optional, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ConfigService } from '@nestjs/config';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { PaymentProviderRegistry, TenantPaymentConfig, isSandboxKey } from './payment-provider.registry';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export interface QrisChargeResult {
   orderId: string;
@@ -28,6 +30,7 @@ export class PaymentService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly registry: PaymentProviderRegistry,
     private readonly config: ConfigService,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   /**
@@ -125,8 +128,16 @@ export class PaymentService {
       [reference],
     );
     const updated = (res.rowCount ?? 0) > 0;
-    if (updated) this.logger.log(`Order ${reference} marked paid via webhook`);
-    else this.logger.warn(`Webhook: no pending order matched reference ${reference}`);
+    if (updated) {
+      this.logger.log(`Order ${reference} marked paid via webhook`);
+      void this.eventBus?.emit({
+        type: DomainEventType.PaymentConfirmed,
+        payload: { reference, orderId: res.rows[0]?.id },
+        actor: 'payment-gateway',
+      });
+    } else {
+      this.logger.warn(`Webhook: no pending order matched reference ${reference}`);
+    }
     return updated;
   }
 }

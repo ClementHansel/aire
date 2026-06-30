@@ -7,9 +7,11 @@ import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 
 const navItems = [
   { id: 'overview', label: 'Overview', href: '/dashboard', icon: '📊' },
+  { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: '🤖' },
   { id: 'services', label: 'Services', href: '/dashboard/services', icon: '🚿' },
   { id: 'memberships', label: 'Memberships', href: '/dashboard/memberships', icon: '💳' },
   { id: 'reports', label: 'Reports', href: '/dashboard/reports', icon: '📈' },
+  { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: '📡' },
   { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
 ];
 

@@ -6,6 +6,8 @@ import { LLMRouterService } from './llm-router.service';
 import { AgentGateway } from './agent.gateway';
 import { SchedulerService } from './scheduler.service';
 import { ScheduledAnalysisService } from './scheduled-analysis.service';
+import { AgentToolsService } from './agent-tools.service';
+import { AgentChatService } from './agent-chat.service';
 import { SettingsModule } from '../settings/settings.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -23,7 +25,7 @@ import { DatabasePoolProvider } from '../auth/database.provider';
 @Module({
   imports: [SettingsModule, AuditModule, NotificationModule],
   controllers: [AgentController],
-  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, DatabasePoolProvider],
-  exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService],
+  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, DatabasePoolProvider],
+  exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService],
 })
 export class AgentModule {}

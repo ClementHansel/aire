@@ -4,6 +4,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { SettingsService } from '../settings/settings.service';
 import { LLMRouterService, ChatMessage, LLMErrorResponse } from './llm-router.service';
 import { AgentService } from './agent.service';
+import { AgentToolsService } from './agent-tools.service';
 import { AuditService } from '../audit/audit.service';
 import type { AutomationToggles } from '../settings/settings.interfaces';
 import type { ScheduledAnalysisRun, ToolDefinition } from './agent.types';
@@ -68,6 +69,7 @@ export class ScheduledAnalysisService {
     private readonly llmRouterService: LLMRouterService,
     @Inject(forwardRef(() => AgentService)) private readonly agentService: AgentService,
     private readonly auditService: AuditService,
+    private readonly agentToolsService: AgentToolsService,
   ) {}
 
   /**
@@ -259,7 +261,10 @@ ${availableTools}`;
 Metrics being reviewed: ${metricsToReview.join(', ')}
 Enabled automation capabilities: ${enabledToggles.join(', ')}
 
-Based on current business performance patterns, what automated actions would you recommend?
+CURRENT BUSINESS DATA (live snapshot):
+${await this.gatherMetricsSnapshot(tenantId)}
+
+Based on this real data, what automated actions would you recommend?
 Respond ONLY with a JSON array.`;
 
     const messages: ChatMessage[] = [
@@ -283,6 +288,32 @@ Respond ONLY with a JSON array.`;
 
     // Parse the LLM response as JSON
     return this.parseInsightsFromLLM(response.content, enabledToggles);
+  }
+
+  /**
+   * Gather a real, live data snapshot (revenue, orders, memberships, queue,
+   * recent events) to ground the LLM's analysis in actual numbers.
+   */
+  private async gatherMetricsSnapshot(tenantId: string): Promise<string> {
+    try {
+      const [summary, memberships, events] = await Promise.all([
+        this.agentToolsService.run({ toolName: 'get_business_summary', tenantId, outletId: '', parameters: {} }),
+        this.agentToolsService.run({ toolName: 'list_memberships', tenantId, outletId: '', parameters: {} }),
+        this.agentToolsService.run({ toolName: 'list_recent_events', tenantId, outletId: '', parameters: { limit: 20 } }),
+      ]);
+      return JSON.stringify(
+        {
+          businessSummary: summary.data ?? {},
+          memberships: memberships.data ?? {},
+          recentEvents: (events.data as { events?: unknown[] })?.events ?? [],
+        },
+        null,
+        2,
+      ).slice(0, 6000);
+    } catch (err) {
+      this.logger.warn(`Failed to gather metrics snapshot: ${err instanceof Error ? err.message : err}`);
+      return '{}';
+    }
   }
 
   /**

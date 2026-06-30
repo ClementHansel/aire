@@ -223,6 +223,100 @@ export const SEND_MEMBERSHIP_RECOMMENDATION_TOOL: ToolDefinition = {
   automationKey: 'membership_recommendations',
 };
 
+// ─── Read-Only Tools (the agent's "eyes") ─────────────────────────────────────
+
+const emptyObjectSchema = { type: 'object', properties: {}, additionalProperties: true };
+
+export const GET_BUSINESS_SUMMARY_TOOL: ToolDefinition = {
+  name: 'get_business_summary',
+  description:
+    'Returns a snapshot of the business: revenue today / last 7 days / last 30 days, order counts by status, active memberships, memberships expiring soon, and bay status. Use this first to understand current performance.',
+  inputSchema: emptyObjectSchema,
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+export const LIST_ORDERS_TOOL: ToolDefinition = {
+  name: 'list_orders',
+  description:
+    'Lists recent orders. Optional filters: status (ordered|paid|confirmed|completed|cancelled), limit (default 20, max 100).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', description: 'Filter by order status' },
+      limit: { type: 'number', description: 'Max rows (default 20, max 100)' },
+    },
+  },
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+export const FIND_CUSTOMER_TOOL: ToolDefinition = {
+  name: 'find_customer',
+  description:
+    'Looks up a customer by phone or name and returns their profile, active memberships, and recent orders.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      phone: { type: 'string', description: 'Customer phone (any format)' },
+      name: { type: 'string', description: 'Full or partial customer name' },
+    },
+  },
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+export const LIST_MEMBERSHIPS_TOOL: ToolDefinition = {
+  name: 'list_memberships',
+  description:
+    'Summarizes memberships: active count and memberships expiring within 30 days (with customer name/phone).',
+  inputSchema: emptyObjectSchema,
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+export const LIST_SERVICES_TOOL: ToolDefinition = {
+  name: 'list_services',
+  description: 'Lists the tenant services with category, price, and active status.',
+  inputSchema: emptyObjectSchema,
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+export const GET_QUEUE_STATUS_TOOL: ToolDefinition = {
+  name: 'get_queue_status',
+  description: 'Returns current bay statuses and the number of orders waiting (paid/confirmed) today.',
+  inputSchema: emptyObjectSchema,
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+export const LIST_RECENT_EVENTS_TOOL: ToolDefinition = {
+  name: 'list_recent_events',
+  description:
+    'Returns the most recent domain events (orders, payments, memberships, vouchers) so you can see what is happening in real time. Optional: type filter, limit (default 30).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      type: { type: 'string', description: 'Filter by event type, e.g. order.paid' },
+      limit: { type: 'number', description: 'Max events (default 30, max 100)' },
+    },
+  },
+  outputSchema: emptyObjectSchema,
+  readOnly: true,
+};
+
+/** Read-only tools available to the conversational + analysis agent. */
+export const READ_TOOLS: ToolDefinition[] = [
+  GET_BUSINESS_SUMMARY_TOOL,
+  LIST_ORDERS_TOOL,
+  FIND_CUSTOMER_TOOL,
+  LIST_MEMBERSHIPS_TOOL,
+  LIST_SERVICES_TOOL,
+  GET_QUEUE_STATUS_TOOL,
+  LIST_RECENT_EVENTS_TOOL,
+];
+
 /**
  * All default tool definitions.
  */
@@ -233,6 +327,7 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   FLAG_ANOMALY_TOOL,
   SUGGEST_PRICING_TOOL,
   SEND_MEMBERSHIP_RECOMMENDATION_TOOL,
+  ...READ_TOOLS,
 ];
 
 /**

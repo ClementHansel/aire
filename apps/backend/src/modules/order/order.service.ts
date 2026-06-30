@@ -1,10 +1,13 @@
 import {
   Injectable,
   Inject,
+  Optional,
   BadRequestException,
 } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 import {
   CreateOrderRequest,
   OrderStatus,
@@ -129,7 +132,9 @@ export interface CreatedOrderResponse {
 export class OrderService {
   private readonly stateMachine = new OrderStateMachine();
 
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool,
+    @Optional() private readonly eventBus?: EventBusService,
+  ) {}
 
   /**
    * Creates a new order.
@@ -395,6 +400,21 @@ export class OrderService {
 
       await client.query('COMMIT');
 
+      // Emit domain event for the AI agent / monitoring (best-effort).
+      void this.eventBus?.emit({
+        type: DomainEventType.OrderCreated,
+        tenantId: user.tenant_id,
+        outletId: user.outlet_id,
+        actor: user.sub,
+        payload: {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          total: parseFloat(order.total),
+          voucherDiscount,
+          itemCount: cartItems.length,
+        },
+      });
+
       // Determine customer type tags (will be persisted on payment)
       const tags = assignCustomerTags({
         hasVoucherPackPurchase: false,
@@ -514,6 +534,20 @@ export class OrderService {
     );
 
     const row = updated.rows[0];
+
+    void this.eventBus?.emit({
+      type: DomainEventType.OrderPaid,
+      tenantId: user.tenant_id,
+      outletId: row.outlet_id,
+      actor: user.sub,
+      payload: {
+        orderId: row.id,
+        orderNumber: row.order_number,
+        total: parseFloat(row.total),
+        paymentMethod: payment.method,
+      },
+    });
+
     return {
       id: row.id,
       orderNumber: row.order_number,

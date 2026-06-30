@@ -20,12 +20,16 @@ import { KioskModule } from './modules/kiosk';
 import { AgentModule } from './modules/agent';
 import { PaymentModule } from './modules/payment';
 import { VoucherModule } from './modules/voucher';
+import { EventsModule } from './modules/events';
+import { MonitoringModule } from './modules/monitoring';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    EventsModule,
+    MonitoringModule,
     AgentModule,
     AIModule,
     AuthModule,

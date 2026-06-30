@@ -1,12 +1,15 @@
 import {
   Injectable,
   Inject,
+  Optional,
   NotFoundException,
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 import {
   ERR_MEMBERSHIP_PLAN_NOT_FOUND,
   ERR_MEMBERSHIP_ONE_PLAN_PER_ORDER,
@@ -31,7 +34,9 @@ import { Membership, MembershipRow, MembershipPlate, MembershipPlateRow } from '
  */
 @Injectable()
 export class MembershipSellService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool,
+    @Optional() private readonly eventBus?: EventBusService,
+  ) {}
 
   /**
    * Creates a new membership record in 'pending' status.
@@ -153,6 +158,13 @@ export class MembershipSellService {
 
     // 7. Schedule expiry reminders (H-30, H-7, H-day)
     await this.scheduleExpiryReminders(membershipId, endDate);
+
+    void this.eventBus?.emit({
+      type: DomainEventType.MembershipActivated,
+      tenantId: membership.tenant_id,
+      actor: 'pos',
+      payload: { membershipId, planId: membership.plan_id, customerId: membership.customer_id, endDate, plates: dto.plates.length },
+    });
 
     return this.mapRowToEntity(updateResult.rows[0]!);
   }

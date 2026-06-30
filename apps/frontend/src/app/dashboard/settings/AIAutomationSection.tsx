@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { api } from '@/lib/api';
 
 /**
  * AI Automation section for the Settings page.
@@ -35,6 +36,28 @@ export function AIAutomationSection({
   const [interval, setInterval] = useState<'hourly' | 'daily' | null>(schedule_interval);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [apiKeyDirty, setApiKeyDirty] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleTestConnection = useCallback(async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await api.post<{ ok: boolean; provider: string; model: string; latencyMs: number; message: string }>(
+        '/agent/validate-connection',
+      );
+      setTestResult({
+        ok: res.ok,
+        message: res.ok
+          ? `Connected to ${res.provider} (${res.model}) in ${res.latencyMs}ms`
+          : `Failed: ${res.message}`,
+      });
+    } catch (e) {
+      setTestResult({ ok: false, message: e instanceof Error ? e.message : 'Connection test failed' });
+    } finally {
+      setTesting(false);
+    }
+  }, []);
 
   const handleToggleAI = useCallback(() => {
     setAiEnabled((prev) => !prev);
@@ -158,6 +181,27 @@ export function AIAutomationSection({
               <option value="hourly">Hourly</option>
               <option value="daily">Daily</option>
             </select>
+          </div>
+
+          <div className="settings-field">
+            <button
+              type="button"
+              data-testid="ai-test-connection-button"
+              className="settings-save-button"
+              onClick={handleTestConnection}
+              disabled={testing}
+            >
+              {testing ? 'Testing…' : 'Test AI Connection'}
+            </button>
+            {testResult && (
+              <p
+                data-testid="ai-test-connection-result"
+                role="status"
+                style={{ marginTop: 8, fontSize: 13, color: testResult.ok ? '#15803d' : '#b91c1c' }}
+              >
+                {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+              </p>
+            )}
           </div>
         </div>
       )}

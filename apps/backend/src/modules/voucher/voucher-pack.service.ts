@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Optional, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { JWTPayload, generateVoucherPack } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
@@ -6,6 +6,8 @@ import { PosCheckoutService } from '../order/pos-checkout.service';
 import { NotificationService } from '../notification/notification.service';
 import { VoucherTemplateService } from './voucher-template.service';
 import { SellVoucherPackResult, IssueVoucherPackResult } from './voucher.interfaces';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 /**
  * Sells voucher packs through the POS.
@@ -28,6 +30,7 @@ export class VoucherPackService {
     private readonly checkout: PosCheckoutService,
     private readonly templates: VoucherTemplateService,
     private readonly notifications: NotificationService,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   /** Reserve a voucher pack sale: create the customer + pending order. */
@@ -161,6 +164,14 @@ export class VoucherPackService {
     } catch (err) {
       this.logger.warn(`WhatsApp delivery threw for order ${orderId}: ${err instanceof Error ? err.message : err}`);
     }
+
+    void this.eventBus?.emit({
+      type: DomainEventType.VoucherPackIssued,
+      tenantId: user.tenant_id,
+      outletId: user.outlet_id,
+      actor: user.sub,
+      payload: { packId, orderId, templateId: template.id, codes: pack.childCodes.length, whatsappDelivered },
+    });
 
     return {
       packId,
