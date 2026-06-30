@@ -243,21 +243,30 @@ export class AdminService {
    * Requirement: 4.3
    */
   async getPlatformConfig(): Promise<PlatformConfig> {
-    const result = await this.pool.query<{ config: PlatformConfig }>(`
-      SELECT config FROM platform_config WHERE id = 'default' LIMIT 1
-    `);
+    const defaults: PlatformConfig = {
+      defaultPlans: ['standard', 'premium', 'enterprise'],
+      pricingTiers: [],
+      featureFlags: {},
+    };
 
-    const row = result.rows[0];
-    if (!row) {
-      // Return default config if none exists
-      return {
-        defaultPlans: ['standard', 'premium', 'enterprise'],
-        pricingTiers: [],
-        featureFlags: {},
-      };
+    let row: { config: PlatformConfig } | undefined;
+    try {
+      const result = await this.pool.query<{ config: PlatformConfig }>(`
+        SELECT config FROM platform_config WHERE id = 'default' LIMIT 1
+      `);
+      row = result.rows[0];
+    } catch {
+      // Table may not exist yet (pre-migration) — fall back to defaults
+      // rather than surfacing a 500 to the admin UI.
+      return defaults;
     }
 
-    return row.config;
+    if (!row) {
+      return defaults;
+    }
+
+    // Merge stored config over defaults so partial rows still return a full shape.
+    return { ...defaults, ...row.config };
   }
 
   /**
