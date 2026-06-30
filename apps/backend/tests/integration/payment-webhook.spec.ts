@@ -45,7 +45,11 @@ describe('Payment Webhook Integration', () => {
       },
     );
 
-    controller = new PaymentWebhookController(registry, configResolver);
+    controller = new PaymentWebhookController(
+      registry,
+      configResolver,
+      { confirmPaymentByReference: vi.fn().mockResolvedValue(true) } as never,
+    );
   });
 
   describe('Xendit → Order Status Flow', () => {
@@ -56,8 +60,8 @@ describe('Payment Webhook Integration', () => {
         amount: 75000,
         external_id: 'order-uuid-001',
       };
-      const body = JSON.stringify(payload);
-      const signature = createHmac('sha256', xenditSecret).update(body).digest('hex');
+      // Xendit verifies a static callback token, not an HMAC.
+      const signature = xenditSecret;
 
       const result = await controller.handleXenditWebhook(payload, signature);
 
