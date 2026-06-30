@@ -72,6 +72,9 @@ export enum MembershipStatus {
   Expired = 'expired',
   Pending = 'pending',
   Cancelled = 'cancelled',
+  /** Manually suspended by a higher-level role due to a rule breach (still within
+   *  the paid duration, but blocked from use until reactivated). */
+  Suspended = 'suspended',
 }
 
 /**

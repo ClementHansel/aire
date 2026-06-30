@@ -2,9 +2,21 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { getUser } from '@/lib/auth';
 
 interface GrowthPoint { period: string; newCustomers: number }
 interface Customer { id: string; name: string; phone: string; createdAt: string; totalVisits: number }
+interface Membership {
+  id: string; customerName: string; customerPhone: string; planName: string;
+  displayStatus: 'active' | 'suspended' | 'expired' | 'pending' | 'cancelled';
+  startDate: string; endDate: string; usesCount: number; maxUses: number; suspendedReason: string | null;
+}
+
+const MS_BADGE: Record<string, string> = {
+  active: 'bg-green-50 text-green-700', suspended: 'bg-amber-50 text-amber-700',
+  expired: 'bg-gray-100 text-gray-500', pending: 'bg-blue-50 text-blue-700', cancelled: 'bg-red-50 text-red-700',
+};
+const MS_FILTERS = ['all', 'active', 'suspended', 'expired'];
 
 function today(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function daysAgo(n: number): string { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
@@ -37,6 +49,15 @@ export default function CrmPage() {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Customer | null>(null);
 
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [memberFilter, setMemberFilter] = useState('all');
+  const canManageMembers = ['outlet_admin', 'tenant_owner', 'platform_super_admin'].includes(getUser()?.role ?? '');
+
+  const loadMemberships = useCallback(async () => {
+    try { setMemberships(await api.get<Membership[]>(`/memberships/manage${memberFilter !== 'all' ? `?status=${memberFilter}` : ''}`)); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Failed to load memberships'); }
+  }, [memberFilter]);
+
   const loadGrowth = useCallback(async () => {
     try { setGrowth(await api.get<GrowthPoint[]>(`/reports/customer-growth?dateFrom=${dateFrom}&dateTo=${dateTo}&granularity=${granularity}`)); }
     catch (err) { setError(err instanceof Error ? err.message : 'Failed'); }
@@ -51,6 +72,18 @@ export default function CrmPage() {
 
   useEffect(() => { loadGrowth(); }, [loadGrowth]);
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
+  useEffect(() => { loadMemberships(); }, [loadMemberships]);
+
+  const suspendMember = async (m: Membership) => {
+    const reason = window.prompt(`Suspend ${m.customerName}'s membership (${m.planName})?\nEnter a reason (rule breach):`, '');
+    if (reason === null) return;
+    try { await api.patch(`/memberships/${m.id}/suspend`, { reason }); await loadMemberships(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Suspend failed'); }
+  };
+  const reactivateMember = async (m: Membership) => {
+    try { await api.patch(`/memberships/${m.id}/reactivate`, {}); await loadMemberships(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Reactivate failed'); }
+  };
 
   const del = async (c: Customer) => {
     if (!confirm(`Delete customer ${c.name}?`)) return;
@@ -123,6 +156,47 @@ export default function CrmPage() {
             <button className="btn-ghost text-xs" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</button>
           </div>
         </div>
+      </div>
+
+      {/* Memberships management */}
+      <div className="card p-0 overflow-hidden mt-6">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold text-text-primary">Memberships ({memberships.length})</h2>
+          <div className="flex gap-1">
+            {MS_FILTERS.map((f) => (
+              <button key={f} onClick={() => setMemberFilter(f)} className={`badge capitalize ${memberFilter === f ? 'bg-primary-500 text-white' : 'bg-surface-sunken text-text-secondary'}`}>{f}</button>
+            ))}
+          </div>
+        </div>
+        <table className="w-full">
+          <thead><tr className="border-b border-border bg-surface-sunken/50">
+            <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Member</th>
+            <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Plan</th>
+            <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Period</th>
+            <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Uses</th>
+            <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">Status</th>
+            <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Actions</th>
+          </tr></thead>
+          <tbody className="divide-y divide-border">
+            {memberships.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">No memberships.</td></tr> : memberships.map((m) => (
+              <tr key={m.id}>
+                <td className="px-5 py-3 text-sm font-medium">{m.customerName}<div className="text-xs text-text-muted">{m.customerPhone}</div></td>
+                <td className="px-5 py-3 text-sm text-text-secondary">{m.planName}</td>
+                <td className="px-5 py-3 text-xs text-text-muted">{m.startDate} → {m.endDate}</td>
+                <td className="px-5 py-3 text-sm text-right">{m.usesCount}/{m.maxUses}</td>
+                <td className="px-5 py-3 text-center">
+                  <span className={`badge capitalize ${MS_BADGE[m.displayStatus]}`}>{m.displayStatus}</span>
+                  {m.displayStatus === 'suspended' && m.suspendedReason && <div className="text-[11px] text-text-muted mt-0.5">{m.suspendedReason}</div>}
+                </td>
+                <td className="px-5 py-3 text-right whitespace-nowrap">
+                  {canManageMembers && m.displayStatus === 'active' && <button className="btn-ghost text-xs text-amber-600" onClick={() => suspendMember(m)}>Suspend</button>}
+                  {canManageMembers && m.displayStatus === 'suspended' && <button className="btn-ghost text-xs text-green-600" onClick={() => reactivateMember(m)}>Reactivate</button>}
+                  {!canManageMembers && <span className="text-xs text-text-muted">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {editing && (
