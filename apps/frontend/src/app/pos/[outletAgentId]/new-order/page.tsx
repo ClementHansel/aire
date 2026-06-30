@@ -219,6 +219,7 @@ export default function NewOrderPage() {
             <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">New Order</span>
             <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
             <a href={`/pos/${params.outletAgentId}/summary`} className="btn-ghost py-1.5 px-3">Summary</a>
+            <a href={`/pos/${params.outletAgentId}/shift`} className="btn-ghost py-1.5 px-3">Shift</a>
           </nav>
         </div>
         <div className="flex items-center gap-3">

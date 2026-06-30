@@ -271,8 +271,9 @@ export class OrderService {
           (tenant_id, outlet_id, operator_id, order_number, status,
            customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
            subtotal, service_charge, tax, voucher_discount, promo_discount, total,
-           note, membership_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+           note, membership_id, shift_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+           (SELECT id FROM pos_shifts WHERE tenant_id = $1 AND operator_id = $3 AND status = 'open' ORDER BY opened_at DESC LIMIT 1))
          RETURNING *`,
         [
           user.tenant_id,

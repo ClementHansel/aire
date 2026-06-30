@@ -45,6 +45,11 @@ export enum DomainEventType {
   AttendanceRecorded = 'hr.attendance_recorded',
   LeaveRequested = 'hr.leave_requested',
   LeaveResolved = 'hr.leave_resolved',
+  // POS shifts
+  ShiftOpened = 'shift.opened',
+  ShiftClosed = 'shift.closed',
+  PettyCashRecorded = 'shift.petty_cash_recorded',
+  ShiftIssueReported = 'shift.issue_reported',
 }
 
 /** Wildcard channel for subscribers that want every event. */

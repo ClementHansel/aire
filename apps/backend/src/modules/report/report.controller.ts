@@ -73,6 +73,38 @@ export class ReportController {
   }
 
   /**
+   * GET /api/reports/daily-sales — one row per day (orders + revenue).
+   */
+  @Get('daily-sales')
+  async getDailySales(
+    @CurrentUser() user: JWTPayload,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('outletId') outletId?: string,
+  ) {
+    if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
+    if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
+    const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
+    return this.reportService.getDailySales({ dateFrom, dateTo, outletId: effectiveOutletId });
+  }
+
+  /**
+   * GET /api/reports/shifts — shift-by-shift sales + cash reconciliation.
+   */
+  @Get('shifts')
+  async getShiftReport(
+    @CurrentUser() user: JWTPayload,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('outletId') outletId?: string,
+  ) {
+    if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
+    if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
+    const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
+    return this.reportService.getShiftReport({ dateFrom, dateTo, outletId: effectiveOutletId });
+  }
+
+  /**
    * GET /api/reports/export
    *
    * Exports order data as CSV for the selected date range.
@@ -87,6 +119,7 @@ export class ReportController {
     @Query('dateTo') dateTo?: string,
     @Query('outletId') outletId?: string,
     @Query('format') format?: string,
+    @Query('scope') scope?: string,
     @Res() reply?: FastifyReply,
   ): Promise<void> {
     // Validate required parameters
@@ -113,13 +146,16 @@ export class ReportController {
         ? undefined
         : outletId;
 
-    const csvContent = await this.reportService.exportCsv({
-      dateFrom,
-      dateTo,
-      outletId: effectiveOutletId,
-    });
+    const exportScope = scope === 'daily' ? 'daily' : 'orders';
+    const csvContent =
+      exportScope === 'daily'
+        ? await this.reportService.exportDailySalesCsv({ dateFrom, dateTo, outletId: effectiveOutletId })
+        : await this.reportService.exportCsv({ dateFrom, dateTo, outletId: effectiveOutletId });
 
-    const filename = `orders-${dateFrom}-to-${dateTo}.csv`;
+    const filename =
+      exportScope === 'daily'
+        ? `daily-sales-${dateFrom}-to-${dateTo}.csv`
+        : `orders-${dateFrom}-to-${dateTo}.csv`;
 
     reply!
       .header('Content-Type', 'text/csv')

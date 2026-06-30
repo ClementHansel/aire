@@ -27,6 +27,7 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { HrModule } from './modules/hr/hr.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
+import { ShiftModule } from './modules/shift/shift.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { ProcurementModule } from './modules/procurement/procurement.module';
     SalesModule,
     HrModule,
     ProcurementModule,
+    ShiftModule,
   ],
   controllers: [AppController],
   providers: [AppService],

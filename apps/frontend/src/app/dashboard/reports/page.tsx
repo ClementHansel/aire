@@ -14,6 +14,9 @@ interface SummaryResponse {
   byService: { serviceId: string; name: string; quantity: number; revenue: number }[];
 }
 
+interface DailyRow { date: string; orders: number; revenue: number; paidOrders: number; }
+interface ShiftRow { id: string; operator: string | null; status: string; openingFloat: number; totalSales: number | null; cashSales: number | null; counted: number | null; expected: number | null; variance: number | null; orders: number | null; openedAt: string; closedAt: string | null; }
+
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -23,6 +26,8 @@ export default function ReportsPage() {
   const [dateFrom, setDateFrom] = useState(today());
   const [dateTo, setDateTo] = useState(today());
   const [data, setData] = useState<SummaryResponse | null>(null);
+  const [daily, setDaily] = useState<DailyRow[]>([]);
+  const [shifts, setShifts] = useState<ShiftRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -30,16 +35,38 @@ export default function ReportsPage() {
     setLoading(true);
     setError('');
     try {
-      const result = await api.get<SummaryResponse>(
-        `/reports/summary?dateFrom=${dateFrom}&dateTo=${dateTo}`,
-      );
-      setData(result);
+      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}`;
+      const [summary, dailyRows, shiftRows] = await Promise.all([
+        api.get<SummaryResponse>(`/reports/summary?${qs}`),
+        api.get<DailyRow[]>(`/reports/daily-sales?${qs}`),
+        api.get<ShiftRow[]>(`/reports/shifts?${qs}`),
+      ]);
+      setData(summary);
+      setDaily(dailyRows);
+      setShifts(shiftRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load report');
     } finally {
       setLoading(false);
     }
   }, [dateFrom, dateTo]);
+
+  const exportCsv = (scope: 'orders' | 'daily') => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('aire_access_token') : null;
+    const base = process.env.NEXT_PUBLIC_API_URL || '/api';
+    const url = `${base}/reports/export?dateFrom=${dateFrom}&dateTo=${dateTo}&scope=${scope}`;
+    // Fetch with auth then trigger a download (export route requires the bearer token).
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${scope === 'daily' ? 'daily-sales' : 'orders'}-${dateFrom}-to-${dateTo}.csv`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(() => setError('Export failed'));
+  };
 
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
   const paymentMethods = data ? Object.entries(data.byPaymentMethod) : [];
@@ -69,6 +96,12 @@ export default function ReportsPage() {
           <button className="btn-primary" onClick={loadReport} disabled={loading}>
             {loading ? 'Loading…' : 'Generate Report'}
           </button>
+          {data && (
+            <>
+              <button className="btn-secondary" onClick={() => exportCsv('daily')}>Export daily CSV</button>
+              <button className="btn-secondary" onClick={() => exportCsv('orders')}>Export orders CSV</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -132,6 +165,48 @@ export default function ReportsPage() {
                   </table>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Day-by-day sales */}
+          <div className="card p-0 overflow-hidden mt-6">
+            <div className="px-5 py-4 border-b border-border"><h2 className="text-sm font-semibold text-text-primary">Daily Sales</h2></div>
+            <div className="p-5 overflow-auto">
+              {daily.length === 0 ? <p className="text-sm text-text-muted italic">No sales in this period.</p> : (
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-text-secondary uppercase"><th className="pb-2">Date</th><th className="pb-2 text-right">Orders</th><th className="pb-2 text-right">Paid</th><th className="pb-2 text-right">Revenue</th></tr></thead>
+                  <tbody className="divide-y divide-border">
+                    {daily.map((d) => (
+                      <tr key={d.date}><td className="py-2">{d.date}</td><td className="py-2 text-right">{d.orders}</td><td className="py-2 text-right">{d.paidOrders}</td><td className="py-2 text-right font-mono">{fmt(d.revenue)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* Shift-by-shift */}
+          <div className="card p-0 overflow-hidden mt-6">
+            <div className="px-5 py-4 border-b border-border"><h2 className="text-sm font-semibold text-text-primary">Shifts (register sessions)</h2></div>
+            <div className="p-5 overflow-auto">
+              {shifts.length === 0 ? <p className="text-sm text-text-muted italic">No shifts in this period.</p> : (
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-text-secondary uppercase"><th className="pb-2">Operator</th><th className="pb-2">Opened</th><th className="pb-2">Status</th><th className="pb-2 text-right">Sales</th><th className="pb-2 text-right">Expected</th><th className="pb-2 text-right">Counted</th><th className="pb-2 text-right">Variance</th></tr></thead>
+                  <tbody className="divide-y divide-border">
+                    {shifts.map((s) => (
+                      <tr key={s.id}>
+                        <td className="py-2">{s.operator ?? '—'}</td>
+                        <td className="py-2 text-text-muted">{new Date(s.openedAt).toLocaleString()}</td>
+                        <td className="py-2 capitalize">{s.status}</td>
+                        <td className="py-2 text-right font-mono">{s.totalSales != null ? fmt(s.totalSales) : '—'}</td>
+                        <td className="py-2 text-right font-mono">{s.expected != null ? fmt(s.expected) : '—'}</td>
+                        <td className="py-2 text-right font-mono">{s.counted != null ? fmt(s.counted) : '—'}</td>
+                        <td className={`py-2 text-right font-mono ${s.variance != null && s.variance !== 0 ? (s.variance < 0 ? 'text-error' : 'text-success') : ''}`}>{s.variance != null ? fmt(s.variance) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </>

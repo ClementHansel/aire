@@ -327,6 +327,8 @@ export const MODULE_READ_TOOLS: ToolDefinition[] = [
   { name: 'hr_summary', description: 'Headcount, monthly payroll, present-today count, and pending leave requests.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
   { name: 'procurement_summary', description: 'Supplier count, open purchase orders, and open purchase value.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
   { name: 'list_suppliers', description: 'Lists active suppliers with contact details.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'get_daily_sales', description: 'Day-by-day sales (orders + revenue). Optional dateFrom/dateTo (YYYY-MM-DD); defaults to the last 7 days.', inputSchema: { type: 'object', properties: { dateFrom: { type: 'string' }, dateTo: { type: 'string' } } }, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'list_shifts', description: 'Recent POS register shifts with operator, sales, opening float, counted vs expected cash and variance. Optional limit (default 20).', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } }, outputSchema: emptyObjectSchema, readOnly: true },
 ];
 
 export const MODULE_ACTION_TOOLS: ToolDefinition[] = [

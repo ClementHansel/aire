@@ -19,6 +19,73 @@ export class ReportService {
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
 
   /**
+   * Day-by-day sales: one row per day in the range with order count and
+   * revenue (paid/confirmed/completed). Optional outlet filter.
+   */
+  async getDailySales(params: ReportQueryParams): Promise<{ date: string; orders: number; revenue: number; paidOrders: number }[]> {
+    const { dateFrom, dateTo, outletId } = params;
+    const qp: string[] = [dateFrom, dateTo];
+    let outletFilter = '';
+    if (outletId) { outletFilter = ' AND outlet_id = $3'; qp.push(outletId); }
+    const res = await this.pool.query<{ day: string; orders: string; revenue: string; paid: string }>(
+      `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+              COUNT(*)::int AS orders,
+              COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
+              COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS paid
+       FROM orders
+       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${outletFilter}
+       GROUP BY day ORDER BY day ASC`,
+      qp,
+    );
+    return res.rows.map((r) => ({ date: r.day, orders: parseInt(r.orders, 10), revenue: parseFloat(r.revenue), paidOrders: parseInt(r.paid, 10) }));
+  }
+
+  /** Shift-by-shift report: each register session with its sales + cash reconciliation. */
+  async getShiftReport(params: ReportQueryParams): Promise<Record<string, unknown>[]> {
+    const { dateFrom, dateTo, outletId } = params;
+    const qp: string[] = [dateFrom, dateTo];
+    let outletFilter = '';
+    if (outletId) { outletFilter = ' AND s.outlet_id = $3'; qp.push(outletId); }
+    const res = await this.pool.query(
+      `SELECT s.id, s.operator_name, s.status, s.opening_float, s.closing_counted, s.expected_cash,
+              s.variance, s.total_sales, s.cash_sales, s.non_cash_sales, s.order_count, s.opened_at, s.closed_at,
+              o.outlet_count
+       FROM pos_shifts s
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS outlet_count
+         FROM orders WHERE shift_id = s.id
+       ) o ON true
+       WHERE s.opened_at >= $1::timestamptz AND s.opened_at < ($2::date + INTERVAL '1 day') ${outletFilter}
+       ORDER BY s.opened_at DESC`,
+      qp,
+    );
+    return res.rows.map((s) => ({
+      id: s.id,
+      operator: s.operator_name,
+      status: s.status,
+      openingFloat: parseFloat(s.opening_float),
+      // For open shifts, fall back to live order count
+      orders: s.order_count != null ? s.order_count : s.outlet_count,
+      totalSales: s.total_sales != null ? parseFloat(s.total_sales) : null,
+      cashSales: s.cash_sales != null ? parseFloat(s.cash_sales) : null,
+      nonCashSales: s.non_cash_sales != null ? parseFloat(s.non_cash_sales) : null,
+      counted: s.closing_counted != null ? parseFloat(s.closing_counted) : null,
+      expected: s.expected_cash != null ? parseFloat(s.expected_cash) : null,
+      variance: s.variance != null ? parseFloat(s.variance) : null,
+      openedAt: s.opened_at,
+      closedAt: s.closed_at,
+    }));
+  }
+
+  /** CSV for day-by-day sales. */
+  async exportDailySalesCsv(params: ReportQueryParams): Promise<string> {
+    const rows = await this.getDailySales(params);
+    const headers = ['Date', 'Orders', 'Paid Orders', 'Revenue'];
+    const lines = [headers.join(','), ...rows.map((r) => [r.date, r.orders, r.paidOrders, r.revenue].join(','))];
+    return lines.join('\n');
+  }
+
+  /**
    * Generates a summary report for the given date range and optional outlet filter.
    *
    * - totalOrders: COUNT of all orders in date range

@@ -89,6 +89,10 @@ export class AgentToolsService {
           return { success: true, data: await this.procurement.summary(tenantId) };
         case 'list_suppliers':
           return { success: true, data: { suppliers: await this.procurement.listSuppliers(tenantId) } };
+        case 'get_daily_sales':
+          return { success: true, data: { days: await this.dailySales(tenantId, p.dateFrom as string, p.dateTo as string) } };
+        case 'list_shifts':
+          return { success: true, data: { shifts: await this.recentShifts(tenantId, (p.limit as number) ?? 20) } };
         // ── Business module action tools ─────────────────────────────
         case 'adjust_inventory_stock':
           return {
@@ -302,6 +306,41 @@ export class AgentToolsService {
   }
 
   // ─── Action implementations ───────────────────────────────────────────────
+
+  private async dailySales(tenantId: string, dateFrom?: string, dateTo?: string): Promise<unknown[]> {
+    const from = dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom) ? dateFrom : null;
+    const to = dateTo && /^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? dateTo : null;
+    const rangeClause = from && to
+      ? `created_at >= $2::timestamptz AND created_at < ($3::date + INTERVAL '1 day')`
+      : `created_at > NOW() - INTERVAL '7 days'`;
+    const params: unknown[] = from && to ? [tenantId, from, to] : [tenantId];
+    const res = await this.pool.query<{ day: string; orders: string; revenue: string }>(
+      `SELECT to_char(created_at, 'YYYY-MM-DD') AS day, COUNT(*) AS orders,
+              COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')),0) AS revenue
+       FROM orders WHERE tenant_id = $1 AND ${rangeClause}
+       GROUP BY day ORDER BY day DESC`,
+      params,
+    );
+    return res.rows.map((r) => ({ date: r.day, orders: parseInt(r.orders, 10), revenue: parseFloat(r.revenue) }));
+  }
+
+  private async recentShifts(tenantId: string, limit: number): Promise<unknown[]> {
+    const res = await this.pool.query(
+      `SELECT id, operator_name, status, opening_float, total_sales, cash_sales, expected_cash, closing_counted, variance, order_count, opened_at, closed_at
+       FROM pos_shifts WHERE tenant_id = $1 ORDER BY opened_at DESC LIMIT $2`,
+      [tenantId, Math.min(limit, 100)],
+    );
+    return res.rows.map((s) => ({
+      id: s.id, operator: s.operator_name, status: s.status,
+      openingFloat: parseFloat(s.opening_float),
+      totalSales: s.total_sales != null ? parseFloat(s.total_sales) : null,
+      cashSales: s.cash_sales != null ? parseFloat(s.cash_sales) : null,
+      expected: s.expected_cash != null ? parseFloat(s.expected_cash) : null,
+      counted: s.closing_counted != null ? parseFloat(s.closing_counted) : null,
+      variance: s.variance != null ? parseFloat(s.variance) : null,
+      orders: s.order_count, openedAt: s.opened_at, closedAt: s.closed_at,
+    }));
+  }
 
   private async createCampaign(inv: ToolInvocation): Promise<ToolResult> {
     const p = inv.parameters;
