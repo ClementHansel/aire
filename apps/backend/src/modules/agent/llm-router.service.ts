@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
 import { MonitoringService } from '../monitoring/monitoring.service';
 
@@ -60,7 +60,7 @@ export class LLMRouterService {
 
   constructor(
     private readonly settingsService: SettingsService,
-    private readonly monitoring: MonitoringService,
+    @Optional() private readonly monitoring?: MonitoringService,
   ) {
     this.hermesAiEndpoint =
       process.env.HERMES_AI_ENDPOINT ?? 'http://localhost:11434/api/chat';
@@ -79,7 +79,7 @@ export class LLMRouterService {
     const start = Date.now();
     const response = await this.routeChat(tenantId, messages, options);
     const isError = 'error' in response && (response as LLMErrorResponse).error === true;
-    await this.monitoring.record({
+    await this.monitoring?.record({
       tenantId,
       kind: 'llm',
       name: response.model || options?.model || 'unknown',

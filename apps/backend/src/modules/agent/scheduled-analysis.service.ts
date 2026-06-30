@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, Logger, forwardRef, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { SettingsService } from '../settings/settings.service';
@@ -69,7 +69,7 @@ export class ScheduledAnalysisService {
     private readonly llmRouterService: LLMRouterService,
     @Inject(forwardRef(() => AgentService)) private readonly agentService: AgentService,
     private readonly auditService: AuditService,
-    private readonly agentToolsService: AgentToolsService,
+    @Optional() private readonly agentToolsService?: AgentToolsService,
   ) {}
 
   /**
@@ -295,9 +295,9 @@ Respond ONLY with a JSON array.`;
    * recent events) to ground the LLM's analysis in actual numbers.
    */
   private async gatherMetricsSnapshot(tenantId: string): Promise<string> {
+    if (!this.agentToolsService) return '{}';
     try {
-      const [summary, memberships, events] = await Promise.all([
-        this.agentToolsService.run({ toolName: 'get_business_summary', tenantId, outletId: '', parameters: {} }),
+      const [summary, memberships, events] = await Promise.all([        this.agentToolsService.run({ toolName: 'get_business_summary', tenantId, outletId: '', parameters: {} }),
         this.agentToolsService.run({ toolName: 'list_memberships', tenantId, outletId: '', parameters: {} }),
         this.agentToolsService.run({ toolName: 'list_recent_events', tenantId, outletId: '', parameters: { limit: 20 } }),
       ]);

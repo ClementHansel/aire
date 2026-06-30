@@ -47,6 +47,10 @@ function createController() {
     agentService as unknown as AgentService,
     proposalService as unknown as ProposalService,
     agentGateway as unknown as AgentGateway,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
   );
 
   return { controller, agentService, proposalService, agentGateway };

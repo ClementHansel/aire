@@ -318,7 +318,7 @@ export const READ_TOOLS: ToolDefinition[] = [
 ];
 
 /**
- * All default tool definitions.
+ * Action tools — gated by automation toggles + approval mode.
  */
 export const DEFAULT_TOOLS: ToolDefinition[] = [
   CREATE_CAMPAIGN_TOOL,
@@ -327,15 +327,17 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   FLAG_ANOMALY_TOOL,
   SUGGEST_PRICING_TOOL,
   SEND_MEMBERSHIP_RECOMMENDATION_TOOL,
-  ...READ_TOOLS,
 ];
 
+/** Every tool registered for the agent (action + read-only). */
+export const ALL_TOOLS: ToolDefinition[] = [...DEFAULT_TOOLS, ...READ_TOOLS];
+
 /**
- * Register all default tools in the registry.
+ * Register all tools (action + read-only) in the registry.
  * Called during module initialization.
  */
 export function registerDefaultTools(): void {
-  for (const tool of DEFAULT_TOOLS) {
+  for (const tool of ALL_TOOLS) {
     registerTool(tool);
   }
 }
