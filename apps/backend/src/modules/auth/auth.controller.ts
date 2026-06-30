@@ -6,7 +6,7 @@ import {
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService, RegisterRequest } from './auth.service';
 import {
   LoginRequest,
   LoginResponse,
@@ -32,6 +32,36 @@ export class AuthController {
     }
 
     return this.authService.login(body);
+  }
+
+  /**
+   * POST /api/auth/register
+   * Self-service signup — creates a tenant + owner and returns tokens.
+   */
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  async register(@Body() body: RegisterRequest): Promise<LoginResponse> {
+    return this.authService.register(body);
+  }
+
+  /**
+   * POST /api/auth/forgot-password
+   * Issues a password reset token.
+   */
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() body: { email: string }) {
+    return this.authService.forgotPassword(body?.email);
+  }
+
+  /**
+   * POST /api/auth/reset-password
+   * Resets a password using a valid reset token.
+   */
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() body: { token: string; newPassword: string }) {
+    return this.authService.resetPassword(body?.token, body?.newPassword);
   }
 
   /**

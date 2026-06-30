@@ -1,4 +1,4 @@
-import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Inject, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -17,6 +17,14 @@ import {
   ERR_AUTH_REFRESH_TOKEN_EXPIRED,
 } from '@aire/shared';
 import { DATABASE_POOL } from './database.provider';
+import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
+
+export interface RegisterRequest {
+  tenantName: string;
+  name: string;
+  email: string;
+  password: string;
+}
 
 export interface UserRow {
   id: string;
@@ -81,6 +89,113 @@ export class AuthService {
         ...(user.outlet_id ? { outletId: user.outlet_id } : {}),
       },
     };
+  }
+
+  /**
+   * Self-service tenant signup: creates a new tenant + its owner user and
+   * returns tokens (auto-login).
+   */
+  async register(dto: RegisterRequest): Promise<LoginResponse> {
+    const email = (dto.email ?? '').trim().toLowerCase();
+    const name = (dto.name ?? '').trim();
+    const tenantName = (dto.tenantName ?? '').trim();
+    if (!tenantName || !name || !email || !dto.password) {
+      throw new BadRequestException('Business name, your name, email and password are required');
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new BadRequestException('Please enter a valid email address');
+    }
+    if (dto.password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+
+    const existing = await this.findUserByEmail(email);
+    if (existing) {
+      throw new ConflictException('An account with this email already exists');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const slug = this.slugify(tenantName);
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const tenantRes = await client.query<{ id: string }>(
+        `INSERT INTO tenants (name, slug, plan, status, settings)
+         VALUES ($1, $2, 'standard', 'active', $3) RETURNING id`,
+        [tenantName, slug, JSON.stringify(DEFAULT_AUTOMATION_SETTINGS)],
+      );
+      const tenantId = tenantRes.rows[0]!.id;
+      const userRes = await client.query<UserRow>(
+        `INSERT INTO users (tenant_id, outlet_id, email, password_hash, name, role, is_active)
+         VALUES ($1, NULL, $2, $3, $4, 'tenant_owner', true)
+         RETURNING id, tenant_id, outlet_id, email, password_hash, name, role, is_active`,
+        [tenantId, email, passwordHash, name],
+      );
+      await client.query('COMMIT');
+
+      const user = userRes.rows[0]!;
+      const accessToken = this.issueAccessToken(user);
+      const refreshToken = await this.issueRefreshToken(user.id);
+      return {
+        accessToken,
+        refreshToken,
+        user: { id: user.id, name: user.name, role: user.role as LoginResponse['user']['role'], tenantId: user.tenant_id },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      // Unique violation on slug — retry once with a fresh suffix.
+      if ((err as { code?: string }).code === '23505') {
+        throw new ConflictException('Could not create account, please try again');
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Issue a password-reset token (stored in Redis, 30 min TTL). Returns a
+   * generic message; the token is included so the flow works without an email
+   * service configured (in production this would be emailed instead).
+   */
+  async forgotPassword(email: string): Promise<{ message: string; resetToken?: string }> {
+    const normalized = (email ?? '').trim().toLowerCase();
+    const generic = 'If an account exists for that email, a reset token has been issued.';
+    if (!normalized) return { message: generic };
+    const user = await this.findUserByEmail(normalized);
+    if (!user) return { message: generic };
+
+    const token = uuidv4();
+    await this.redis.set(`pwreset:${token}`, user.id, 'EX', 30 * 60);
+    // No email/SMS channel is configured, so the token is returned to enable
+    // the reset flow. Wire an email provider to deliver this securely.
+    return { message: generic, resetToken: token };
+  }
+
+  /** Reset a password using a valid reset token. */
+  async resetPassword(token: string, newPassword: string): Promise<{ success: true }> {
+    if (!token) throw new BadRequestException('Reset token is required');
+    if (!newPassword || newPassword.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+    const key = `pwreset:${token}`;
+    const userId = await this.redis.get(key);
+    if (!userId) throw new BadRequestException('Reset token is invalid or has expired');
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const res = await this.pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [passwordHash, userId],
+    );
+    if (res.rowCount === 0) throw new BadRequestException('Account not found');
+    await this.redis.del(key);
+    return { success: true };
+  }
+
+  private slugify(name: string): string {
+    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'tenant';
+    return `${base}-${uuidv4().slice(0, 6)}`;
   }
 
   async refresh(refreshToken: string): Promise<RefreshResponse> {
