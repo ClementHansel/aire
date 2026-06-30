@@ -65,6 +65,47 @@ export function isAuthenticated(): boolean {
 export function logout(): void {
   clearSession();
   if (typeof window !== 'undefined') {
+    localStorage.removeItem('aire_impersonating');
+    localStorage.removeItem('aire_admin_backup');
     window.location.href = '/';
   }
+}
+
+// ── Platform-admin impersonation ─────────────────────────────────────────────
+const IMP_KEY = 'aire_impersonating';
+const BACKUP_KEY = 'aire_admin_backup';
+
+/** Begin impersonating a tenant: back up the admin session, then swap in the token. */
+export function startImpersonation(accessToken: string, user: AuthUser): void {
+  if (typeof window === 'undefined') return;
+  const backup = {
+    access: localStorage.getItem(ACCESS_KEY),
+    refresh: localStorage.getItem(REFRESH_KEY),
+    user: localStorage.getItem(USER_KEY),
+  };
+  localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+  localStorage.setItem(ACCESS_KEY, accessToken);
+  localStorage.removeItem(REFRESH_KEY);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  localStorage.setItem(IMP_KEY, '1');
+}
+
+export function isImpersonating(): boolean {
+  return typeof window !== 'undefined' && localStorage.getItem(IMP_KEY) === '1';
+}
+
+/** Restore the original admin session. */
+export function stopImpersonation(): void {
+  if (typeof window === 'undefined') return;
+  const raw = localStorage.getItem(BACKUP_KEY);
+  if (raw) {
+    try {
+      const b = JSON.parse(raw) as { access: string | null; refresh: string | null; user: string | null };
+      if (b.access) localStorage.setItem(ACCESS_KEY, b.access); else localStorage.removeItem(ACCESS_KEY);
+      if (b.refresh) localStorage.setItem(REFRESH_KEY, b.refresh); else localStorage.removeItem(REFRESH_KEY);
+      if (b.user) localStorage.setItem(USER_KEY, b.user); else localStorage.removeItem(USER_KEY);
+    } catch { /* noop */ }
+  }
+  localStorage.removeItem(BACKUP_KEY);
+  localStorage.removeItem(IMP_KEY);
 }

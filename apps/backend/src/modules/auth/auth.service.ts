@@ -237,6 +237,36 @@ export class AuthService {
     return payload;
   }
 
+  /**
+   * Platform-admin impersonation: issue an access token that acts as the given
+   * tenant's owner. Caller MUST be a Platform Super Admin and MUST audit the act.
+   */
+  async issueImpersonationToken(tenantId: string): Promise<{
+    accessToken: string;
+    user: { id: string; name: string; role: string; tenantId: string; outletId: string | null };
+  }> {
+    const res = await this.pool.query<UserRow & { name: string }>(
+      `SELECT id, tenant_id, outlet_id, role, name FROM users
+       WHERE tenant_id = $1 AND role = 'tenant_owner'
+       ORDER BY created_at ASC LIMIT 1`,
+      [tenantId],
+    );
+    const user = res.rows[0];
+    if (!user) {
+      throw new BadRequestException('Tenant has no owner account to impersonate');
+    }
+    return {
+      accessToken: this.issueAccessToken(user),
+      user: {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        tenantId: user.tenant_id,
+        outletId: user.outlet_id ?? null,
+      },
+    };
+  }
+
   // ─── Private Helpers ──────────────────────────────────────────────────────────
 
   private issueAccessToken(user: UserRow): string {
