@@ -84,10 +84,24 @@ export class ProcurementService {
   }
 
   async createPurchaseOrder(tenantId: string, dto: CreatePoDto, actor?: string): Promise<Record<string, unknown>> {
-    if (!Array.isArray(dto.items) || dto.items.length === 0) {
-      throw new BadRequestException('At least one line item is required');
+    const rawItems = Array.isArray(dto.items) ? dto.items : [];
+    // Normalize line items — accept camelCase (frontend) or snake_case (AI tools).
+    const items = rawItems.map((it) => {
+      const any = it as unknown as Record<string, unknown>;
+      return {
+        itemId: (any.itemId ?? any.item_id ?? null) as string | null,
+        description: String(any.description ?? ''),
+        quantity: Number(any.quantity),
+        unitCost: Number(any.unitCost ?? any.unit_cost),
+      };
+    });
+    if (items.length === 0) throw new BadRequestException('At least one line item is required');
+    for (const it of items) {
+      if (!it.description.trim()) throw new BadRequestException('Each line item needs a description');
+      if (!Number.isFinite(it.quantity) || it.quantity <= 0) throw new BadRequestException('Each line item needs a positive quantity');
+      if (!Number.isFinite(it.unitCost) || it.unitCost < 0) throw new BadRequestException('Each line item needs a valid unit cost');
     }
-    const total = dto.items.reduce((s, it) => s + it.quantity * it.unitCost, 0);
+    const total = items.reduce((s, it) => s + it.quantity * it.unitCost, 0);
     const poNumber = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(Math.random() * 9000 + 1000)}`;
     const client = await this.pool.connect();
     try {
@@ -98,18 +112,18 @@ export class ProcurementService {
         [tenantId, dto.supplierId ?? null, poNumber, total, dto.notes ?? null, actor ?? null],
       );
       const poId = po.rows[0]!.id;
-      for (const it of dto.items) {
+      for (const it of items) {
         await client.query(
           `INSERT INTO purchase_order_items (po_id, item_id, description, quantity, unit_cost, subtotal)
            VALUES ($1,$2,$3,$4,$5,$6)`,
-          [poId, it.itemId ?? null, it.description, it.quantity, it.unitCost, it.quantity * it.unitCost],
+          [poId, it.itemId, it.description, it.quantity, it.unitCost, it.quantity * it.unitCost],
         );
       }
       await client.query('COMMIT');
       void this.eventBus?.emit({
         type: DomainEventType.PurchaseOrderCreated,
         tenantId, actor: actor ?? 'system',
-        payload: { poId, poNumber, total, lines: dto.items.length },
+        payload: { poId, poNumber, total, lines: items.length },
       });
       return { id: poId, poNumber, status: 'ordered', total };
     } catch (err) {
