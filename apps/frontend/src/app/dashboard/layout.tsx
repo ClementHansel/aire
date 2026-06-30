@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 
 const navItems = [
+  { id: 'hub', label: 'Hub', href: '/hub', icon: '🏠' },
   { id: 'overview', label: 'Overview', href: '/dashboard', icon: '📊' },
   { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: '🤖' },
   { id: 'services', label: 'Services', href: '/dashboard/services', icon: '🚿' },
@@ -53,7 +54,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <aside className="hidden lg:flex lg:flex-col lg:w-64 bg-surface-raised border-r border-border" data-testid="dashboard-sidebar">
         {/* Brand */}
         <div className="p-5 border-b border-border">
-          <Link href="/dashboard" className="flex items-center gap-2.5">
+          <Link href="/hub" className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
               <span className="text-sm font-bold text-white">A</span>
             </div>
@@ -104,7 +105,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile header */}
         <header className="lg:hidden flex items-center justify-between p-4 bg-surface-raised border-b border-border" data-testid="dashboard-header">
-          <Link href="/dashboard" className="flex items-center gap-2">
+          <Link href="/hub" className="flex items-center gap-2">
             <div className="w-7 h-7 bg-primary-500 rounded-lg flex items-center justify-center">
               <span className="text-xs font-bold text-white">A</span>
             </div>

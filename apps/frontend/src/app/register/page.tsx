@@ -22,7 +22,7 @@ export default function RegisterPage() {
     try {
       const session = await api.post<AuthSession>('/auth/register', { tenantName, name, email, password });
       setSession(session);
-      window.location.href = '/dashboard';
+      window.location.href = '/hub';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {

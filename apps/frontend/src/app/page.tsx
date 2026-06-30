@@ -21,7 +21,7 @@ export default function LoginPage() {
     try {
       const session = await api.post<AuthSession>('/auth/login', { email: loginEmail, password: loginPassword });
       setSession(session);
-      window.location.href = '/dashboard';
+      window.location.href = '/hub';
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
       setError(message.includes('credentials') || message.includes('401') ? 'Invalid email or password' : message);

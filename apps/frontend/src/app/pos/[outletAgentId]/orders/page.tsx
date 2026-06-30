@@ -70,6 +70,7 @@ export default function OrdersPage() {
             <p className="font-semibold text-text-primary text-sm">Orders</p>
           </div>
           <nav className="flex gap-1 text-sm">
+            <Link href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</Link>
             <Link href={`/pos/${agent}/new-order`} className="btn-ghost py-1.5 px-3">New Order</Link>
             <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Orders</span>
             <Link href={`/pos/${agent}/summary`} className="btn-ghost py-1.5 px-3">Summary</Link>

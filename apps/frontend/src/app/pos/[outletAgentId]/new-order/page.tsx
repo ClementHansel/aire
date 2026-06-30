@@ -216,6 +216,7 @@ export default function NewOrderPage() {
             </div>
           </div>
           <nav className="hidden sm:flex gap-1 text-sm">
+            <a href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</a>
             <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">New Order</span>
             <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
             <a href={`/pos/${params.outletAgentId}/summary`} className="btn-ghost py-1.5 px-3">Summary</a>

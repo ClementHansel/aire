@@ -58,6 +58,7 @@ export default function SummaryPage() {
             <p className="font-semibold text-text-primary text-sm">Today&apos;s Summary</p>
           </div>
           <nav className="flex gap-1 text-sm">
+            <Link href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</Link>
             <Link href={`/pos/${agent}/new-order`} className="btn-ghost py-1.5 px-3">New Order</Link>
             <Link href={`/pos/${agent}/orders`} className="btn-ghost py-1.5 px-3">Orders</Link>
             <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Summary</span>

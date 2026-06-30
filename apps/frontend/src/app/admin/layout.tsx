@@ -33,6 +33,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <li>
               <a
+                href="/hub"
+                data-testid="nav-hub"
+                style={{ color: '#9ca3af', textDecoration: 'none', padding: '0.5rem 0.75rem', display: 'block', borderRadius: '6px', borderBottom: '1px solid rgba(255,255,255,0.08)', marginBottom: '0.5rem' }}
+              >
+                🏠 Hub
+              </a>
+            </li>
+            <li>
+              <a
                 href="/admin"
                 data-testid="nav-tenants"
                 style={{ color: '#e0e0e0', textDecoration: 'none', padding: '0.5rem 0.75rem', display: 'block', borderRadius: '6px' }}

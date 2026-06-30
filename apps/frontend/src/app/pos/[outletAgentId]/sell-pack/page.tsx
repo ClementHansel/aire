@@ -292,6 +292,7 @@ export default function SellPackPage() {
             </div>
           </div>
           <nav className="hidden sm:flex gap-1 text-sm">
+            <a href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</a>
             <a href={`/pos/${params.outletAgentId}/new-order`} className="btn-ghost py-1.5 px-3">New Order</a>
             <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Sell Pack</span>
             <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
