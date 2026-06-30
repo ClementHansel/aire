@@ -48,9 +48,11 @@ export default function NewOrderPage() {
 
   // payment state
   const [order, setOrder] = useState<CreatedOrder | null>(null);
-  const [payMethod, setPayMethod] = useState<'cash' | 'qris_static' | 'edc' | 'transfer'>('cash');
+  const [payMethod, setPayMethod] = useState<'cash' | 'qris_dynamic' | 'edc' | 'transfer'>('cash');
   const [amountReceived, setAmountReceived] = useState('');
   const [paying, setPaying] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+  const [polling, setPolling] = useState(false);
   const [receipt, setReceipt] = useState<{ orderNumber: string; total: number; change: number } | null>(null);
 
   useEffect(() => {
@@ -111,20 +113,47 @@ export default function NewOrderPage() {
     setPaying(true);
     setError('');
     try {
+      if (payMethod === 'qris_dynamic') {
+        // Initiate a gateway QRIS charge and wait for webhook confirmation
+        const charge = await api.post<{ qrString: string }>(`/payments/charge/${order.id}`);
+        setQr(charge.qrString);
+        setPolling(true);
+        return;
+      }
       await api.post(`/orders/${order.id}/pay`, {
         method: payMethod,
         amountReceived: payMethod === 'cash' ? Number(amountReceived) : undefined,
       });
       const change = payMethod === 'cash' ? Math.max(0, Number(amountReceived) - order.total) : 0;
-      setReceipt({ orderNumber: order.orderNumber, total: order.total, change });
-      // reset for next order
-      setCart([]); setName(''); setPhone(''); setPlate(''); setOrder(null);
+      finishSale(order.orderNumber, order.total, change);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Payment failed');
     } finally {
       setPaying(false);
     }
   };
+
+  const finishSale = (orderNumber: string, total: number, change: number) => {
+    setReceipt({ orderNumber, total, change });
+    setCart([]); setName(''); setPhone(''); setPlate('');
+    setOrder(null); setQr(null); setPolling(false); setPaying(false);
+  };
+
+  // Poll order status while waiting for QRIS gateway confirmation
+  useEffect(() => {
+    if (!polling || !order) return;
+    const id = setInterval(async () => {
+      try {
+        const o = await api.get<{ status: string; orderNumber: string; total: number }>(`/orders/${order.id}`);
+        if (o.status === 'paid') {
+          clearInterval(id);
+          finishSale(o.orderNumber, o.total, 0);
+        }
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [polling, order]);
 
   const user = getUser();
 
@@ -136,12 +165,19 @@ export default function NewOrderPage() {
     <div className="min-h-screen bg-surface flex flex-col">
       {/* Top bar */}
       <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
-          <div>
-            <p className="font-semibold text-text-primary text-sm">Point of Sale</p>
-            <p className="text-xs text-text-muted">Agent: {params.outletAgentId as string}</p>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
+            <div>
+              <p className="font-semibold text-text-primary text-sm">Point of Sale</p>
+              <p className="text-xs text-text-muted">Agent: {params.outletAgentId as string}</p>
+            </div>
           </div>
+          <nav className="hidden sm:flex gap-1 text-sm">
+            <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">New Order</span>
+            <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
+            <a href={`/pos/${params.outletAgentId}/summary`} className="btn-ghost py-1.5 px-3">Summary</a>
+          </nav>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-text-secondary">{user?.name}</span>
@@ -226,15 +262,15 @@ export default function NewOrderPage() {
 
             <div className="mt-4">
               <label className="block text-sm font-medium mb-1.5">Payment Method</label>
-              <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)}>
+              <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
                 <option value="cash">Cash</option>
-                <option value="qris_static">QRIS</option>
+                <option value="qris_dynamic">QRIS (scan to pay)</option>
                 <option value="edc">EDC / Card</option>
                 <option value="transfer">Bank Transfer</option>
               </select>
             </div>
 
-            {payMethod === 'cash' && (
+            {payMethod === 'cash' && !qr && (
               <div className="mt-3">
                 <label className="block text-sm font-medium mb-1.5">Amount Received</label>
                 <input type="number" className="input-field" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
@@ -242,9 +278,33 @@ export default function NewOrderPage() {
               </div>
             )}
 
+            {qr && (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-text-secondary mb-2">Scan with any QRIS app to pay</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qr)}`}
+                  alt="QRIS payment code"
+                  className="mx-auto rounded-lg border border-border"
+                  width={220}
+                  height={220}
+                />
+                <p className="mt-3 text-sm text-text-secondary flex items-center justify-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  Waiting for payment confirmation…
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end mt-5">
-              <button className="btn-secondary" onClick={() => setOrder(null)} disabled={paying}>Cancel</button>
-              <button className="btn-primary" onClick={confirmPayment} disabled={paying}>{paying ? 'Processing…' : 'Confirm Payment'}</button>
+              <button className="btn-secondary" onClick={() => { setOrder(null); setQr(null); setPolling(false); }} disabled={paying && !qr}>
+                {qr ? 'Close' : 'Cancel'}
+              </button>
+              {!qr && (
+                <button className="btn-primary" onClick={confirmPayment} disabled={paying}>
+                  {paying ? 'Processing…' : payMethod === 'qris_dynamic' ? 'Generate QR' : 'Confirm Payment'}
+                </button>
+              )}
             </div>
           </div>
         </div>

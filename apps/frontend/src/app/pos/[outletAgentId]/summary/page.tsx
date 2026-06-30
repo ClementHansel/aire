@@ -1,17 +1,12 @@
-/**
- * POS Summary/Reports view.
- * Displays summary KPIs, payment method breakdown, and top services
- * with configurable date range filtering.
- *
- * Requirements: 23.1, 23.2, 23.3, 23.5
- */
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
-import { PaymentMethod } from '@aire/shared/enums';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { api } from '@/lib/api';
+import { isAuthenticated, getUser, logout } from '@/lib/auth';
 
-/** Summary data returned from the reports API */
-export interface SummaryData {
+interface SummaryResponse {
   totalOrders: number;
   revenue: number;
   paidCount: number;
@@ -19,221 +14,103 @@ export interface SummaryData {
   uniqueMembers: number;
   newMembers: number;
   byPaymentMethod: Record<string, { revenue: number; count: number }>;
-  byService: Array<{ serviceId: string; name: string; quantity: number; revenue: number }>;
+  byService: { serviceId: string; name: string; quantity: number; revenue: number }[];
 }
 
-/** Props for the SummaryPage component (used for testing with injected data) */
-export interface SummaryPageProps {
-  /** Optional pre-loaded summary data (for testing). If not provided, displays loading state. */
-  initialData?: SummaryData | null;
-  /** Optional callback for CSV export */
-  onExport?: (dateFrom: string, dateTo: string) => void;
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** Format a number as Indonesian Rupiah-style currency (no symbol) */
-function formatCurrency(amount: number): string {
-  return amount.toLocaleString('id-ID');
-}
+export default function SummaryPage() {
+  const params = useParams();
+  const agent = params.outletAgentId as string;
+  const [data, setData] = useState<SummaryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-/** Get today's date as YYYY-MM-DD string */
-function getTodayString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/** Human-friendly labels for payment methods */
-const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  [PaymentMethod.Cash]: 'Cash',
-  [PaymentMethod.QrisStatic]: 'QRIS (Static)',
-  [PaymentMethod.QrisDynamic]: 'QRIS (Dynamic)',
-  [PaymentMethod.Edc]: 'EDC',
-  [PaymentMethod.Transfer]: 'Transfer',
-};
-
-export default function SummaryPage({ initialData, onExport }: SummaryPageProps = {}) {
-  const today = getTodayString();
-  const [dateFrom, setDateFrom] = useState(today);
-  const [dateTo, setDateTo] = useState(today);
-  const [summaryData] = useState<SummaryData | null>(initialData ?? null);
-
-  const handleTodayClick = useCallback(() => {
-    const todayStr = getTodayString();
-    setDateFrom(todayStr);
-    setDateTo(todayStr);
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const d = today();
+      const result = await api.get<SummaryResponse>(`/reports/summary?dateFrom=${d}&dateTo=${d}`);
+      setData(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load summary');
+    } finally { setLoading(false); }
   }, []);
 
-  const handleExport = useCallback(() => {
-    if (onExport) {
-      onExport(dateFrom, dateTo);
-    }
-  }, [onExport, dateFrom, dateTo]);
+  useEffect(() => {
+    if (!isAuthenticated()) { window.location.href = '/'; return; }
+    load();
+  }, [load]);
 
-  /** Top 10 services sorted by revenue descending */
-  const topServices = useMemo(() => {
-    if (!summaryData?.byService) return [];
-    return [...summaryData.byService]
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 10);
-  }, [summaryData]);
-
-  /** Payment method entries as array for rendering */
-  const paymentMethods = useMemo(() => {
-    if (!summaryData?.byPaymentMethod) return [];
-    return Object.entries(summaryData.byPaymentMethod).map(([method, data]) => ({
-      method,
-      label: PAYMENT_METHOD_LABELS[method] || method,
-      ...data,
-    }));
-  }, [summaryData]);
+  const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
+  const user = getUser();
+  const payments = data ? Object.entries(data.byPaymentMethod) : [];
 
   return (
-    <div className="summary-page" data-testid="summary-page">
-      {/* Header */}
-      <div className="summary-page__header">
-        <h1>Summary & Reports</h1>
-      </div>
-
-      {/* Date Range Picker */}
-      <div className="summary-page__date-range" data-testid="date-range-picker">
-        <label htmlFor="date-from">From</label>
-        <input
-          id="date-from"
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          data-testid="date-from"
-          aria-label="Start date"
-        />
-
-        <label htmlFor="date-to">To</label>
-        <input
-          id="date-to"
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          data-testid="date-to"
-          aria-label="End date"
-        />
-
-        <button
-          type="button"
-          onClick={handleTodayClick}
-          data-testid="today-btn"
-          aria-label="Set date range to today"
-        >
-          Today
-        </button>
-
-        <button
-          type="button"
-          onClick={handleExport}
-          data-testid="export-csv-btn"
-          aria-label="Export data as CSV"
-        >
-          Export CSV
-        </button>
-      </div>
-
-      {/* KPI Summary Cards */}
-      {summaryData ? (
-        <>
-          <div className="summary-page__kpis" data-testid="kpi-cards">
-            <div className="summary-page__kpi-card" data-testid="kpi-total-orders">
-              <span className="summary-page__kpi-label">Total Orders</span>
-              <span className="summary-page__kpi-value">{summaryData.totalOrders}</span>
-            </div>
-
-            <div className="summary-page__kpi-card" data-testid="kpi-revenue">
-              <span className="summary-page__kpi-label">Revenue</span>
-              <span className="summary-page__kpi-value">
-                {formatCurrency(summaryData.revenue)}
-              </span>
-            </div>
-
-            <div className="summary-page__kpi-card" data-testid="kpi-paid-count">
-              <span className="summary-page__kpi-label">Paid</span>
-              <span className="summary-page__kpi-value">{summaryData.paidCount}</span>
-            </div>
-
-            <div className="summary-page__kpi-card" data-testid="kpi-cancelled-count">
-              <span className="summary-page__kpi-label">Cancelled</span>
-              <span className="summary-page__kpi-value">{summaryData.cancelledCount}</span>
-            </div>
-
-            <div className="summary-page__kpi-card" data-testid="kpi-unique-members">
-              <span className="summary-page__kpi-label">Unique Members</span>
-              <span className="summary-page__kpi-value">{summaryData.uniqueMembers}</span>
-            </div>
-
-            <div className="summary-page__kpi-card" data-testid="kpi-new-members">
-              <span className="summary-page__kpi-label">New Members</span>
-              <span className="summary-page__kpi-value">{summaryData.newMembers}</span>
-            </div>
+    <div className="min-h-screen bg-surface flex flex-col">
+      <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
+            <p className="font-semibold text-text-primary text-sm">Today&apos;s Summary</p>
           </div>
-
-          {/* Payment Method Breakdown */}
-          <div className="summary-page__section" data-testid="payment-method-breakdown">
-            <h2>Payment Method Breakdown</h2>
-            {paymentMethods.length > 0 ? (
-              <ul className="summary-page__payment-list">
-                {paymentMethods.map((pm) => (
-                  <li
-                    key={pm.method}
-                    className="summary-page__payment-item"
-                    data-testid={`payment-method-${pm.method}`}
-                  >
-                    <span className="summary-page__payment-label">{pm.label}</span>
-                    <span className="summary-page__payment-revenue">
-                      {formatCurrency(pm.revenue)}
-                    </span>
-                    <span className="summary-page__payment-count">
-                      {pm.count} txn{pm.count !== 1 ? 's' : ''}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p data-testid="no-payment-data">No payment data available</p>
-            )}
-          </div>
-
-          {/* Top Services */}
-          <div className="summary-page__section" data-testid="top-services">
-            <h2>Top Services</h2>
-            {topServices.length > 0 ? (
-              <table className="summary-page__services-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Service</th>
-                    <th>Quantity</th>
-                    <th>Revenue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topServices.map((service, index) => (
-                    <tr key={service.serviceId} data-testid={`service-row-${service.serviceId}`}>
-                      <td>{index + 1}</td>
-                      <td>{service.name}</td>
-                      <td>{service.quantity}</td>
-                      <td>{formatCurrency(service.revenue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p data-testid="no-services-data">No service data available</p>
-            )}
-          </div>
-        </>
-      ) : (
-        <div className="summary-page__empty" data-testid="summary-empty">
-          <p>Select a date range and load data to view summary.</p>
+          <nav className="flex gap-1 text-sm">
+            <Link href={`/pos/${agent}/new-order`} className="btn-ghost py-1.5 px-3">New Order</Link>
+            <Link href={`/pos/${agent}/orders`} className="btn-ghost py-1.5 px-3">Orders</Link>
+            <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Summary</span>
+          </nav>
         </div>
-      )}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-text-secondary">{user?.name}</span>
+          <button onClick={logout} className="text-xs text-text-secondary hover:text-text-primary">Sign out</button>
+        </div>
+      </header>
+
+      <div className="p-5 flex-1">
+        {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
+        {loading ? (
+          <div className="card text-sm text-text-muted">Loading summary…</div>
+        ) : data ? (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <div className="card"><p className="text-xs font-medium text-text-secondary uppercase">Orders</p><p className="text-2xl font-bold text-text-primary mt-1">{data.totalOrders}</p></div>
+              <div className="card"><p className="text-xs font-medium text-text-secondary uppercase">Revenue</p><p className="text-2xl font-bold text-primary-600 mt-1">{fmt(data.revenue)}</p></div>
+              <div className="card"><p className="text-xs font-medium text-text-secondary uppercase">Paid</p><p className="text-2xl font-bold text-success mt-1">{data.paidCount}</p></div>
+              <div className="card"><p className="text-xs font-medium text-text-secondary uppercase">Cancelled</p><p className="text-2xl font-bold text-error mt-1">{data.cancelledCount}</p></div>
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-6">
+              <div className="card p-0 overflow-hidden">
+                <div className="px-5 py-4 border-b border-border"><h2 className="text-sm font-semibold">Payment Methods</h2></div>
+                <div className="p-5">
+                  {payments.length === 0 ? <p className="text-sm text-text-muted italic">No payments today.</p> : (
+                    <table className="w-full text-sm"><tbody className="divide-y divide-border">
+                      {payments.map(([m, v]) => (
+                        <tr key={m}><td className="py-2 capitalize">{m.replace(/_/g, ' ')}</td><td className="py-2 text-right text-text-muted">{v.count}×</td><td className="py-2 text-right font-mono">{fmt(v.revenue)}</td></tr>
+                      ))}
+                    </tbody></table>
+                  )}
+                </div>
+              </div>
+              <div className="card p-0 overflow-hidden">
+                <div className="px-5 py-4 border-b border-border"><h2 className="text-sm font-semibold">Top Services</h2></div>
+                <div className="p-5">
+                  {data.byService.length === 0 ? <p className="text-sm text-text-muted italic">No services sold today.</p> : (
+                    <table className="w-full text-sm"><tbody className="divide-y divide-border">
+                      {data.byService.map((s) => (
+                        <tr key={s.serviceId}><td className="py-2">{s.name}</td><td className="py-2 text-right text-text-muted">{s.quantity}×</td><td className="py-2 text-right font-mono">{fmt(s.revenue)}</td></tr>
+                      ))}
+                    </tbody></table>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

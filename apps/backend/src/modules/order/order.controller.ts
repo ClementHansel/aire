@@ -140,4 +140,18 @@ export class OrderController {
 
     return this.orderListService.listOrders(params);
   }
+
+  /**
+   * GET /api/orders/:id
+   * Lightweight status lookup for POS payment polling.
+   */
+  @Get(':id')
+  async getOrder(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+  ) {
+    const order = await this.orderService.getOrderStatus(id, user);
+    if (!order) throw new BadRequestException('Order not found');
+    return order;
+  }
 }

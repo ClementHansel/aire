@@ -1,15 +1,9 @@
-/**
- * Kiosk Self-Service PWA Interface.
- * Customer-facing interface accessed via QR code for queue status checking.
- *
- * Requirements: 27.1, 27.3 — Self-service kiosk with queue position and wait time display.
- */
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
+import { useParams } from 'next/navigation';
 
-/** Queue status response from the API */
-export interface QueueStatus {
+interface QueueStatus {
   orderNumber: string;
   position: number;
   estimatedWaitMinutes: number;
@@ -17,194 +11,90 @@ export interface QueueStatus {
   assignedBay?: string;
 }
 
-/** Props for internal testing */
-export interface KioskPageProps {
-  tenantId?: string;
-}
+const STATUS_LABEL: Record<string, string> = {
+  queued: 'In Queue',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
 
-/**
- * Kiosk main page — self-service customer interface.
- * Provides order number input and queue status display.
- */
-export default function KioskPage({
-  params,
-}: {
-  params: { tenantId: string };
-}) {
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
+
+export default function KioskPage() {
+  const params = useParams();
+  const tenantId = params.tenantId as string;
   const [orderNumber, setOrderNumber] = useState('');
-  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [result, setResult] = useState<QueueStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
-  const handleCheckQueue = useCallback(async () => {
+  const check = useCallback(async () => {
     if (!orderNumber.trim()) return;
-
-    setLoading(true);
-    setError(null);
-    setQueueStatus(null);
-
+    setLoading(true); setError(''); setResult(null);
     try {
-      const response = await fetch(
-        `/api/kiosk/${params.tenantId}/queue-status?orderNumber=${encodeURIComponent(orderNumber.trim())}`,
-      );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          setError('Order not found. Please check your order number.');
-        } else {
-          setError('Unable to check queue status. Please try again.');
-        }
+      const base = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
+      const res = await fetch(`${base}/kiosk/queue-status?orderNumber=${encodeURIComponent(orderNumber.trim())}`);
+      if (!res.ok) {
+        setError(res.status === 404 ? 'Order not found. Please check your order number.' : 'Unable to check status. Please try again.');
         return;
       }
-
-      const data: QueueStatus = await response.json();
-      setQueueStatus(data);
+      setResult(await res.json());
     } catch {
-      setError('Connection error. Please check your internet and try again.');
-    } finally {
-      setLoading(false);
-    }
-  }, [orderNumber, params.tenantId]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        handleCheckQueue();
-      }
-    },
-    [handleCheckQueue],
-  );
+      setError('Connection error. Please try again.');
+    } finally { setLoading(false); }
+  }, [orderNumber]);
 
   return (
-    <div className="kiosk-page" data-testid="kiosk-page">
-      {/* Header */}
-      <header className="kiosk-page__header" data-testid="kiosk-header">
-        <h1 className="kiosk-page__title">Self-Service Queue Check</h1>
-        <p className="kiosk-page__subtitle">
-          Enter your order number to check your queue status
-        </p>
-      </header>
-
-      {/* Order number input */}
-      <div className="kiosk-page__input-section" data-testid="input-section">
-        <label htmlFor="order-number-input" className="kiosk-page__label">
-          Order Number
-        </label>
-        <input
-          id="order-number-input"
-          type="text"
-          className="kiosk-page__input"
-          data-testid="input-order-number"
-          value={orderNumber}
-          onChange={(e) => setOrderNumber(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="e.g. ORD-001"
-          aria-label="Order number"
-          autoComplete="off"
-          disabled={loading}
-        />
-        <button
-          className="kiosk-page__btn-check"
-          data-testid="btn-check-queue"
-          onClick={handleCheckQueue}
-          disabled={!orderNumber.trim() || loading}
-          aria-label="Check queue status"
-        >
-          {loading ? 'Checking...' : 'Check Queue'}
-        </button>
-      </div>
-
-      {/* Error message */}
-      {error && (
-        <div
-          className="kiosk-page__error"
-          data-testid="queue-error"
-          role="alert"
-          aria-live="assertive"
-        >
-          {error}
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+      <div className="w-full max-w-lg">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-500 rounded-2xl mb-4"><span className="text-3xl font-bold text-white">A</span></div>
+          <h1 className="text-3xl font-bold text-text-primary">Check Your Queue</h1>
+          <p className="mt-2 text-text-secondary">Enter your order number to see your position and wait time</p>
         </div>
-      )}
 
-      {/* Queue status display */}
-      {queueStatus && (
-        <div
-          className="kiosk-page__status"
-          data-testid="queue-status"
-          role="region"
-          aria-label="Queue status information"
-        >
-          <div className="kiosk-page__status-header">
-            <span className="kiosk-page__order-label">Order:</span>
-            <span
-              className="kiosk-page__order-number"
-              data-testid="display-order-number"
-            >
-              {queueStatus.orderNumber}
-            </span>
+        <div className="card">
+          <label className="block text-sm font-medium text-text-primary mb-1.5">Order Number</label>
+          <div className="flex gap-2">
+            <input
+              className="input-field text-lg"
+              placeholder="e.g. ORD-20260630-001"
+              value={orderNumber}
+              onChange={(e) => setOrderNumber(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && check()}
+              autoFocus
+            />
+            <button className="btn-primary whitespace-nowrap" onClick={check} disabled={!orderNumber.trim() || loading}>
+              {loading ? '…' : 'Check'}
+            </button>
           </div>
 
-          <div className="kiosk-page__status-grid">
-            {/* Position */}
-            <div className="kiosk-page__status-item" data-testid="display-position">
-              <span className="kiosk-page__status-label">Position</span>
-              <span className="kiosk-page__status-value">
-                #{queueStatus.position}
-              </span>
-            </div>
+          {error && <div className="mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
 
-            {/* Estimated Wait Time */}
-            <div
-              className="kiosk-page__status-item"
-              data-testid="display-wait-time"
-            >
-              <span className="kiosk-page__status-label">Estimated Wait</span>
-              <span className="kiosk-page__status-value">
-                {queueStatus.estimatedWaitMinutes} min
-              </span>
-            </div>
-
-            {/* Status */}
-            <div className="kiosk-page__status-item" data-testid="display-status">
-              <span className="kiosk-page__status-label">Status</span>
-              <span
-                className={`kiosk-page__status-badge kiosk-page__status-badge--${queueStatus.status}`}
-              >
-                {formatStatus(queueStatus.status)}
-              </span>
-            </div>
-
-            {/* Bay (if assigned) */}
-            {queueStatus.assignedBay && (
-              <div
-                className="kiosk-page__status-item"
-                data-testid="display-bay"
-              >
-                <span className="kiosk-page__status-label">Assigned Bay</span>
-                <span className="kiosk-page__status-value">
-                  {queueStatus.assignedBay}
-                </span>
+          {result && (
+            <div className="mt-6 pt-6 border-t border-border">
+              <p className="text-center text-sm text-text-secondary">Order</p>
+              <p className="text-center text-xl font-semibold text-text-primary mb-5">{result.orderNumber}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-primary-50 p-4 text-center">
+                  <p className="text-xs text-primary-700 uppercase font-medium">Position</p>
+                  <p className="text-4xl font-bold text-primary-600 mt-1">#{result.position}</p>
+                </div>
+                <div className="rounded-xl bg-surface-sunken p-4 text-center">
+                  <p className="text-xs text-text-secondary uppercase font-medium">Est. Wait</p>
+                  <p className="text-4xl font-bold text-text-primary mt-1">{result.estimatedWaitMinutes}<span className="text-lg"> min</span></p>
+                </div>
               </div>
-            )}
-          </div>
+              <div className="mt-3 flex items-center justify-center gap-3">
+                <span className="badge bg-primary-50 text-primary-700">{STATUS_LABEL[result.status] ?? result.status}</span>
+                {result.assignedBay && <span className="badge bg-green-50 text-green-700">Bay: {result.assignedBay}</span>}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+
+        <p className="text-center text-xs text-text-muted mt-6">Tenant: {tenantId}</p>
+      </div>
     </div>
   );
-}
-
-/** Format queue status for display */
-function formatStatus(status: QueueStatus['status']): string {
-  switch (status) {
-    case 'queued':
-      return 'In Queue';
-    case 'in_progress':
-      return 'In Progress';
-    case 'completed':
-      return 'Completed';
-    case 'cancelled':
-      return 'Cancelled';
-    default:
-      return status;
-  }
 }

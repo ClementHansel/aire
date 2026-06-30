@@ -10,6 +10,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PaymentProviderRegistry, TenantPaymentConfig } from './payment-provider.registry';
+import { PaymentService } from './payment.service';
 
 /**
  * Resolves payment provider configuration for webhook processing.
@@ -51,6 +52,7 @@ export class PaymentWebhookController {
   constructor(
     private readonly providerRegistry: PaymentProviderRegistry,
     private readonly configResolver: WebhookConfigResolver,
+    private readonly paymentService: PaymentService,
   ) {}
 
   @Post('xendit')
@@ -113,6 +115,11 @@ export class PaymentWebhookController {
     this.logger.log(
       `Webhook processed successfully: provider=${providerName}, txn=${result.transactionId}, status=${result.status}`,
     );
+
+    // Mark the order paid when the gateway confirms a completed payment.
+    if (result.status === 'completed' && result.transactionId) {
+      await this.paymentService.confirmPaymentByReference(result.transactionId);
+    }
 
     return {
       received: true,

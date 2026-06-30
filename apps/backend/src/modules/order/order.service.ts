@@ -497,6 +497,22 @@ export class OrderService {
   }
 
   /**
+   * Lightweight order status lookup (for POS payment polling).
+   */
+  async getOrderStatus(
+    orderId: string,
+    user: JWTPayload,
+  ): Promise<{ id: string; orderNumber: string; status: string; total: number } | null> {
+    const res = await this.pool.query(
+      'SELECT id, order_number, status, total FROM orders WHERE id = $1 AND tenant_id = $2',
+      [orderId, user.tenant_id],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+    return { id: row.id, orderNumber: row.order_number, status: row.status, total: parseFloat(row.total) };
+  }
+
+  /**
    * Looks up services by their IDs and returns a map of serviceId → ServiceRow.
    */
   private async lookupServices(
