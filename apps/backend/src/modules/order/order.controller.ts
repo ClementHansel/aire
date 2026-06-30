@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -21,7 +23,8 @@ import {
   PayOrderRequest,
 } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, Roles } from '../../common/decorators';
+import { RolesGuard } from '../../common/guards';
 import { OrderListService } from './order-list.service';
 import { OrderService } from './order.service';
 
@@ -139,6 +142,30 @@ export class OrderController {
     };
 
     return this.orderListService.listOrders(params);
+  }
+
+  /**
+   * PATCH /api/orders/:id — edit limited fields (admin+, audit-logged, day-lock).
+   */
+  @Patch(':id')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OutletAdmin)
+  async editOrder(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { customerName?: string; customerPhone?: string; note?: string },
+  ) {
+    return this.orderService.editOrder(id, user, body);
+  }
+
+  /**
+   * DELETE /api/orders/:id — cancel an order (admin+, audit-logged, day-lock).
+   */
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OutletAdmin)
+  async deleteOrder(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.orderService.deleteOrder(id, user);
   }
 
   /**

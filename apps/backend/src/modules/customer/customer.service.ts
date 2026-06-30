@@ -566,4 +566,60 @@ export class CustomerService {
 
     return { frequencyTier, spendTier, membershipStatus: membershipSegment, recency };
   }
+
+  /**
+   * List customers for the CRM table (tenant-scoped), with optional search.
+   */
+  async listCustomers(
+    tenantId: string,
+    page = 1,
+    pageSize = 50,
+    search?: string,
+  ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; totalVisits: number }[]; total: number }> {
+    const effectivePageSize = Math.min(Math.max(pageSize, 1), 200);
+    const offset = (Math.max(page, 1) - 1) * effectivePageSize;
+    const where = ['tenant_id = $1'];
+    const params: unknown[] = [tenantId];
+    if (search && search.trim()) {
+      where.push(`(name ILIKE $${params.length + 1} OR phone ILIKE $${params.length + 1})`);
+      params.push(`%${search.trim()}%`);
+    }
+    const whereSql = where.join(' AND ');
+    const countRes = await this.pool.query<{ total: number }>(
+      `SELECT COUNT(*)::int AS total FROM customers WHERE ${whereSql}`,
+      params,
+    );
+    const total = countRes.rows[0]?.total ?? 0;
+    const rowsRes = await this.pool.query<{ id: string; name: string; phone: string; created_at: string; total_visits: number }>(
+      `SELECT c.id, c.name, c.phone, c.created_at::text,
+              (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits
+       FROM customers c WHERE ${whereSql}
+       ORDER BY c.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, effectivePageSize, offset],
+    );
+    return {
+      customers: rowsRes.rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, createdAt: r.created_at, totalVisits: r.total_visits })),
+      total,
+    };
+  }
+
+  async updateCustomer(tenantId: string, id: string, patch: { name?: string; phone?: string }): Promise<{ id: string; name: string; phone: string }> {
+    const set: string[] = []; const v: unknown[] = []; let i = 1;
+    if (patch.name !== undefined) { set.push(`name = $${i++}`); v.push(patch.name); }
+    if (patch.phone !== undefined) { set.push(`phone = $${i++}`); v.push(patch.phone); set.push(`phone_normalized = $${i++}`); v.push(patch.phone.replace(/[^0-9]/g, '')); }
+    if (set.length === 0) throw new NotFoundException('No fields to update');
+    set.push('updated_at = NOW()'); v.push(id, tenantId);
+    const res = await this.pool.query<{ id: string; name: string; phone: string }>(
+      `UPDATE customers SET ${set.join(', ')} WHERE id = $${i} AND tenant_id = $${i + 1} RETURNING id, name, phone`,
+      v,
+    );
+    if (res.rows.length === 0) throw new NotFoundException('Customer not found');
+    return res.rows[0]!;
+  }
+
+  async deleteCustomer(tenantId: string, id: string): Promise<void> {
+    const res = await this.pool.query('DELETE FROM customers WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+    if (res.rowCount === 0) throw new NotFoundException('Customer not found');
+  }
 }

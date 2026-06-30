@@ -1,12 +1,18 @@
 import {
   Controller,
   Get,
+  Put,
+  Delete,
   Param,
+  Body,
   Query,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
-import { Role } from '@aire/shared';
-import { Roles } from '../../common/decorators';
+import { JWTPayload, Role } from '@aire/shared';
+import { Roles, CurrentUser } from '../../common/decorators';
+import { JwtAuthGuard } from '../auth/auth.guard';
+import { RolesGuard } from '../../common/guards';
 import { CustomerService } from './customer.service';
 
 /**
@@ -22,6 +28,47 @@ import { CustomerService } from './customer.service';
 @Controller('api/customers')
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
+
+  /**
+   * GET /api/customers/list — paginated CRM customer list (tenant-scoped).
+   */
+  @Get('list')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.OutletAdmin)
+  async list(
+    @CurrentUser() user: JWTPayload,
+    @Query('search') search?: string,
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+  ) {
+    return this.customerService.listCustomers(
+      user.tenant_id,
+      pageStr ? parseInt(pageStr, 10) : 1,
+      pageSizeStr ? parseInt(pageSizeStr, 10) : 50,
+      search,
+    );
+  }
+
+  /**
+   * PUT /api/customers/:id — edit a customer (CRM).
+   */
+  @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.OutletAdmin)
+  async update(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { name?: string; phone?: string }) {
+    return this.customerService.updateCustomer(user.tenant_id, id, body);
+  }
+
+  /**
+   * DELETE /api/customers/:id — remove a customer (CRM).
+   */
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TenantOwner)
+  async remove(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    await this.customerService.deleteCustomer(user.tenant_id, id);
+    return { ok: true };
+  }
 
   /**
    * GET /api/customers

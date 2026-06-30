@@ -8,6 +8,8 @@ import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 const navItems = [
   { id: 'hub', label: 'Hub', href: '/hub', icon: '🏠' },
   { id: 'overview', label: 'Overview', href: '/dashboard', icon: '📊' },
+  { id: 'transactions', label: 'Transactions', href: '/dashboard/transactions', icon: '🧾' },
+  { id: 'crm', label: 'Customers & CRM', href: '/dashboard/crm', icon: '🧑‍🤝‍🧑' },
   { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: '🤖' },
   { id: 'branches', label: 'Branches', href: '/dashboard/branches', icon: '🏢' },
   { id: 'services', label: 'Services', href: '/dashboard/services', icon: '🚿' },

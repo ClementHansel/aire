@@ -610,6 +610,69 @@ export class OrderService {
   }
 
   /**
+   * Edit limited fields of an order (customer name/phone/note). Blocked once the
+   * order's shift is closed (day-lock). Writes an audit log entry.
+   */
+  async editOrder(
+    orderId: string,
+    user: JWTPayload,
+    patch: { customerName?: string; customerPhone?: string; note?: string },
+  ): Promise<{ id: string }> {
+    const cur = await this.pool.query(
+      `SELECT o.id, o.shift_id, s.status AS shift_status, o.customer_name, o.customer_phone, o.note
+       FROM orders o LEFT JOIN pos_shifts s ON s.id = o.shift_id
+       WHERE o.id = $1 AND o.tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const row = cur.rows[0];
+    if (!row) throw new BadRequestException('Order not found');
+    if (row.shift_status === 'closed') throw new BadRequestException('Order is day-locked (its shift is closed) and cannot be edited');
+
+    const set: string[] = []; const v: unknown[] = []; let i = 1;
+    if (patch.customerName !== undefined) { set.push(`customer_name = $${i++}`); v.push(patch.customerName); }
+    if (patch.customerPhone !== undefined) { set.push(`customer_phone = $${i++}`); v.push(patch.customerPhone); }
+    if (patch.note !== undefined) { set.push(`note = $${i++}`); v.push(patch.note); }
+    if (set.length === 0) throw new BadRequestException('No fields to update');
+    set.push('updated_at = NOW()'); v.push(orderId, user.tenant_id);
+    await this.pool.query(`UPDATE orders SET ${set.join(', ')} WHERE id = $${i} AND tenant_id = $${i + 1}`, v);
+
+    await this.pool.query(
+      `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+       VALUES ($1, $2, 'order.edit', 'order', $3, $4, $5)`,
+      [user.tenant_id, user.sub, orderId,
+        JSON.stringify({ customerName: row.customer_name, customerPhone: row.customer_phone, note: row.note }),
+        JSON.stringify(patch)],
+    );
+    return { id: orderId };
+  }
+
+  /**
+   * Delete (cancel) an order. Blocked once day-locked. Writes an audit log entry.
+   */
+  async deleteOrder(orderId: string, user: JWTPayload): Promise<{ id: string }> {
+    const cur = await this.pool.query(
+      `SELECT o.id, o.status, o.total, s.status AS shift_status
+       FROM orders o LEFT JOIN pos_shifts s ON s.id = o.shift_id
+       WHERE o.id = $1 AND o.tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const row = cur.rows[0];
+    if (!row) throw new BadRequestException('Order not found');
+    if (row.shift_status === 'closed') throw new BadRequestException('Order is day-locked (its shift is closed) and cannot be deleted');
+
+    await this.pool.query(
+      `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    await this.pool.query(
+      `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+       VALUES ($1, $2, 'order.delete', 'order', $3, $4, $5)`,
+      [user.tenant_id, user.sub, orderId, JSON.stringify({ status: row.status, total: row.total }), JSON.stringify({ status: 'cancelled' })],
+    );
+    return { id: orderId };
+  }
+
+  /**
    * Lightweight order status lookup (for POS payment polling).
    */
   async getOrderStatus(

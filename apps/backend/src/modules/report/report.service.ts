@@ -87,6 +87,46 @@ export class ReportService {
   }
 
   /**
+   * Revenue + order-count time series grouped by day/week/month. Powers the
+   * Transaction-tab charts (daily/weekly/monthly/custom range).
+   */
+  async getRevenueSeries(params: ReportQueryParams & { granularity?: 'day' | 'week' | 'month' }): Promise<{ period: string; revenue: number; orders: number }[]> {
+    const { dateFrom, dateTo, outletId, businessUnit } = params;
+    const gran = params.granularity ?? 'day';
+    const trunc = gran === 'month' ? 'month' : gran === 'week' ? 'week' : 'day';
+    const qp: string[] = [dateFrom, dateTo];
+    let filter = '';
+    if (outletId) { filter += ` AND outlet_id = $${qp.length + 1}`; qp.push(outletId); }
+    if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
+    const res = await this.pool.query<{ period: string; revenue: string; orders: string }>(
+      `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period,
+              COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
+              COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS orders
+       FROM orders
+       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${filter}
+       GROUP BY period ORDER BY period ASC`,
+      qp,
+    );
+    return res.rows.map((r) => ({ period: r.period, revenue: parseFloat(r.revenue), orders: parseInt(r.orders, 10) }));
+  }
+
+  /** New customer counts over time (CRM-tab chart). */
+  async getCustomerGrowth(tenantId: string, params: ReportQueryParams & { granularity?: 'day' | 'week' | 'month' }): Promise<{ period: string; newCustomers: number }[]> {
+    const { dateFrom, dateTo } = params;
+    const gran = params.granularity ?? 'day';
+    const trunc = gran === 'month' ? 'month' : gran === 'week' ? 'week' : 'day';
+    const res = await this.pool.query<{ period: string; n: string }>(
+      `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period,
+              COUNT(*)::int AS n
+       FROM customers
+       WHERE tenant_id = $3 AND created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day')
+       GROUP BY period ORDER BY period ASC`,
+      [dateFrom, dateTo, tenantId],
+    );
+    return res.rows.map((r) => ({ period: r.period, newCustomers: parseInt(r.n, 10) }));
+  }
+
+  /**
    * Generates a summary report for the given date range and optional outlet filter.
    *
    * - totalOrders: COUNT of all orders in date range

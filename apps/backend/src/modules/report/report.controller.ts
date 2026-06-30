@@ -75,6 +75,41 @@ export class ReportController {
   }
 
   /**
+   * GET /api/reports/revenue-series — revenue + orders grouped by day/week/month.
+   */
+  @Get('revenue-series')
+  async getRevenueSeries(
+    @CurrentUser() user: JWTPayload,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('outletId') outletId?: string,
+    @Query('businessUnit') businessUnit?: string,
+    @Query('granularity') granularity?: string,
+  ) {
+    if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
+    if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
+    const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
+    const gran = (['day', 'week', 'month'].includes(granularity ?? '') ? granularity : 'day') as 'day' | 'week' | 'month';
+    return this.reportService.getRevenueSeries({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit, granularity: gran });
+  }
+
+  /**
+   * GET /api/reports/customer-growth — new customers grouped by day/week/month.
+   */
+  @Get('customer-growth')
+  async getCustomerGrowth(
+    @CurrentUser() user: JWTPayload,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('granularity') granularity?: string,
+  ) {
+    if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
+    if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
+    const gran = (['day', 'week', 'month'].includes(granularity ?? '') ? granularity : 'day') as 'day' | 'week' | 'month';
+    return this.reportService.getCustomerGrowth(user.tenant_id, { dateFrom, dateTo, granularity: gran });
+  }
+
+  /**
    * GET /api/reports/daily-sales — one row per day (orders + revenue).
    */
   @Get('daily-sales')
