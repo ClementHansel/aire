@@ -10,7 +10,12 @@ const navItems = [
   { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: '🤖' },
   { id: 'services', label: 'Services', href: '/dashboard/services', icon: '🚿' },
   { id: 'memberships', label: 'Memberships', href: '/dashboard/memberships', icon: '💳' },
-  { id: 'reports', label: 'Reports', href: '/dashboard/reports', icon: '📈' },
+  { id: 'inventory', label: 'Inventory', href: '/dashboard/inventory', icon: '📦' },
+  { id: 'procurement', label: 'Procurement', href: '/dashboard/procurement', icon: '🛒' },
+  { id: 'finance', label: 'Finance', href: '/dashboard/finance', icon: '💰' },
+  { id: 'sales', label: 'Sales', href: '/dashboard/sales', icon: '📈' },
+  { id: 'hr', label: 'HR', href: '/dashboard/hr', icon: '👥' },
+  { id: 'reports', label: 'Reports', href: '/dashboard/reports', icon: '📑' },
   { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: '📡' },
   { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
 ];

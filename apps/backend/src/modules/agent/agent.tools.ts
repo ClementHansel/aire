@@ -317,6 +317,111 @@ export const READ_TOOLS: ToolDefinition[] = [
   LIST_RECENT_EVENTS_TOOL,
 ];
 
+// ─── Business module tools (read + action) ────────────────────────────────────
+
+export const MODULE_READ_TOOLS: ToolDefinition[] = [
+  { name: 'inventory_summary', description: 'Inventory snapshot: item count, low-stock count, total stock value.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'list_low_stock', description: 'Lists inventory items at or below their reorder level.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'finance_summary', description: 'Profit/loss: revenue (paid orders) vs expenses over a window, with expense breakdown by category.', inputSchema: { type: 'object', properties: { days: { type: 'number' } } }, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'sales_summary', description: 'This month actual sales vs target (attainment %) and the lead funnel.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'hr_summary', description: 'Headcount, monthly payroll, present-today count, and pending leave requests.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'procurement_summary', description: 'Supplier count, open purchase orders, and open purchase value.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+  { name: 'list_suppliers', description: 'Lists active suppliers with contact details.', inputSchema: emptyObjectSchema, outputSchema: emptyObjectSchema, readOnly: true },
+];
+
+export const MODULE_ACTION_TOOLS: ToolDefinition[] = [
+  {
+    name: 'adjust_inventory_stock',
+    description: 'Adjust stock for an inventory item (in/out/adjustment), recording a movement.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        item_id: { type: 'string' },
+        type: { type: 'string', enum: ['in', 'out', 'adjustment'] },
+        quantity: { type: 'number', minimum: 0 },
+        reason: { type: 'string' },
+      },
+      required: ['item_id', 'type', 'quantity'],
+    },
+    outputSchema: emptyObjectSchema,
+    automationKey: 'inventory',
+  },
+  {
+    name: 'record_expense',
+    description: 'Record a business expense (category, amount, optional description).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        category: { type: 'string' },
+        amount: { type: 'number', minimum: 0 },
+        description: { type: 'string' },
+      },
+      required: ['category', 'amount'],
+    },
+    outputSchema: emptyObjectSchema,
+    automationKey: 'finance',
+  },
+  {
+    name: 'create_sales_lead',
+    description: 'Create a sales lead in the pipeline.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        phone: { type: 'string' },
+        source: { type: 'string' },
+        notes: { type: 'string' },
+      },
+      required: ['name'],
+    },
+    outputSchema: emptyObjectSchema,
+    automationKey: 'sales',
+  },
+  {
+    name: 'create_purchase_order',
+    description: 'Create a purchase order with line items for a supplier.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        supplier_id: { type: 'string' },
+        notes: { type: 'string' },
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              item_id: { type: 'string' },
+              description: { type: 'string' },
+              quantity: { type: 'number' },
+              unit_cost: { type: 'number' },
+            },
+            required: ['description', 'quantity', 'unit_cost'],
+          },
+        },
+      },
+      required: ['items'],
+    },
+    outputSchema: emptyObjectSchema,
+    automationKey: 'procurement',
+  },
+  {
+    name: 'add_employee',
+    description: 'Add an employee to HR records.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        role: { type: 'string' },
+        phone: { type: 'string' },
+        salary: { type: 'number' },
+      },
+      required: ['name'],
+    },
+    outputSchema: emptyObjectSchema,
+    automationKey: 'hr',
+  },
+];
+
 /**
  * Action tools — gated by automation toggles + approval mode.
  */
@@ -329,8 +434,13 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   SEND_MEMBERSHIP_RECOMMENDATION_TOOL,
 ];
 
-/** Every tool registered for the agent (action + read-only). */
-export const ALL_TOOLS: ToolDefinition[] = [...DEFAULT_TOOLS, ...READ_TOOLS];
+/** Every tool registered for the agent (action + read-only + module tools). */
+export const ALL_TOOLS: ToolDefinition[] = [
+  ...DEFAULT_TOOLS,
+  ...READ_TOOLS,
+  ...MODULE_READ_TOOLS,
+  ...MODULE_ACTION_TOOLS,
+];
 
 /**
  * Register all tools (action + read-only) in the registry.

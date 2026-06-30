@@ -26,6 +26,25 @@ export enum DomainEventType {
   AgentProposalCreated = 'agent.proposal_created',
   AgentToolExecuted = 'agent.tool_executed',
   AgentAnomalyFlagged = 'agent.anomaly_flagged',
+  // Inventory
+  InventoryItemCreated = 'inventory.item_created',
+  InventoryStockAdjusted = 'inventory.stock_adjusted',
+  InventoryLowStock = 'inventory.low_stock',
+  // Procurement
+  SupplierCreated = 'procurement.supplier_created',
+  PurchaseOrderCreated = 'procurement.po_created',
+  PurchaseOrderReceived = 'procurement.po_received',
+  // Finance
+  ExpenseRecorded = 'finance.expense_recorded',
+  // Sales
+  SalesLeadCreated = 'sales.lead_created',
+  SalesLeadStatusChanged = 'sales.lead_status_changed',
+  SalesTargetSet = 'sales.target_set',
+  // HR
+  EmployeeAdded = 'hr.employee_added',
+  AttendanceRecorded = 'hr.attendance_recorded',
+  LeaveRequested = 'hr.leave_requested',
+  LeaveResolved = 'hr.leave_resolved',
 }
 
 /** Wildcard channel for subscribers that want every event. */

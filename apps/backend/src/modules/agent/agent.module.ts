@@ -11,6 +11,11 @@ import { AgentChatService } from './agent-chat.service';
 import { SettingsModule } from '../settings/settings.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationModule } from '../notification/notification.module';
+import { InventoryModule } from '../inventory/inventory.module';
+import { FinanceModule } from '../finance/finance.module';
+import { SalesModule } from '../sales/sales.module';
+import { HrModule } from '../hr/hr.module';
+import { ProcurementModule } from '../procurement/procurement.module';
 import { DatabasePoolProvider } from '../auth/database.provider';
 
 /**
@@ -23,7 +28,7 @@ import { DatabasePoolProvider } from '../auth/database.provider';
  * Requirements: 3.6, 3.7, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 8.2, 8.3, 8.4, 8.5
  */
 @Module({
-  imports: [SettingsModule, AuditModule, NotificationModule],
+  imports: [SettingsModule, AuditModule, NotificationModule, InventoryModule, FinanceModule, SalesModule, HrModule, ProcurementModule],
   controllers: [AgentController],
   providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, DatabasePoolProvider],
   exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService],

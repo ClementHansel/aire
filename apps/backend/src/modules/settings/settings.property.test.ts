@@ -124,6 +124,11 @@ const automationTogglesArb: fc.Arbitrary<AutomationToggles> = fc.record({
   anomaly_alerts: fc.boolean(),
   queue_optimization: fc.boolean(),
   membership_recommendations: fc.boolean(),
+  inventory: fc.boolean(),
+  finance: fc.boolean(),
+  sales: fc.boolean(),
+  hr: fc.boolean(),
+  procurement: fc.boolean(),
 });
 
 const approvalModesArb: fc.Arbitrary<ApprovalModes> = fc.record({
@@ -133,6 +138,11 @@ const approvalModesArb: fc.Arbitrary<ApprovalModes> = fc.record({
   anomaly_alerts: approvalModeArb,
   queue_optimization: approvalModeArb,
   membership_recommendations: approvalModeArb,
+  inventory: approvalModeArb,
+  finance: approvalModeArb,
+  sales: approvalModeArb,
+  hr: approvalModeArb,
+  procurement: approvalModeArb,
 });
 
 /** Generate a valid E.164 phone number or null */

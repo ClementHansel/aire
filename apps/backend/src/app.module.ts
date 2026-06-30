@@ -22,6 +22,11 @@ import { PaymentModule } from './modules/payment';
 import { VoucherModule } from './modules/voucher';
 import { EventsModule } from './modules/events';
 import { MonitoringModule } from './modules/monitoring';
+import { InventoryModule } from './modules/inventory/inventory.module';
+import { FinanceModule } from './modules/finance/finance.module';
+import { SalesModule } from './modules/sales/sales.module';
+import { HrModule } from './modules/hr/hr.module';
+import { ProcurementModule } from './modules/procurement/procurement.module';
 
 @Module({
   imports: [
@@ -48,6 +53,11 @@ import { MonitoringModule } from './modules/monitoring';
     ReportModule,
     ServiceModule,
     VoucherModule,
+    InventoryModule,
+    FinanceModule,
+    SalesModule,
+    HrModule,
+    ProcurementModule,
   ],
   controllers: [AppController],
   providers: [AppService],

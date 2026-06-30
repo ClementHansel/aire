@@ -6,6 +6,11 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { NotificationService } from '../notification/notification.service';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { InventoryService } from '../inventory/inventory.service';
+import { FinanceService } from '../finance/finance.service';
+import { SalesService } from '../sales/sales.service';
+import { HrService } from '../hr/hr.service';
+import { ProcurementService } from '../procurement/procurement.service';
 import type { ToolInvocation, ToolResult } from './agent.types';
 
 /**
@@ -23,6 +28,11 @@ export class AgentToolsService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly notifications: NotificationService,
     private readonly eventBus: EventBusService,
+    private readonly inventory: InventoryService,
+    private readonly finance: FinanceService,
+    private readonly sales: SalesService,
+    private readonly hr: HrService,
+    private readonly procurement: ProcurementService,
   ) {}
 
   /** Dispatch a tool invocation to its handler. */
@@ -64,6 +74,68 @@ export class AgentToolsService {
           return await this.adjustQueue(invocation);
         case 'flag_anomaly':
           return await this.flagAnomaly(invocation);
+        // ── Business module read tools ───────────────────────────────
+        case 'inventory_summary':
+          return { success: true, data: await this.inventory.summary(tenantId) };
+        case 'list_low_stock':
+          return { success: true, data: { items: await this.inventory.list(tenantId, { lowStockOnly: true }) } };
+        case 'finance_summary':
+          return { success: true, data: await this.finance.summary(tenantId, (p.days as number) ?? 30) };
+        case 'sales_summary':
+          return { success: true, data: await this.sales.summary(tenantId) };
+        case 'hr_summary':
+          return { success: true, data: await this.hr.summary(tenantId) };
+        case 'procurement_summary':
+          return { success: true, data: await this.procurement.summary(tenantId) };
+        case 'list_suppliers':
+          return { success: true, data: { suppliers: await this.procurement.listSuppliers(tenantId) } };
+        // ── Business module action tools ─────────────────────────────
+        case 'adjust_inventory_stock':
+          return {
+            success: true,
+            data: await this.inventory.adjustStock(
+              tenantId,
+              String(p.item_id),
+              { type: p.type as 'in' | 'out' | 'adjustment', quantity: Number(p.quantity), reason: p.reason as string },
+              'agent',
+            ),
+          };
+        case 'record_expense':
+          return {
+            success: true,
+            data: await this.finance.recordExpense(
+              tenantId,
+              { category: String(p.category), amount: Number(p.amount), description: p.description as string },
+              'agent',
+            ),
+          };
+        case 'create_sales_lead':
+          return {
+            success: true,
+            data: await this.sales.createLead(
+              tenantId,
+              { name: String(p.name), phone: p.phone as string, source: (p.source as string) ?? 'ai', notes: p.notes as string },
+              'agent',
+            ),
+          };
+        case 'create_purchase_order':
+          return {
+            success: true,
+            data: await this.procurement.createPurchaseOrder(
+              tenantId,
+              { supplierId: p.supplier_id as string, notes: p.notes as string, items: (p.items as never[]) ?? [] },
+              'agent',
+            ),
+          };
+        case 'add_employee':
+          return {
+            success: true,
+            data: await this.hr.createEmployee(
+              tenantId,
+              { name: String(p.name), role: p.role as string, phone: p.phone as string, salary: p.salary as number },
+              'agent',
+            ),
+          };
         default:
           return { success: false, error: `No handler implemented for tool "${toolName}"` };
       }

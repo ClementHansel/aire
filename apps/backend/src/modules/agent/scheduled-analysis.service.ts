@@ -26,7 +26,7 @@ type MetricCategory = (typeof METRIC_CATEGORIES)[number];
 /**
  * Maps automation toggle keys to the metric categories they analyze.
  */
-const TOGGLE_METRIC_MAP: Record<keyof AutomationToggles, MetricCategory[]> = {
+const TOGGLE_METRIC_MAP: Partial<Record<keyof AutomationToggles, MetricCategory[]>> = {
   campaigns: ['revenue', 'customer_retention'],
   retention_offers: ['customer_retention', 'membership_conversions'],
   pricing_suggestions: ['revenue', 'service_utilization'],
@@ -97,10 +97,10 @@ export class ScheduledAnalysisService {
       return null;
     }
 
-    // 2. Skip if no automation toggles are enabled (Req 8.5)
+    // 2. Skip if AI is disabled (master switch) or no automation toggles enabled (Req 8.5)
     const enabledToggles = this.getEnabledToggles(settings.automation_toggles);
-    if (enabledToggles.length === 0) {
-      this.logger.log(`Skipping analysis for tenant ${tenantId}: no automation toggles enabled`);
+    if (!settings.ai_enabled || enabledToggles.length === 0) {
+      this.logger.log(`Skipping analysis for tenant ${tenantId}: AI disabled or no automation toggles enabled`);
       return null;
     }
 
@@ -370,14 +370,14 @@ Respond ONLY with a JSON array.`;
    */
   private getToolForToggle(toggle: keyof AutomationToggles): ToolDefinition | undefined {
     const toolName = this.getToolNameForToggle(toggle);
-    return this.agentService.getTool(toolName);
+    return toolName ? this.agentService.getTool(toolName) : undefined;
   }
 
   /**
    * Map an automation toggle key to its corresponding tool name.
    */
-  private getToolNameForToggle(toggle: keyof AutomationToggles): string {
-    const mapping: Record<keyof AutomationToggles, string> = {
+  private getToolNameForToggle(toggle: keyof AutomationToggles): string | undefined {
+    const mapping: Partial<Record<keyof AutomationToggles, string>> = {
       campaigns: 'create_campaign',
       retention_offers: 'send_retention_offer',
       pricing_suggestions: 'suggest_pricing',

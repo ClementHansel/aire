@@ -4,6 +4,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { LLMRouterService, ChatMessage, LLMErrorResponse } from './llm-router.service';
 import { AgentService } from './agent.service';
 import { MonitoringService } from '../monitoring/monitoring.service';
+import { SettingsService } from '../settings/settings.service';
 import type { ToolDefinition } from './agent.types';
 
 export interface ChatTurnResult {
@@ -35,6 +36,7 @@ export class AgentChatService {
     private readonly llm: LLMRouterService,
     private readonly agent: AgentService,
     private readonly monitoring: MonitoringService,
+    private readonly settings: SettingsService,
   ) {}
 
   async listSessions(tenantId: string): Promise<unknown[]> {
@@ -72,6 +74,18 @@ export class AgentChatService {
     userMessage: string,
   ): Promise<ChatTurnResult> {
     const start = Date.now();
+
+    // Master AI switch — when off, the app stays fully self-reliant and the
+    // assistant declines rather than calling any model.
+    const settings = await this.settings.getSettings(tenantId);
+    if (!settings.ai_enabled) {
+      return {
+        sessionId: sessionId ?? '',
+        reply: 'AI is currently turned off. Enable it in Settings → AI to chat with the assistant.',
+        toolsUsed: [],
+      };
+    }
+
     const sid = sessionId ?? (await this.createSession(tenantId, userId, userMessage));
 
     await this.saveMessage(sid, 'user', userMessage);

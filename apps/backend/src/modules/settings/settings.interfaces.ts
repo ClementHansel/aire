@@ -25,6 +25,13 @@ export interface AutomationToggles {
   anomaly_alerts: boolean;
   queue_optimization: boolean;
   membership_recommendations: boolean;
+  // Business module AI capabilities (optional; default OFF). Each gates the
+  // corresponding module's AI action tools.
+  inventory?: boolean;
+  finance?: boolean;
+  sales?: boolean;
+  hr?: boolean;
+  procurement?: boolean;
 }
 
 /**
@@ -38,6 +45,11 @@ export interface ApprovalModes {
   anomaly_alerts: ApprovalMode;
   queue_optimization: ApprovalMode;
   membership_recommendations: ApprovalMode;
+  inventory?: ApprovalMode;
+  finance?: ApprovalMode;
+  sales?: ApprovalMode;
+  hr?: ApprovalMode;
+  procurement?: ApprovalMode;
 }
 
 /**
@@ -92,6 +104,11 @@ export const DEFAULT_AUTOMATION_SETTINGS: TenantAutomationSettings = {
     anomaly_alerts: false,
     queue_optimization: false,
     membership_recommendations: false,
+    inventory: false,
+    finance: false,
+    sales: false,
+    hr: false,
+    procurement: false,
   },
   approval_modes: {
     campaigns: 'approval_required',
@@ -100,6 +117,11 @@ export const DEFAULT_AUTOMATION_SETTINGS: TenantAutomationSettings = {
     anomaly_alerts: 'approval_required',
     queue_optimization: 'approval_required',
     membership_recommendations: 'approval_required',
+    inventory: 'approval_required',
+    finance: 'approval_required',
+    sales: 'approval_required',
+    hr: 'approval_required',
+    procurement: 'approval_required',
   },
   schedule_interval: null,
   discovered_devices: [],
