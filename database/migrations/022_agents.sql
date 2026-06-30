@@ -26,7 +26,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON agents
 -- Seed the demo tenant's agent line-up (mirrors the previous system).
 INSERT INTO agents (tenant_id, name, role, description, position)
 VALUES
-  ('11111111-1111-1111-1111-111111111111', 'KADEK', 'personal_assistant', 'Front-line greeter and FAQ assistant', 1),
-  ('11111111-1111-1111-1111-111111111111', 'Zara',  'personal_assistant', 'Booking & membership assistant', 2),
+  ('11111111-1111-1111-1111-111111111111', 'Oline', 'personal_assistant', 'Front-line greeter and FAQ assistant', 1),
+  ('11111111-1111-1111-1111-111111111111', 'Ersa',  'personal_assistant', 'Booking & membership assistant', 2),
   ('11111111-1111-1111-1111-111111111111', 'CS1',   'customer_service',   'Customer service & escalation', 3)
 ON CONFLICT DO NOTHING;
