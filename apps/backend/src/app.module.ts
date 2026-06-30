@@ -32,6 +32,9 @@ import { OutletModule } from './modules/outlet/outlet.module';
 import { PaymentMethodModule } from './modules/payment-method';
 import { CatalogModule } from './modules/catalog';
 import { AccessModule } from './modules/access';
+import { VoucherTicketModule } from './modules/voucher-ticket';
+import { PromotionModule } from './modules/promotion';
+import { SettlementModule } from './modules/settlement';
 
 @Module({
   imports: [
@@ -68,6 +71,9 @@ import { AccessModule } from './modules/access';
     PaymentMethodModule,
     CatalogModule,
     AccessModule,
+    VoucherTicketModule,
+    PromotionModule,
+    SettlementModule,
   ],
   controllers: [AppController],
   providers: [AppService],
