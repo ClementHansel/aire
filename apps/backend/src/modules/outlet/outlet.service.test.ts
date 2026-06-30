@@ -47,10 +47,14 @@ describe('OutletService', () => {
       expect(params[0]).toBe('tenant-001');
       expect(params[1]).toBe('Outlet Jakarta');
       expect(params[2]).toBe('jkt-001');
-      expect(params[3]).toBe('Jl. Sudirman No. 1');
-      expect(params[4]).toBe('Asia/Jakarta');
-      expect(params[5]).toBe(true);
-      expect(JSON.parse(params[6])).toEqual({
+      expect(params[3]).toBe('OUT'); // code derived from name
+      expect(params[4]).toBeNull(); // legalEntity
+      expect(params[5]).toBe('Jl. Sudirman No. 1'); // address
+      expect(params[6]).toBeNull(); // phone
+      expect(params[7]).toBeNull(); // mapsUrl
+      expect(params[8]).toBe('Asia/Jakarta'); // timezone
+      expect(params[9]).toBe(true); // isActive
+      expect(JSON.parse(params[10])).toEqual({
         service_charge_pct: 5,
         tax_pct: 11,
         free_void_window_minutes: 5,
@@ -76,10 +80,10 @@ describe('OutletService', () => {
       await service.create(dto);
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[3]).toBeNull(); // address
-      expect(params[4]).toBe('Asia/Jakarta'); // timezone default
-      expect(params[5]).toBe(true); // isActive default
-      expect(params[6]).toBe('{}'); // empty settings
+      expect(params[5]).toBeNull(); // address
+      expect(params[8]).toBe('Asia/Jakarta'); // timezone default
+      expect(params[9]).toBe(true); // isActive default
+      expect(params[10]).toBe('{}'); // empty settings
     });
   });
 

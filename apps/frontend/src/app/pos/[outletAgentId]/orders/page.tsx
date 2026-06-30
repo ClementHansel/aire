@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import Link from 'next/link';
 import { api } from '@/lib/api';
-import { isAuthenticated, getUser, logout } from '@/lib/auth';
+import { isAuthenticated } from '@/lib/auth';
+import { PosNav } from '@/components/pos/PosNav';
 
 interface OrderCardItem { serviceName: string; quantity: number; subtotal: number }
 interface OrderCard {
@@ -59,28 +59,10 @@ export default function OrdersPage() {
   }, [load]);
 
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
-  const user = getUser();
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
-      <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
-            <p className="font-semibold text-text-primary text-sm">Orders</p>
-          </div>
-          <nav className="flex gap-1 text-sm">
-            <Link href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</Link>
-            <Link href={`/pos/${agent}/new-order`} className="btn-ghost py-1.5 px-3">New Order</Link>
-            <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Orders</span>
-            <Link href={`/pos/${agent}/summary`} className="btn-ghost py-1.5 px-3">Summary</Link>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-text-secondary">{user?.name}</span>
-          <button onClick={logout} className="text-xs text-text-secondary hover:text-text-primary">Sign out</button>
-        </div>
-      </header>
+      <PosNav agent={agent} active="orders" title="Orders" />
 
       <div className="p-5 flex-1">
         <div className="flex flex-wrap items-center gap-3 mb-4">

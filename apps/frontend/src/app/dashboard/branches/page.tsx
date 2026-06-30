@@ -9,15 +9,19 @@ interface Branch {
   code: string | null;
   legalEntity: string | null;
   address: string | null;
+  phone: string | null;
+  mapsUrl: string | null;
   isActive: boolean;
 }
 
-interface FormState { name: string; code: string; legalEntity: string; address: string }
-const EMPTY: FormState = { name: '', code: '', legalEntity: '', address: '' };
+interface FormState { name: string; code: string; legalEntity: string; address: string; phone: string; mapsUrl: string }
+const EMPTY: FormState = { name: '', code: '', legalEntity: '', address: '', phone: '', mapsUrl: '' };
 
 function BranchModal({ initial, onClose, onSaved }: { initial: Branch | null; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<FormState>(
-    initial ? { name: initial.name, code: initial.code ?? '', legalEntity: initial.legalEntity ?? '', address: initial.address ?? '' } : EMPTY,
+    initial
+      ? { name: initial.name, code: initial.code ?? '', legalEntity: initial.legalEntity ?? '', address: initial.address ?? '', phone: initial.phone ?? '', mapsUrl: initial.mapsUrl ?? '' }
+      : EMPTY,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -25,7 +29,14 @@ function BranchModal({ initial, onClose, onSaved }: { initial: Branch | null; on
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true); setError('');
-    const payload = { name: form.name, code: form.code || undefined, legalEntity: form.legalEntity || undefined, address: form.address || undefined };
+    const payload = {
+      name: form.name,
+      code: form.code || undefined,
+      legalEntity: form.legalEntity || undefined,
+      address: form.address || undefined,
+      phone: form.phone || undefined,
+      mapsUrl: form.mapsUrl || undefined,
+    };
     try {
       if (initial) await api.put(`/outlets/${initial.id}`, payload);
       else await api.post('/outlets', payload);
@@ -55,6 +66,16 @@ function BranchModal({ initial, onClose, onSaved }: { initial: Branch | null; on
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Address</label>
             <input className="input-field" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Jl. ..." />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">Phone (WhatsApp)</label>
+              <input className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="08118005650" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">Google Maps link</label>
+              <input className="input-field" value={form.mapsUrl} onChange={(e) => setForm({ ...form, mapsUrl: e.target.value })} placeholder="https://maps.app.goo.gl/…" />
+            </div>
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
@@ -109,18 +130,25 @@ export default function BranchesPage() {
                 <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Branch</th>
                 <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Code</th>
                 <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Legal Entity (PT)</th>
+                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Contact</th>
                 <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">Status</th>
                 <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {branches.length === 0 ? (
-                <tr><td colSpan={5} className="px-5 py-6 text-sm text-text-muted text-center">No branches yet.</td></tr>
+                <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">No branches yet.</td></tr>
               ) : branches.map((b) => (
                 <tr key={b.id}>
                   <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{b.name}<div className="text-xs text-text-muted">{b.address}</div></td>
                   <td className="px-5 py-3.5"><span className="badge bg-sky-50 text-sky-700 font-mono">{b.code ?? '—'}</span></td>
                   <td className="px-5 py-3.5 text-sm text-text-secondary">{b.legalEntity ?? '—'}</td>
+                  <td className="px-5 py-3.5 text-sm text-text-secondary">
+                    {b.phone ?? '—'}
+                    {b.mapsUrl && (
+                      <a href={b.mapsUrl} target="_blank" rel="noopener noreferrer" className="block text-xs text-primary-600 hover:text-primary-700">📍 Maps</a>
+                    )}
+                  </td>
                   <td className="px-5 py-3.5 text-center"><span className={`badge ${b.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{b.isActive ? 'Active' : 'Inactive'}</span></td>
                   <td className="px-5 py-3.5 text-right whitespace-nowrap">
                     <button className="btn-ghost text-xs" onClick={() => { setEditing(b); setModalOpen(true); }}>Edit</button>

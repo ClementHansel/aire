@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { isAuthenticated, getUser, logout } from '@/lib/auth';
+import { isAuthenticated } from '@/lib/auth';
+import { PosNav } from '@/components/pos/PosNav';
 
 interface QueueEntry {
   id: string; plate: string | null; brand: string | null; model: string | null;
@@ -51,28 +52,9 @@ export default function QueuePage() {
     catch (err) { setError(err instanceof Error ? err.message : 'Failed'); }
   };
 
-  const user = getUser();
-
   return (
     <div className="min-h-screen bg-surface flex flex-col">
-      <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
-            <div><p className="font-semibold text-text-primary text-sm">Queue</p><p className="text-xs text-text-muted">Agent: {agent}</p></div>
-          </div>
-          <nav className="hidden sm:flex gap-1 text-sm">
-            <a href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</a>
-            <Link href={`/pos/${agent}/new-order`} className="btn-ghost py-1.5 px-3">New Order</Link>
-            <Link href={`/pos/${agent}/orders`} className="btn-ghost py-1.5 px-3">Orders</Link>
-            <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Queue</span>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-text-secondary">{user?.name}</span>
-          <button onClick={logout} className="text-xs text-text-secondary hover:text-text-primary">Sign out</button>
-        </div>
-      </header>
+      <PosNav agent={agent} active="queue" title="Queue" subtitle={`Agent: ${agent}`} />
 
       {error && <div className="mx-5 mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
 

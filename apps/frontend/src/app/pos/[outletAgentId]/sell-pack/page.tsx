@@ -16,7 +16,8 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { isAuthenticated, getUser, logout } from '@/lib/auth';
+import { isAuthenticated } from '@/lib/auth';
+import { PosNav } from '@/components/pos/PosNav';
 
 type Tab = 'membership' | 'voucher';
 
@@ -210,7 +211,6 @@ export default function SellPackPage() {
       }
     }, 3000);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [polling, sale]);
 
   // Auto-issue voucher codes once a voucher sale is paid.
@@ -223,7 +223,6 @@ export default function SellPackPage() {
         .catch((e) => setError(e instanceof Error ? e.message : 'Failed to issue voucher codes'))
         .finally(() => setIssuing(false));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paid, sale, issued, issuing]);
 
   const updatePlate = (i: number, field: keyof PlateEntry, value: string) =>
@@ -272,7 +271,6 @@ export default function SellPackPage() {
     setError('');
   };
 
-  const user = getUser();
   const selected = tab === 'membership' ? selectedPlan : selectedTemplate;
   const selectedPrice = tab === 'membership' ? selectedPlan?.price : selectedTemplate?.salePrice;
 
@@ -282,28 +280,12 @@ export default function SellPackPage() {
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
-      <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
-            <div>
-              <p className="font-semibold text-text-primary text-sm">Sell Pack</p>
-              <p className="text-xs text-text-muted">Agent: {params.outletAgentId as string}</p>
-            </div>
-          </div>
-          <nav className="hidden sm:flex gap-1 text-sm">
-            <a href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</a>
-            <a href={`/pos/${params.outletAgentId}/new-order`} className="btn-ghost py-1.5 px-3">New Order</a>
-            <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">Sell Pack</span>
-            <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
-            <a href={`/pos/${params.outletAgentId}/summary`} className="btn-ghost py-1.5 px-3">Summary</a>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-text-secondary">{user?.name}</span>
-          <button onClick={logout} className="text-xs text-text-secondary hover:text-text-primary">Sign out</button>
-        </div>
-      </header>
+      <PosNav
+        agent={params.outletAgentId as string}
+        active="sell-pack"
+        title="Sell Pack"
+        subtitle={`Agent: ${params.outletAgentId as string}`}
+      />
 
       {error && <div className="mx-5 mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
 
@@ -443,7 +425,6 @@ export default function SellPackPage() {
             {qr && (
               <div className="mt-4 text-center">
                 <p className="text-sm text-text-secondary mb-2">Scan with any QRIS app to pay</p>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qr)}`} alt="QRIS payment code" className="mx-auto rounded-lg border border-border" width={220} height={220} />
                 <p className="mt-3 text-sm text-text-secondary flex items-center justify-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />

@@ -78,17 +78,6 @@ export default function HubPage() {
     },
   ];
 
-  if (outletId) {
-    tiles.push({
-      id: 'queue-board',
-      label: 'Queue Board',
-      description: 'Live outlet display of orders in progress and ready',
-      icon: '📺',
-      href: `/queue-board/${outletId}`,
-      accent: 'bg-sky-50 text-sky-700',
-    });
-  }
-
   if (isSuperAdmin) {
     tiles.push({
       id: 'admin',

@@ -10,7 +10,6 @@ import AutomationControlsSection, {
   getPrerequisiteMessage,
   type AutomationControlsState,
   type AutomationKey,
-  type ApprovalMode,
 } from './AutomationControlsSection';
 
 // --- Helper: Create default test state ---

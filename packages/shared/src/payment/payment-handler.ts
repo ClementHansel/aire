@@ -96,6 +96,9 @@ export function processPayment(input: PaymentProcessInput): PaymentProcessResult
     case PaymentMethod.Transfer:
       return processReferencePayment(PaymentMethod.Transfer, referenceNumber);
 
+    case PaymentMethod.CreditCard:
+      return processReferencePayment(PaymentMethod.CreditCard, referenceNumber);
+
     default:
       return {
         confirmed: false,
@@ -150,7 +153,7 @@ function processCashPayment(
  * Validates that referenceNumber is provided and non-empty.
  */
 function processReferencePayment(
-  method: PaymentMethod.Edc | PaymentMethod.Transfer,
+  method: PaymentMethod.Edc | PaymentMethod.Transfer | PaymentMethod.CreditCard,
   referenceNumber: string | undefined,
 ): PaymentProcessResult {
   if (!referenceNumber || referenceNumber.trim().length === 0) {

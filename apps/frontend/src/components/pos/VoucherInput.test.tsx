@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { VoucherInput, VoucherInputProps, VoucherValidationResult } from './VoucherInput';
 import { VoucherType } from '@aire/shared/enums';
-import { VoucherState } from '@aire/shared/voucher';
 import { AppliedVoucher } from '@aire/shared/voucher/stacking';
 
 describe('VoucherInput', () => {

@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
-import { isAuthenticated, getUser, logout } from '@/lib/auth';
+import { isAuthenticated, getUser } from '@/lib/auth';
+import { PosNav } from '@/components/pos/PosNav';
 
 interface ServiceDTO {
   id: string;
@@ -217,10 +218,8 @@ export default function NewOrderPage() {
       } catch { /* keep polling */ }
     }, 3000);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [polling, order]);
 
-  const user = getUser();
   const visibleServices = services.filter((s) => (s.businessUnit ?? 'AIRE') === businessUnit);
 
   if (loading) {
@@ -230,29 +229,12 @@ export default function NewOrderPage() {
   return (
     <div className="min-h-screen bg-surface flex flex-col">
       {/* Top bar */}
-      <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center"><span className="text-sm font-bold text-white">A</span></div>
-            <div>
-              <p className="font-semibold text-text-primary text-sm">Point of Sale</p>
-              <p className="text-xs text-text-muted">Agent: {params.outletAgentId as string}</p>
-            </div>
-          </div>
-          <nav className="hidden sm:flex gap-1 text-sm">
-            <a href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</a>
-            <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">New Order</span>
-            <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
-            <a href={`/pos/${params.outletAgentId}/queue`} className="btn-ghost py-1.5 px-3">Queue</a>
-            <a href={`/pos/${params.outletAgentId}/summary`} className="btn-ghost py-1.5 px-3">Summary</a>
-            <a href={`/pos/${params.outletAgentId}/shift`} className="btn-ghost py-1.5 px-3">Shift</a>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-text-secondary">{user?.name}</span>
-          <button onClick={logout} className="text-xs text-text-secondary hover:text-text-primary">Sign out</button>
-        </div>
-      </header>
+      <PosNav
+        agent={params.outletAgentId as string}
+        active="new-order"
+        title="Point of Sale"
+        subtitle={`Agent: ${params.outletAgentId as string}`}
+      />
 
       {error && <div className="mx-5 mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
 
@@ -429,7 +411,6 @@ export default function NewOrderPage() {
             {qr && (
               <div className="mt-4 text-center">
                 <p className="text-sm text-text-secondary mb-2">Scan with any QRIS app to pay</p>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qr)}`}
                   alt="QRIS payment code"

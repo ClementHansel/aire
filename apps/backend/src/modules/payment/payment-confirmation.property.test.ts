@@ -16,13 +16,14 @@ import { OrderStateMachine } from '../order/order-state-machine';
 // --- Arbitrary Generators ---
 
 /**
- * All 5 payment methods. The property must hold for all equally.
+ * All 6 payment methods. The property must hold for all equally.
  */
 const ALL_PAYMENT_METHODS: PaymentMethod[] = [
   PaymentMethod.Cash,
   PaymentMethod.QrisStatic,
   PaymentMethod.QrisDynamic,
   PaymentMethod.Edc,
+  PaymentMethod.CreditCard,
   PaymentMethod.Transfer,
 ];
 
@@ -85,6 +86,7 @@ const arbConfirmedPaymentInput: fc.Arbitrary<PaymentProcessInput> = arbPaymentMe
         }));
 
       case PaymentMethod.Edc:
+      case PaymentMethod.CreditCard:
       case PaymentMethod.Transfer:
         // Reference-based: need a non-empty reference number
         return fc.tuple(arbOrderTotal, arbReferenceNumber).map(
@@ -169,10 +171,10 @@ describe('Property 27: Payment Confirmation State Transition', () => {
     );
   });
 
-  it('this property holds for ALL 5 payment methods equally (method-agnostic)', () => {
-    // Verify that the VALID_PAYMENT_METHODS constant covers all 5 expected methods
-    expect(VALID_PAYMENT_METHODS).toHaveLength(5);
-    expect(ALL_PAYMENT_METHODS).toHaveLength(5);
+  it('this property holds for ALL 6 payment methods equally (method-agnostic)', () => {
+    // Verify that the VALID_PAYMENT_METHODS constant covers all 6 expected methods
+    expect(VALID_PAYMENT_METHODS).toHaveLength(6);
+    expect(ALL_PAYMENT_METHODS).toHaveLength(6);
 
     fc.assert(
       fc.property(
@@ -191,6 +193,7 @@ describe('Property 27: Payment Confirmation State Transition', () => {
               input = { method, orderTotal };
               break;
             case PaymentMethod.Edc:
+            case PaymentMethod.CreditCard:
             case PaymentMethod.Transfer:
               input = { method, orderTotal, referenceNumber };
               break;

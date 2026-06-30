@@ -162,7 +162,6 @@ function WahaConnect() {
       {qr && (
         <div className="mt-3 text-center">
           <p className="text-xs text-text-muted mb-2">Scan this with WhatsApp on the agent phone</p>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={qr} alt="WhatsApp QR" className="mx-auto rounded-lg border border-border" width={240} height={240} />
         </div>
       )}

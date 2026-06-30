@@ -3,7 +3,7 @@
  * Requirements: 6.5, 12.1, 12.2, 12.3
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useMemberLookup } from './useMemberLookup';
 import { MemberLookupResponse } from '@aire/shared/interfaces/member';
 

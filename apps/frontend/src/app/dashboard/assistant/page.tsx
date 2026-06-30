@@ -58,13 +58,13 @@ export default function AssistantPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto flex flex-col h-[calc(100vh-8rem)]">
-      <div className="mb-4">
+    <div className="max-w-3xl mx-auto flex flex-col h-full min-h-0">
+      <div className="mb-4 shrink-0">
         <h1 className="text-xl font-semibold text-text-primary">AI Assistant</h1>
         <p className="text-sm text-text-muted">Ask about your business or tell the assistant what to automate. It reads live data and can act through governed tools.</p>
       </div>
 
-      <div className="card flex-1 flex flex-col overflow-hidden p-0">
+      <div className="card flex-1 flex flex-col overflow-hidden p-0 min-h-0">
         <div className="flex-1 overflow-auto p-4 space-y-4">
           {messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-center gap-4">
