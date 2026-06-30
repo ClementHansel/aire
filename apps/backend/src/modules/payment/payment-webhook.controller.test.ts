@@ -8,6 +8,7 @@ describe('PaymentWebhookController', () => {
   let controller: PaymentWebhookController;
   let registry: PaymentProviderRegistry;
   let configResolver: WebhookConfigResolver;
+  let paymentService: { confirmPaymentByReference: ReturnType<typeof vi.fn> };
 
   const xenditSecret = 'xnd_webhook_secret_test';
   const midtransSecret = 'mid_webhook_secret_test';
@@ -16,6 +17,7 @@ describe('PaymentWebhookController', () => {
   beforeEach(() => {
     registry = new PaymentProviderRegistry();
     configResolver = new WebhookConfigResolver();
+    paymentService = { confirmPaymentByReference: vi.fn().mockResolvedValue(true) };
 
     // Override configResolver to return known secrets
     vi.spyOn(configResolver, 'resolveConfig').mockImplementation(
@@ -29,20 +31,20 @@ describe('PaymentWebhookController', () => {
       },
     );
 
-    controller = new PaymentWebhookController(registry, configResolver);
+    controller = new PaymentWebhookController(registry, configResolver, paymentService as never);
   });
 
   describe('Xendit webhook', () => {
     it('should accept valid Xendit webhook with correct signature', async () => {
-      const payload = { id: 'xnd_txn_123', status: 'PAID', amount: 50000 };
-      const body = JSON.stringify(payload);
-      const signature = createHmac('sha256', xenditSecret).update(body).digest('hex');
+      const payload = { id: 'xnd_txn_123', reference_id: 'order_123', status: 'PAID', amount: 50000 };
+      // Xendit uses a static callback token, not an HMAC signature.
+      const signature = xenditSecret;
 
       const result = await controller.handleXenditWebhook(payload, signature);
 
       expect(result).toEqual({
         received: true,
-        transactionId: 'xnd_txn_123',
+        transactionId: 'order_123',
         status: 'completed',
       });
     });

@@ -60,9 +60,10 @@ function createStripeProvider(secret: string): StripeProvider {
 
 // --- Correct signature computation helpers ---
 
-function computeXenditSignature(payload: unknown, secret: string): string {
-  const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
-  return createHmac('sha256', secret).update(body).digest('hex');
+function computeXenditSignature(_payload: unknown, secret: string): string {
+  // Xendit verifies webhooks with a STATIC callback token compared against the
+  // x-callback-token header (not an HMAC). The "correct signature" is the token.
+  return secret;
 }
 
 function computeMidtransSignature(payload: unknown, secret: string): string {
@@ -357,7 +358,11 @@ describe('Property 26: Webhook Signature Rejection', () => {
         },
       );
 
-      const controller = new PaymentWebhookController(registry, configResolver);
+      const controller = new PaymentWebhookController(
+        registry,
+        configResolver,
+        { confirmPaymentByReference: vi.fn().mockResolvedValue(true) } as never,
+      );
 
       await fc.assert(
         fc.asyncProperty(
