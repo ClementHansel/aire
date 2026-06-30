@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ConextLab — Brand System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0A0A;
+    --slate: #1E293B;
+    --blue: #1652F0;
+    --blue-soft: #DCE5FE;
+    --surface: #FFFFFF;
+    --mist: #F8FAFC;
+    --hairline: #E5E7EB;
+    --hairline-2: #D1D5DB;
+    --muted: #6B7280;
+    --muted-2: #9CA3AF;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--surface);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.55;
+    font-size: 16px;
+    overflow-x: hidden;
+  }
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 clamp(20px, 4vw, 56px);
+  }
+  .label {
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+  }
+
+  /* ─── Top Bar ─── */
+  .top-bar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .top-bar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px clamp(20px, 4vw, 56px);
+    max-width: 1280px;
+    margin: 0 auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .top-bar-inner .left, .top-bar-inner .right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--muted);
+  }
+  .top-bar-inner .center {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .top-bar a { color: var(--muted); text-decoration: none; transition: color 0.2s; }
+  .top-bar a:hover { color: var(--blue); }
+
+  /* ─── Cover ─── */
+  .cover {
+    min-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: clamp(40px, 8vw, 96px) 0 clamp(40px, 6vw, 64px);
+    border-bottom: 1px solid var(--hairline);
+    position: relative;
+  }
+  .cover-meta {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 32px;
+    margin-bottom: clamp(60px, 8vw, 100px);
+  }
+  @media (max-width: 760px) { .cover-meta { grid-template-columns: 1fr 1fr; gap: 20px; } }
+  .cover-meta-item .label { display: block; margin-bottom: 8px; }
+  .cover-meta-item .v { font-size: 14px; color: var(--ink); font-weight: 500; }
+  .cover-mark {
+    font-weight: 800;
+    font-size: clamp(64px, 16vw, 256px);
+    letter-spacing: -0.06em;
+    line-height: 0.85;
+    color: var(--ink);
+    margin-bottom: clamp(24px, 4vw, 40px);
+  }
+  .cover-mark .accent {
+    color: var(--blue);
+  }
+  .cover-tag {
+    font-size: clamp(20px, 2.4vw, 32px);
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: -0.01em;
+    max-width: 720px;
+    line-height: 1.35;
+  }
+  .cover-tag em { font-style: normal; color: var(--ink); font-weight: 700; }
+
+  /* ─── Section Anchor ─── */
+  .section {
+    padding: clamp(80px, 10vw, 140px) 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .section.alt { background: var(--mist); }
+  .section.dark { background: var(--ink); color: var(--surface); }
+  .section.dark .label { color: var(--muted-2); }
+  .section.dark .section-num { color: rgba(255,255,255,0.4); }
+
+  .section-head {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: clamp(24px, 4vw, 60px);
+    margin-bottom: clamp(40px, 6vw, 80px);
+    align-items: baseline;
+  }
+  @media (max-width: 760px) { .section-head { grid-template-columns: 1fr; gap: 16px; } }
+  .section-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+  .section-head h2 {
+    font-size: clamp(36px, 5.4vw, 84px);
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    line-height: 0.98;
+  }
+  .section-head h2 em {
+    font-style: normal;
+    color: var(--blue);
+  }
+  .section-head .lead {
+    margin-top: 24px;
+    font-size: clamp(17px, 1.4vw, 20px);
+    color: var(--muted);
+    max-width: 640px;
+    line-height: 1.6;
+  }
+
+  /* ─── Logo Section ─── */
+  .logo-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(16px, 2vw, 24px);
+    margin-top: 40px;
+  }
+  @media (max-width: 760px) { .logo-grid { grid-template-columns: 1fr; } }
+  .logo-card {
+    border: 1px solid var(--hairline);
+    border-radius: 20px;
+    padding: clamp(40px, 6vw, 80px);
+    aspect-ratio: 16/10;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 28px;
+    transition: border-color 0.3s;
+  }
+  .logo-card:hover { border-color: var(--ink); }
+  .logo-card.on-dark { background: var(--ink); border-color: var(--ink); }
+  .logo-card.on-dark .logo-mark-row span { color: var(--surface); }
+  .logo-mark-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .logo-mark-row img {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+  }
+  .logo-mark-row span {
+    font-size: clamp(28px, 3.6vw, 48px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+  }
+  .logo-card-foot {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+  .logo-card.on-dark .logo-card-foot { color: var(--muted-2); }
+
+  /* Wordmark anatomy */
+  .wordmark-anatomy {
+    margin-top: 60px;
+    padding: clamp(32px, 4vw, 56px);
+    border: 1px solid var(--hairline);
+    border-radius: 20px;
+    background: var(--mist);
+  }
+  .wordmark-display {
+    font-size: clamp(40px, 8vw, 120px);
+    font-weight: 800;
+    letter-spacing: -0.045em;
+    line-height: 1;
+    color: var(--ink);
+    text-align: center;
+    margin-bottom: 32px;
+    position: relative;
+  }
+  .wordmark-display em {
+    font-style: normal;
+    color: var(--blue);
+  }
+  .wordmark-rules {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    border-top: 1px solid var(--hairline);
+    padding-top: 32px;
+  }
+  @media (max-width: 760px) { .wordmark-rules { grid-template-columns: 1fr; } }
+  .wm-rule .label { display: block; margin-bottom: 8px; }
+  .wm-rule p { font-size: 14.5px; color: var(--muted); line-height: 1.55; }
+
+  /* ─── Typography ─── */
+  .type-stack {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(20px, 3vw, 40px);
+  }
+  .type-row {
+    display: grid;
+    grid-template-columns: 220px 1fr auto;
+    gap: 32px;
+    padding: clamp(20px, 2.5vw, 28px) 0;
+    border-top: 1px solid var(--hairline);
+    align-items: end;
+  }
+  @media (max-width: 760px) {
+    .type-row { grid-template-columns: 1fr; gap: 12px; align-items: start; padding: 24px 0; }
+  }
+  .type-row:last-child { border-bottom: 1px solid var(--hairline); }
+  .type-meta { display: flex; flex-direction: column; gap: 6px; }
+  .type-meta .label { color: var(--muted); }
+  .type-meta .meta-detail { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted-2); letter-spacing: 0.04em; }
+  .type-spec {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted-2);
+    text-align: right;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  @media (max-width: 760px) { .type-spec { text-align: left; } }
+  .type-sample.t-display { font-size: clamp(48px, 7vw, 96px); font-weight: 800; letter-spacing: -0.04em; line-height: 0.95; }
+  .type-sample.t-h1 { font-size: clamp(36px, 5vw, 64px); font-weight: 700; letter-spacing: -0.03em; line-height: 1.05; }
+  .type-sample.t-h2 { font-size: clamp(28px, 3.6vw, 44px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+  .type-sample.t-h3 { font-size: clamp(20px, 2.2vw, 26px); font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+  .type-sample.t-body { font-size: 17px; font-weight: 400; line-height: 1.65; color: var(--ink); max-width: 540px; }
+  .type-sample.t-meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); }
+
+  .type-pangram {
+    margin-top: 60px;
+    padding: clamp(32px, 5vw, 64px);
+    background: var(--ink);
+    border-radius: 24px;
+    color: var(--surface);
+  }
+  .type-pangram .weight-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 18px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    gap: 16px;
+  }
+  .type-pangram .weight-row:last-child { border-bottom: none; }
+  .type-pangram .weight-row span:first-child {
+    font-size: clamp(18px, 2.4vw, 32px);
+    color: var(--surface);
+    line-height: 1;
+  }
+  .type-pangram .weight-row .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted-2);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    flex-shrink: 0;
+  }
+  .w-300 { font-weight: 300; }
+  .w-400 { font-weight: 400; }
+  .w-500 { font-weight: 500; }
+  .w-600 { font-weight: 600; }
+  .w-700 { font-weight: 700; }
+  .w-800 { font-weight: 800; }
+
+  /* ─── Color ─── */
+  .color-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+  @media (max-width: 900px) { .color-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .color-grid { grid-template-columns: 1fr; } }
+  .swatch {
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--hairline);
+    display: flex;
+    flex-direction: column;
+  }
+  .swatch-color {
+    aspect-ratio: 4/5;
+    width: 100%;
+    transition: transform 0.4s ease;
+  }
+  .swatch:hover .swatch-color { transform: scale(1.02); }
+  .swatch-info {
+    padding: 18px 20px;
+    background: var(--surface);
+  }
+  .swatch-name {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    letter-spacing: -0.01em;
+  }
+  .swatch-hex {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+  }
+  .swatch-usage {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .color-pair {
+    margin-top: 60px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--hairline);
+    border-radius: 24px;
+    overflow: hidden;
+  }
+  @media (max-width: 760px) { .color-pair { grid-template-columns: 1fr; } }
+  .color-pair-cell {
+    padding: clamp(40px, 5vw, 70px);
+    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .color-pair-cell.light { background: var(--surface); color: var(--ink); }
+  .color-pair-cell.dark { background: var(--ink); color: var(--surface); }
+  .color-pair-cell.dark .label { color: var(--muted-2); }
+  .color-pair-cell h4 {
+    font-size: clamp(28px, 3.4vw, 40px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  .color-pair-cell p {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 14px;
+    max-width: 380px;
+  }
+  .color-pair-cell.dark p { color: var(--muted-2); }
+
+  /* ─── Voice ─── */
+  .voice-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 40px;
+  }
+  @media (max-width: 760px) { .voice-grid { grid-template-columns: 1fr; } }
+  .voice-card {
+    padding: clamp(28px, 3vw, 40px);
+    border-radius: 20px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+  .voice-card.do { border-color: var(--blue); background: var(--blue-soft); }
+  .voice-card .label { display: block; margin-bottom: 14px; }
+  .voice-card.do .label { color: var(--blue); }
+  .voice-card.dont .label { color: #B91C1C; }
+  .voice-card blockquote {
+    font-size: clamp(20px, 2vw, 26px);
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    border-left: 3px solid;
+    padding-left: 20px;
+  }
+  .voice-card.do blockquote { border-color: var(--blue); }
+  .voice-card.dont blockquote { border-color: #B91C1C; color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(185,28,28,0.5); }
+  .voice-card .note {
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--muted);
+    padding-left: 23px;
+  }
+
+  .voice-principles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--hairline);
+    border: 1px solid var(--hairline);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+  @media (max-width: 900px) { .voice-principles { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 540px) { .voice-principles { grid-template-columns: 1fr; } }
+  .voice-principle {
+    background: var(--surface);
+    padding: 32px 28px;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .voice-principle .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--blue);
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .voice-principle h4 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .voice-principle p {
+    color: var(--muted);
+    font-size: 14.5px;
+    line-height: 1.55;
+    margin-top: auto;
+  }
+
+  /* ─── In Use Preview ─── */
+  .preview-frame {
+    border-radius: 24px;
+    border: 1px solid var(--hairline);
+    overflow: hidden;
+    background: var(--surface);
+    box-shadow: 0 30px 80px -30px rgba(10,10,10,0.18);
+  }
+  .preview-chrome {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 16px;
+    background: var(--mist);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .preview-chrome .dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--hairline-2);
+  }
+  .preview-url {
+    flex: 1;
+    margin-left: 16px;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .preview-body {
+    padding: clamp(40px, 6vw, 80px);
+    background: var(--surface);
+  }
+  .preview-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: clamp(40px, 5vw, 60px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .preview-nav .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+  }
+  .preview-nav .brand img { width: 28px; height: 28px; border-radius: 6px; }
+  .preview-nav .links {
+    display: flex;
+    gap: 28px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  @media (max-width: 760px) { .preview-nav .links { display: none; } }
+  .preview-nav .cta {
+    background: var(--ink);
+    color: var(--surface);
+    padding: 9px 18px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .preview-hero {
+    padding: clamp(50px, 7vw, 100px) 0 clamp(20px, 4vw, 50px);
+  }
+  .preview-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--blue);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-weight: 600;
+    margin-bottom: 32px;
+  }
+  .preview-eyebrow .pulse {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--blue);
+    box-shadow: 0 0 0 4px rgba(22,82,240,0.16);
+  }
+  .preview-hero h1 {
+    font-size: clamp(40px, 7vw, 96px);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 0.96;
+    margin-bottom: 28px;
+    max-width: 1100px;
+  }
+  .preview-hero h1 em { font-style: normal; color: var(--blue); }
+  .preview-hero .lead {
+    font-size: clamp(17px, 1.4vw, 20px);
+    color: var(--muted);
+    max-width: 600px;
+    line-height: 1.6;
+    margin-bottom: 36px;
+  }
+  .preview-ctas {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .preview-btn {
+    padding: 13px 24px;
+    border-radius: 999px;
+    font-size: 14.5px;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .preview-btn.primary { background: var(--ink); color: var(--surface); }
+  .preview-btn.ghost { border: 1px solid var(--hairline-2); color: var(--ink); }
+
+  .preview-stat-row {
+    margin-top: clamp(50px, 7vw, 90px);
+    padding-top: 40px;
+    border-top: 1px solid var(--hairline);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 24px;
+  }
+  @media (max-width: 760px) { .preview-stat-row { grid-template-columns: 1fr 1fr; } }
+  .pv-stat .num {
+    font-size: clamp(32px, 4vw, 56px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .pv-stat .num em { font-style: normal; color: var(--blue); }
+  .pv-stat .lab {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  /* Card preview */
+  .card-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 40px;
+  }
+  @media (max-width: 760px) { .card-row { grid-template-columns: 1fr; } }
+  .business-card {
+    aspect-ratio: 1.7/1;
+    border-radius: 16px;
+    padding: clamp(24px, 3vw, 36px);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    box-shadow: 0 16px 50px -20px rgba(10,10,10,0.18);
+    transition: transform 0.4s ease;
+  }
+  .business-card:hover { transform: translateY(-4px) rotate(-0.6deg); }
+  .business-card.front {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+  }
+  .business-card.back {
+    background: var(--ink);
+    color: var(--surface);
+  }
+  .bc-mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: -0.025em;
+  }
+  .bc-mark img { width: 28px; height: 28px; border-radius: 7px; }
+  .bc-back-mark {
+    font-size: clamp(40px, 6vw, 72px);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+  }
+  .bc-back-mark em { font-style: normal; color: var(--blue); }
+  .bc-info {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .bc-info .name { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+  .bc-info .role { color: var(--muted); margin-bottom: 12px; }
+  .bc-info .contact {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .business-card.back .bc-info { color: var(--muted-2); }
+  .business-card.back .bc-info .contact { color: var(--muted-2); }
+
+  /* ─── Footer ─── */
+  footer {
+    padding: clamp(60px, 8vw, 100px) 0 40px;
+    background: var(--ink);
+    color: var(--surface);
+  }
+  footer .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+  footer .end-mark {
+    font-size: clamp(48px, 8vw, 120px);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+  }
+  footer .end-mark em { font-style: normal; color: var(--blue); }
+  footer .end-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted-2);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    line-height: 1.7;
+    text-align: right;
+  }
+  @media (max-width: 760px) { footer .end-meta { text-align: left; } }
+
+  /* Reveal */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .reveal.visible { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="top-bar-inner">
+    <div class="left">
+      <span>ConextLab</span><span style="color:var(--hairline-2);">/</span><span>Brand System</span>
+    </div>
+    <div class="center">v1.0 · 2026</div>
+    <div class="right">
+      <a href="#logo">Logo</a>
+      <a href="#type">Type</a>
+      <a href="#color">Color</a>
+      <a href="#voice">Voice</a>
+      <a href="#in-use">In Use</a>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════ COVER ═════════ -->
+<section class="cover">
+  <div class="container">
+    <div class="cover-meta">
+      <div class="cover-meta-item"><span class="label">Document</span><div class="v">Brand System</div></div>
+      <div class="cover-meta-item"><span class="label">Version</span><div class="v">1.0 · May 2026</div></div>
+      <div class="cover-meta-item"><span class="label">Audience</span><div class="v">Internal · Partners</div></div>
+      <div class="cover-meta-item"><span class="label">Owner</span><div class="v">ConextLab Technology</div></div>
+    </div>
+
+    <div>
+      <h1 class="cover-mark">Conext<span class="accent">Lab.</span></h1>
+      <p class="cover-tag">A bold, modern, professional brand system for Indonesia's <em>enterprise AI ecosystem</em>.</p>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:20px; margin-top:60px;">
+      <span class="label">Scroll to explore the system</span>
+      <span class="label">01 → 06</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ ESSENCE ═════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">01 — Essence</div>
+      <div>
+        <h2>Intelligence that <em>connects</em> everything.</h2>
+        <p class="lead">The brand stands for connective intelligence — the platform that links Indonesia's enterprises, institutions, and innovators through AI, automation, and secure infrastructure. Every visual choice flows from this idea.</p>
+      </div>
+    </div>
+
+    <div class="voice-principles">
+      <div class="voice-principle">
+        <span class="num">Pillar 01</span>
+        <h4>Bold, never loud.</h4>
+        <p>Confident weights and tight spacing — the brand asserts authority without shouting. Boldness is structural, not decorative.</p>
+      </div>
+      <div class="voice-principle">
+        <span class="num">Pillar 02</span>
+        <h4>Modern, never trendy.</h4>
+        <p>Built on enduring sans-serif systems and a disciplined grid. The look should still feel right in five years.</p>
+      </div>
+      <div class="voice-principle">
+        <span class="num">Pillar 03</span>
+        <h4>Professional, never sterile.</h4>
+        <p>Enterprise-grade clarity with warmth in the spacing, the proof points, the human voice.</p>
+      </div>
+      <div class="voice-principle">
+        <span class="num">Pillar 04</span>
+        <h4>Indonesian, globally legible.</h4>
+        <p>Rooted in Jakarta, designed to read alongside Stripe, Linear, and Vercel — not behind them.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ LOGO ═════════ -->
+<section id="logo" class="section alt">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">02 — Mark</div>
+      <div>
+        <h2>The <em>mark.</em></h2>
+        <p class="lead">A rounded square symbol locks up with a tight wordmark. It can stand alone as the symbol, or run alongside the wordmark for full brand presence.</p>
+      </div>
+    </div>
+
+    <div class="logo-grid">
+      <div class="logo-card">
+        <div class="logo-mark-row">
+          <img src="https://conextlab.net/assets/conextlab-logo-rounded-BcrUS9UU.png" alt="ConextLab mark" />
+          <span>ConextLab</span>
+        </div>
+        <div class="logo-card-foot">
+          <span>Primary lockup</span>
+          <span>On light</span>
+        </div>
+      </div>
+      <div class="logo-card on-dark">
+        <div class="logo-mark-row">
+          <img src="https://conextlab.net/assets/conextlab-logo-rounded-BcrUS9UU.png" alt="ConextLab mark" />
+          <span>ConextLab</span>
+        </div>
+        <div class="logo-card-foot">
+          <span>Primary lockup</span>
+          <span>On dark</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="wordmark-anatomy">
+      <div class="wordmark-display">Conext<em>Lab.</em></div>
+      <div class="wordmark-rules">
+        <div class="wm-rule">
+          <span class="label">01 · Letterform</span>
+          <p>Geist 900 Black at display sizes, set tight at -0.05em tracking. The "L" and "ab" carry the accent in primary blue.</p>
+        </div>
+        <div class="wm-rule">
+          <span class="label">02 · Closing punctuation</span>
+          <p>The full stop is functional, not decorative — it signals authority and finality. Use it on hero treatments only, never inline.</p>
+        </div>
+        <div class="wm-rule">
+          <span class="label">03 · Clearspace</span>
+          <p>Maintain a clearspace equal to the height of the lowercase "o" on every side. Never let other elements crowd the mark.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ TYPOGRAPHY ═════════ -->
+<section id="type" class="section">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">03 — Type</div>
+      <div>
+        <h2>Geist, <em>used decisively.</em></h2>
+        <p class="lead">One typeface, the full weight range. Geist is a precision-engineered sans-serif built for the digital age — tight geometric letterforms, exceptional clarity at every size, and a confident voice that reads as intentional. Bold for headlines, regular for body, mono for technical accents.</p>
+      </div>
+    </div>
+
+    <div class="type-stack">
+      <div class="type-row">
+        <div class="type-meta">
+          <span class="label">Display</span>
+          <span class="meta-detail">Geist · 800</span>
+        </div>
+        <div class="type-sample t-display">Bold ideas, built.</div>
+        <div class="type-spec">96 / 92 · -4% tracking</div>
+      </div>
+
+      <div class="type-row">
+        <div class="type-meta">
+          <span class="label">Heading 01</span>
+          <span class="meta-detail">Geist · 700</span>
+        </div>
+        <div class="type-sample t-h1">Five divisions, one ecosystem.</div>
+        <div class="type-spec">64 / 67 · -3% tracking</div>
+      </div>
+
+      <div class="type-row">
+        <div class="type-meta">
+          <span class="label">Heading 02</span>
+          <span class="meta-detail">Geist · 700</span>
+        </div>
+        <div class="type-sample t-h2">Trusted across enterprise &amp; government.</div>
+        <div class="type-spec">44 / 50 · -2% tracking</div>
+      </div>
+
+      <div class="type-row">
+        <div class="type-meta">
+          <span class="label">Heading 03</span>
+          <span class="meta-detail">Geist · 600</span>
+        </div>
+        <div class="type-sample t-h3">AI Blueprint Service</div>
+        <div class="type-spec">26 / 33 · -1% tracking</div>
+      </div>
+
+      <div class="type-row">
+        <div class="type-meta">
+          <span class="label">Body</span>
+          <span class="meta-detail">Geist · 400 / 500</span>
+        </div>
+        <div class="type-sample t-body">ConextLab builds Indonesia's enterprise ecosystem for AI, automation, and secure digital infrastructure — connecting institutions with the developers, partners, and platforms that move the country forward.</div>
+        <div class="type-spec">17 / 28 · 0% tracking</div>
+      </div>
+
+      <div class="type-row">
+        <div class="type-meta">
+          <span class="label">Eyebrow / Label</span>
+          <span class="meta-detail">JetBrains Mono · 600 · UPPERCASE</span>
+        </div>
+        <div class="type-sample t-meta">Indonesia · AI Ecosystem</div>
+        <div class="type-spec">11 / — · +18% tracking</div>
+      </div>
+    </div>
+
+    <div class="type-pangram">
+      <div class="weight-row">
+        <span class="w-300">The fastest, most reliable AI ecosystem in Indonesia.</span>
+        <span class="meta">Light · 300</span>
+      </div>
+      <div class="weight-row">
+        <span class="w-400">The fastest, most reliable AI ecosystem in Indonesia.</span>
+        <span class="meta">Regular · 400</span>
+      </div>
+      <div class="weight-row">
+        <span class="w-500">The fastest, most reliable AI ecosystem in Indonesia.</span>
+        <span class="meta">Medium · 500</span>
+      </div>
+      <div class="weight-row">
+        <span class="w-600">The fastest, most reliable AI ecosystem in Indonesia.</span>
+        <span class="meta">SemiBold · 600</span>
+      </div>
+      <div class="weight-row">
+        <span class="w-700">The fastest, most reliable AI ecosystem in Indonesia.</span>
+        <span class="meta">Bold · 700</span>
+      </div>
+      <div class="weight-row">
+        <span class="w-800">The fastest, most reliable AI ecosystem in Indonesia.</span>
+        <span class="meta">ExtraBold · 800</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ COLOR ═════════ -->
+<section id="color" class="section alt">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">04 — Color</div>
+      <div>
+        <h2>A disciplined <em>palette.</em></h2>
+        <p class="lead">Black for authority, white for clarity, one decisive blue for focus. Neutrals carry the rest. The palette is intentionally tight — restraint creates recognition.</p>
+      </div>
+    </div>
+
+    <div class="color-grid">
+      <div class="swatch">
+        <div class="swatch-color" style="background:#0A0A0A;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Conext Ink</div>
+          <div class="swatch-hex">#0A0A0A</div>
+          <p class="swatch-usage">Primary text, anchor surfaces, the base of the brand.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#1652F0;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Conext Blue</div>
+          <div class="swatch-hex">#1652F0</div>
+          <p class="swatch-usage">Single accent. Used for emphasis, CTAs, links, focus states.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#1E293B;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Conext Slate</div>
+          <div class="swatch-hex">#1E293B</div>
+          <p class="swatch-usage">Deep secondary surface. Footers, dark sections, high-contrast cards.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#FFFFFF; border-bottom:1px solid var(--hairline);"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Surface</div>
+          <div class="swatch-hex">#FFFFFF</div>
+          <p class="swatch-usage">The ground. Pure white wherever possible — clarity is a brand asset.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#F8FAFC;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Mist</div>
+          <div class="swatch-hex">#F8FAFC</div>
+          <p class="swatch-usage">Section breaks, soft surfaces, a quiet alternation from white.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#E5E7EB;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Hairline</div>
+          <div class="swatch-hex">#E5E7EB</div>
+          <p class="swatch-usage">Dividers, borders, the visible structure of the layout.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#6B7280;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Muted</div>
+          <div class="swatch-hex">#6B7280</div>
+          <p class="swatch-usage">Secondary text, captions, supporting copy.</p>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#DCE5FE;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Blue Soft</div>
+          <div class="swatch-hex">#DCE5FE</div>
+          <p class="swatch-usage">Tints and highlights. For badges, callouts, and selection states.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="color-pair">
+      <div class="color-pair-cell light">
+        <span class="label">Light surface · Primary use</span>
+        <div>
+          <h4>Confidence reads <span style="color:var(--blue);">in white space.</span></h4>
+          <p>The default canvas. Generous margins, ink for text, blue for emphasis. Avoid layering decoration — let typography do the work.</p>
+        </div>
+      </div>
+      <div class="color-pair-cell dark">
+        <span class="label">Dark surface · Strategic use</span>
+        <div>
+          <h4>Authority reads <span style="color:var(--blue);">in contrast.</span></h4>
+          <p>Reserve dark sections for tonal punctuation — values, manifesto moments, footer. Don't overuse; the page should breathe in white.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ VOICE ═════════ -->
+<section id="voice" class="section">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">05 — Voice</div>
+      <div>
+        <h2>Direct, <em>declarative,</em> human.</h2>
+        <p class="lead">We speak the way our headlines look — bold, plain, unhedged. No corporate-speak, no hype, no jargon dressed up as expertise. Active voice. Present tense. Specific over abstract.</p>
+      </div>
+    </div>
+
+    <div class="voice-grid">
+      <div class="voice-card do">
+        <span class="label">Do · Direct &amp; specific</span>
+        <blockquote>We connect Indonesia's enterprises to the AI ecosystem they need.</blockquote>
+        <p class="note">Active. Concrete. Names what we do, for whom.</p>
+      </div>
+      <div class="voice-card dont">
+        <span class="label">Don't · Corporate &amp; abstract</span>
+        <blockquote>ConextLab Technology endeavors to facilitate digital transformation through innovative AI-driven paradigms.</blockquote>
+        <p class="note">Passive. Generic. Could be any company in any industry.</p>
+      </div>
+
+      <div class="voice-card do">
+        <span class="label">Do · Confident, not hyped</span>
+        <blockquote>Twenty technology partners. Five divisions. One ecosystem.</blockquote>
+        <p class="note">Numbers earn the claim. Punctuation does the heavy lifting.</p>
+      </div>
+      <div class="voice-card dont">
+        <span class="label">Don't · Adjective stack</span>
+        <blockquote>A revolutionary, world-class, cutting-edge AI ecosystem like nothing you've ever seen before.</blockquote>
+        <p class="note">Stacked superlatives say nothing. The reader switches off.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ IN USE ═════════ -->
+<section id="in-use" class="section alt">
+  <div class="container">
+    <div class="section-head">
+      <div class="section-num">06 — In Use</div>
+      <div>
+        <h2>The system, <em>applied.</em></h2>
+        <p class="lead">A preview of how the brand reads on the homepage and on a business card. Same type. Same color. Same voice. Always recognisable.</p>
+      </div>
+    </div>
+
+    <!-- Homepage preview -->
+    <div class="preview-frame">
+      <div class="preview-chrome">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="preview-url">conextlab.net</div>
+      </div>
+      <div class="preview-body">
+        <div class="preview-nav">
+          <div class="brand">
+            <img src="https://conextlab.net/assets/conextlab-logo-rounded-BcrUS9UU.png" alt="" />
+            ConextLab
+          </div>
+          <div class="links">
+            <span>Divisions</span><span>Partners</span><span>Clients</span><span>About</span>
+          </div>
+          <span class="cta">Get in touch</span>
+        </div>
+
+        <div class="preview-hero">
+          <div class="preview-eyebrow">
+            <span class="pulse"></span>
+            <span>Indonesia · AI Ecosystem</span>
+          </div>
+          <h1>Intelligence that <em>connects</em><br/>everything.</h1>
+          <p class="lead">ConextLab builds Indonesia's enterprise ecosystem for AI, automation, and secure digital infrastructure.</p>
+          <div class="preview-ctas">
+            <span class="preview-btn primary">Become a partner →</span>
+            <span class="preview-btn ghost">Explore divisions</span>
+          </div>
+        </div>
+
+        <div class="preview-stat-row">
+          <div class="pv-stat"><div class="num">05</div><div class="lab">Specialised divisions</div></div>
+          <div class="pv-stat"><div class="num">20<em>+</em></div><div class="lab">Technology partners</div></div>
+          <div class="pv-stat"><div class="num">100<em>%</em></div><div class="lab">Enterprise-grade</div></div>
+          <div class="pv-stat"><div class="num">∞</div><div class="lab">End-to-end</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Business cards -->
+    <div class="card-row">
+      <div class="business-card front">
+        <div class="bc-mark">
+          <img src="https://conextlab.net/assets/conextlab-logo-rounded-BcrUS9UU.png" alt="" />
+          ConextLab
+        </div>
+        <div class="bc-info">
+          <div class="name">Andini Sari</div>
+          <div class="role">Head of Partnerships</div>
+          <div class="contact">andini@conextlab.net · +62 XXX XXXX</div>
+        </div>
+      </div>
+      <div class="business-card back">
+        <div class="bc-back-mark">Conext<em>Lab.</em></div>
+        <div class="bc-info">
+          <div class="contact">Indonesia · AI Ecosystem</div>
+          <div class="contact">conextlab.net</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════ FOOTER ═════════ -->
+<footer>
+  <div class="container">
+    <div class="end-mark">Conext<em>Lab.</em></div>
+    <div class="end-meta">
+      Brand System · v1.0<br/>
+      May 2026<br/>
+      hello@conextlab.net
+    </div>
+  </div>
+</footer>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.section-head, .voice-principle, .logo-card, .wordmark-anatomy, .type-row, .type-pangram, .swatch, .color-pair, .voice-card, .preview-frame, .business-card')
+    .forEach(el => { el.classList.add('reveal'); io.observe(el); });
+</script>
+
+</body>
+</html>
