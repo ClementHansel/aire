@@ -102,8 +102,8 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [ ] Wire settlement-entry creation into the membership redemption path (hook)
 - [x] Voucher redesign **backend**: `BRANCH-MMYYYY-NNNNNN` (e.g. `OUT-062026-000001`), shareable, buy-N books, single-use, WA delivery hook — verified
 - [x] **Promotion engine backend**: discount (fixed/percent) / free product / free voucher / future discount, per-branch, max quota
-- [ ] Phase 2 frontend: voucher-selling UI, promotions CRUD page, settlement page
-- [ ] Promotion application at POS checkout
+- [x] Phase 2 frontend: Digital Vouchers (sell/issue/view), Promotions CRUD, Settlement (summary + payout + history) — deployed
+- [ ] Promotion application at POS checkout (engine wired into order totals)
 
 ### POS UX
 - [ ] Customer search + create-new in POS
