@@ -19,9 +19,6 @@ import { CustomerModule } from './modules/customer';
 import { KioskModule } from './modules/kiosk';
 import { AgentModule } from './modules/agent';
 import { PaymentModule } from './modules/payment';
-import { SettingsModule } from './modules/settings';
-import { DiscoveryModule } from './modules/discovery';
-import { TenantModule } from './modules/tenant';
 
 @Module({
   imports: [
@@ -45,9 +42,6 @@ import { TenantModule } from './modules/tenant';
     ReceiptModule,
     ReportModule,
     ServiceModule,
-    SettingsModule,
-    DiscoveryModule,
-    TenantModule,
   ],
   controllers: [AppController],
   providers: [AppService],
