@@ -84,12 +84,15 @@ export default function NewOrderPage() {
       window.location.href = '/';
       return;
     }
-    api.get<ServiceDTO[]>('/services')
+    // Scope services + payment methods to this branch so region/branch-specific
+    // pricing (e.g. Jabodetabek vs Surabaya car wash) shows correctly.
+    const u = getUser();
+    const svcUrl = u?.outletId ? `/services?outletId=${u.outletId}` : '/services';
+    api.get<ServiceDTO[]>(svcUrl)
       .then((data) => setServices(data.filter((s) => s.isActive)))
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load services'))
       .finally(() => setLoading(false));
     // Load this branch's configured payment methods (with logos/colors).
-    const u = getUser();
     const pmUrl = u?.outletId ? `/payment-methods?active=true&outletId=${u.outletId}` : '/payment-methods?active=true';
     api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* falls back to default buttons */ });
   }, []);
