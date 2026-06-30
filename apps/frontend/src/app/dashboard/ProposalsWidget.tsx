@@ -1,13 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-
-/**
- * Action Proposals dashboard widget.
- * Displays pending AI action proposals with approve/reject capabilities.
- * Connects to WebSocket for real-time proposal notifications.
- * Requirements: 6.3, 7.3
- */
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '@/lib/api';
 
 export interface ActionProposal {
   id: string;
@@ -18,250 +12,69 @@ export interface ActionProposal {
   confidence_score: number;
   status: 'pending' | 'approved' | 'rejected' | 'expired';
   created_at: string;
-  resolved_at: string | null;
-  resolved_by: string | null;
 }
 
-interface ProposalsWidgetProps {
-  tenantId: string;
-  apiBaseUrl?: string;
-  wsBaseUrl?: string;
-}
-
-export default function ProposalsWidget({
-  tenantId,
-  apiBaseUrl = '/api',
-  wsBaseUrl,
-}: ProposalsWidgetProps) {
+export default function ProposalsWidget({ tenantId }: { tenantId: string }) {
   const [proposals, setProposals] = useState<ActionProposal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<'approve' | 'reject' | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const fetchProposals = useCallback(async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const response = await fetch(
-        `${apiBaseUrl}/agent/${tenantId}/proposals?status=pending`
-      );
-      if (response.ok) {
-        const data: ActionProposal[] = await response.json();
-        setProposals(data);
-      }
+      const data = await api.get<ActionProposal[]>(`/agent/${tenantId}/proposals?status=pending`);
+      setProposals(data);
     } catch {
-      // Silently handle fetch errors — widget is non-critical
+      setProposals([]);
     } finally {
       setLoading(false);
     }
-  }, [apiBaseUrl, tenantId]);
+  }, [tenantId]);
 
-  useEffect(() => {
-    fetchProposals();
-  }, [fetchProposals]);
+  useEffect(() => { load(); }, [load]);
 
-  // WebSocket connection for real-time proposal notifications
-  useEffect(() => {
-    if (!wsBaseUrl) return;
-
-    const ws = new WebSocket(`${wsBaseUrl}/agent/${tenantId}/proposals`);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'proposal_created') {
-          const newProposal: ActionProposal = message.payload;
-          setProposals((prev) => [newProposal, ...prev]);
-        } else if (message.type === 'proposal_updated') {
-          const updated: ActionProposal = message.payload;
-          setProposals((prev) =>
-            prev
-              .map((p) => (p.id === updated.id ? updated : p))
-              .filter((p) => p.status === 'pending')
-          );
-        }
-      } catch {
-        // Ignore malformed messages
-      }
-    };
-
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [wsBaseUrl, tenantId]);
-
-  const handleApprove = useCallback(
-    async (proposalId: string) => {
-      try {
-        const response = await fetch(
-          `${apiBaseUrl}/agent/${tenantId}/proposals/${proposalId}/approve`,
-          { method: 'POST' }
-        );
-        if (response.ok) {
-          setProposals((prev) => prev.filter((p) => p.id !== proposalId));
-        }
-      } catch {
-        // Silently handle errors
-      } finally {
-        setConfirmingId(null);
-        setConfirmAction(null);
-      }
-    },
-    [apiBaseUrl, tenantId]
-  );
-
-  const handleReject = useCallback(
-    async (proposalId: string) => {
-      try {
-        const response = await fetch(
-          `${apiBaseUrl}/agent/${tenantId}/proposals/${proposalId}/reject`,
-          { method: 'POST' }
-        );
-        if (response.ok) {
-          setProposals((prev) => prev.filter((p) => p.id !== proposalId));
-        }
-      } catch {
-        // Silently handle errors
-      } finally {
-        setConfirmingId(null);
-        setConfirmAction(null);
-      }
-    },
-    [apiBaseUrl, tenantId]
-  );
-
-  const requestConfirmation = (id: string, action: 'approve' | 'reject') => {
-    setConfirmingId(id);
-    setConfirmAction(action);
-  };
-
-  const cancelConfirmation = () => {
-    setConfirmingId(null);
-    setConfirmAction(null);
-  };
-
-  const confirmActionHandler = () => {
-    if (!confirmingId || !confirmAction) return;
-    if (confirmAction === 'approve') {
-      handleApprove(confirmingId);
-    } else {
-      handleReject(confirmingId);
-    }
-  };
-
-  const formatTimestamp = (isoString: string): string => {
+  const resolve = async (id: string, action: 'approve' | 'reject') => {
+    setBusyId(id);
     try {
-      return new Date(isoString).toLocaleString();
+      await api.post(`/agent/${tenantId}/proposals/${id}/${action}`);
+      setProposals((prev) => prev.filter((p) => p.id !== id));
     } catch {
-      return isoString;
+      // keep item on failure
+    } finally {
+      setBusyId(null);
     }
   };
-
-  const formatConfidence = (score: number): string => {
-    return `${Math.round(score * 100)}%`;
-  };
-
-  if (loading) {
-    return (
-      <div data-testid="proposals-widget" className="proposals-widget">
-        <h2>Action Proposals</h2>
-        <div data-testid="proposals-loading" className="proposals-loading">
-          Loading proposals...
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div data-testid="proposals-widget" className="proposals-widget">
-      <h2>Action Proposals</h2>
+    <section className="card" data-testid="proposals-widget">
+      <h2 className="section-title">AI Action Proposals</h2>
+      <p className="section-description">Pending recommendations from the AI agent.</p>
 
-      {proposals.length === 0 ? (
-        <p data-testid="proposals-empty" className="proposals-empty">
-          No pending proposals.
-        </p>
-      ) : (
-        <ul data-testid="proposals-list" className="proposals-list">
-          {proposals.map((proposal) => (
-            <li
-              key={proposal.id}
-              data-testid={`proposal-card-${proposal.id}`}
-              className="proposal-card"
-            >
-              <div className="proposal-header">
-                <span
-                  data-testid={`proposal-action-type-${proposal.id}`}
-                  className="proposal-action-type"
-                >
-                  {proposal.action_type}
-                </span>
-                <span
-                  data-testid={`proposal-confidence-${proposal.id}`}
-                  className="proposal-confidence"
-                >
-                  {formatConfidence(proposal.confidence_score)}
-                </span>
-              </div>
-
-              <p
-                data-testid={`proposal-reasoning-${proposal.id}`}
-                className="proposal-reasoning"
-              >
-                {proposal.ai_reasoning}
-              </p>
-
-              <time
-                data-testid={`proposal-timestamp-${proposal.id}`}
-                className="proposal-timestamp"
-                dateTime={proposal.created_at}
-              >
-                {formatTimestamp(proposal.created_at)}
-              </time>
-
-              <div className="proposal-actions">
-                {confirmingId === proposal.id ? (
-                  <div className="proposal-confirmation">
-                    <span>
-                      Confirm {confirmAction === 'approve' ? 'approval' : 'rejection'}?
-                    </span>
-                    <button
-                      onClick={confirmActionHandler}
-                      className="btn-confirm-yes"
-                    >
-                      Yes
-                    </button>
-                    <button
-                      onClick={cancelConfirmation}
-                      className="btn-confirm-no"
-                    >
-                      No
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <button
-                      data-testid={`proposal-approve-${proposal.id}`}
-                      onClick={() => requestConfirmation(proposal.id, 'approve')}
-                      className="btn-approve"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      data-testid={`proposal-reject-${proposal.id}`}
-                      onClick={() => requestConfirmation(proposal.id, 'reject')}
-                      className="btn-reject"
-                    >
-                      Reject
-                    </button>
-                  </>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+      <div className="mt-4">
+        {loading ? (
+          <p className="text-sm text-text-muted">Loading…</p>
+        ) : proposals.length === 0 ? (
+          <p className="text-sm text-text-muted italic" data-testid="proposals-empty">
+            No pending proposals. Enable AI automation in Settings to get started.
+          </p>
+        ) : (
+          <ul className="space-y-3" data-testid="proposals-list">
+            {proposals.map((p) => (
+              <li key={p.id} className="rounded-lg border border-border p-4" data-testid={`proposal-card-${p.id}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="badge bg-primary-50 text-primary-700 capitalize">{p.action_type.replace(/_/g, ' ')}</span>
+                  <span className="text-xs text-text-muted">{Math.round(p.confidence_score * 100)}% confidence</span>
+                </div>
+                <p className="text-sm text-text-secondary">{p.ai_reasoning}</p>
+                <div className="flex gap-2 mt-3">
+                  <button className="btn-primary text-xs py-1.5 px-3" disabled={busyId === p.id} onClick={() => resolve(p.id, 'approve')}>Approve</button>
+                  <button className="btn-secondary text-xs py-1.5 px-3" disabled={busyId === p.id} onClick={() => resolve(p.id, 'reject')}>Reject</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }

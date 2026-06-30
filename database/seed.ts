@@ -111,10 +111,21 @@ async function seed(): Promise<void> {
           'cashier',
           NULL,
           true
+        ),
+        (
+          '33333333-3333-3333-3333-333333333304',
+          $1,
+          NULL,
+          'superadmin@aire.com',
+          $2,
+          'Platform Super Admin',
+          'platform_super_admin',
+          $3,
+          true
         )
       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_active = true;
     `, [tenantId, demoPasswordHash, demoPinHash]);
-    console.log('  ✓ Users created (3) — login: owner@demo.com / password123');
+    console.log('  ✓ Users created (4) — owner@demo.com / cashier1@sudirman.demo.com / superadmin@aire.com (all password123)');
 
     // Services
     await client.query(`

@@ -1,9 +1,14 @@
 import {
   Controller,
   Get,
+  Post,
+  Param,
+  Body,
   Query,
   BadRequestException,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   JWTPayload,
@@ -12,15 +17,54 @@ import {
   OrderStatus,
   VALID_ORDER_STATUSES,
   Role,
+  CreateOrderRequest,
+  PayOrderRequest,
 } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { OrderListService } from './order-list.service';
+import { OrderService } from './order.service';
 
 @Controller('api/orders')
 @UseGuards(JwtAuthGuard)
 export class OrderController {
-  constructor(private readonly orderListService: OrderListService) {}
+  constructor(
+    private readonly orderListService: OrderListService,
+    private readonly orderService: OrderService,
+  ) {}
+
+  /**
+   * POST /api/orders
+   * Creates a new order from the POS cart.
+   */
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async createOrder(
+    @CurrentUser() user: JWTPayload,
+    @Body() body: CreateOrderRequest,
+  ) {
+    if (!body.customer?.name || !body.customer?.phone || !body.items?.length) {
+      throw new BadRequestException('customer name, phone, and at least one item are required');
+    }
+    return this.orderService.createOrder(body, user);
+  }
+
+  /**
+   * POST /api/orders/:id/pay
+   * Settles an order (cash/QRIS/EDC/transfer) and marks it paid.
+   */
+  @Post(':id/pay')
+  @HttpCode(HttpStatus.OK)
+  async payOrder(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: PayOrderRequest,
+  ) {
+    if (!body.method) {
+      throw new BadRequestException('payment method is required');
+    }
+    return this.orderService.payOrder(id, user, body);
+  }
 
   /**
    * GET /api/orders

@@ -11,6 +11,7 @@ import {
 import { Role } from '@aire/shared';
 import { Roles } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import {
   AdminService,
   CreateTenantDto,
@@ -28,8 +29,8 @@ import {
  * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
  */
 @Controller('api/admin')
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.PlatformSuperAdmin)
-@UseGuards(RolesGuard)
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 

@@ -1,6 +1,18 @@
+'use client';
+
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { getUser } from '@/lib/auth';
+import ProposalsWidget from './ProposalsWidget';
 
 export default function DashboardHomePage() {
+  const [tenantId, setTenantId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const u = getUser();
+    if (u) setTenantId(u.tenantId);
+  }, []);
+
   return (
     <div data-testid="dashboard-home">
       <div className="mb-8">
@@ -33,13 +45,9 @@ export default function DashboardHomePage() {
       </section>
 
       {/* Action Proposals */}
-      <section className="card mb-8" data-testid="dashboard-proposals">
-        <h2 className="section-title">AI Action Proposals</h2>
-        <p className="section-description">Pending recommendations from the AI agent.</p>
-        <div className="mt-4 text-sm text-text-muted italic">
-          No pending proposals. Enable AI automation in Settings to get started.
-        </div>
-      </section>
+      <div className="mb-8">
+        {tenantId && <ProposalsWidget tenantId={tenantId} />}
+      </div>
 
       {/* Quick Access */}
       <section data-testid="dashboard-sections">

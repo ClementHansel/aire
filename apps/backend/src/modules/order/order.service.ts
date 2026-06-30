@@ -387,6 +387,116 @@ export class OrderService {
   // ─── Private Helpers ──────────────────────────────────────────────────────────
 
   /**
+   * Marks an order as paid. Records the payment method, reference,
+   * amount received and change, and transitions status ordered → paid.
+   *
+   * Used by POS for cash/EDC/transfer/QRIS-static settlement.
+   */
+  async payOrder(
+    orderId: string,
+    user: JWTPayload,
+    payment: {
+      method: 'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'transfer';
+      amountReceived?: number;
+      referenceNumber?: string;
+    },
+  ): Promise<CreatedOrderResponse> {
+    const orderRes = await this.pool.query(
+      `SELECT * FROM orders WHERE id = $1 AND tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const order = orderRes.rows[0];
+    if (!order) {
+      throw new BadRequestException({
+        statusCode: 404,
+        error: 'ORDER_NOT_FOUND',
+        message: `Order ${orderId} not found`,
+      });
+    }
+    if (order.status !== OrderStatus.Ordered) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: ERR_VALIDATION_FAILED,
+        message: `Order cannot be paid from status "${order.status}"`,
+      });
+    }
+
+    const total = parseFloat(order.total);
+    let changeAmount: number | null = null;
+    if (payment.method === 'cash') {
+      const received = payment.amountReceived ?? 0;
+      if (received < total) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: ERR_VALIDATION_FAILED,
+          message: 'Amount received is less than the order total',
+        });
+      }
+      changeAmount = received - total;
+    }
+
+    const updated = await this.pool.query(
+      `UPDATE orders
+       SET status = 'paid',
+           payment_method = $1,
+           payment_reference = $2,
+           amount_received = $3,
+           change_amount = $4,
+           paid_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [
+        payment.method,
+        payment.referenceNumber ?? null,
+        payment.amountReceived ?? null,
+        changeAmount,
+        orderId,
+      ],
+    );
+
+    const itemsRes = await this.pool.query(
+      `SELECT oi.*, s.name AS service_name
+       FROM order_items oi
+       JOIN services s ON s.id = oi.service_id
+       WHERE oi.order_id = $1`,
+      [orderId],
+    );
+
+    const row = updated.rows[0];
+    return {
+      id: row.id,
+      orderNumber: row.order_number,
+      status: row.status as OrderStatus,
+      customerName: row.customer_name,
+      customerPhone: row.customer_phone,
+      licensePlate: row.license_plate,
+      vehicleBrand: row.vehicle_brand,
+      vehicleModel: row.vehicle_model,
+      subtotal: parseFloat(row.subtotal),
+      serviceCharge: parseFloat(row.service_charge),
+      tax: parseFloat(row.tax),
+      voucherDiscount: parseFloat(row.voucher_discount),
+      promoDiscount: parseFloat(row.promo_discount),
+      total: parseFloat(row.total),
+      note: row.note,
+      membershipId: row.membership_id,
+      items: itemsRes.rows.map((i) => ({
+        id: i.id,
+        serviceId: i.service_id,
+        serviceName: i.service_name,
+        quantity: i.quantity,
+        unitPrice: parseFloat(i.unit_price),
+        discount: parseFloat(i.discount ?? '0'),
+        subtotal: parseFloat(i.subtotal),
+        isMemberPricing: i.is_member_pricing ?? false,
+      })),
+      tags: [],
+      createdAt: row.created_at,
+    };
+  }
+
+  /**
    * Looks up services by their IDs and returns a map of serviceId → ServiceRow.
    */
   private async lookupServices(
