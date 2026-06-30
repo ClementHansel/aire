@@ -3,6 +3,7 @@ node_modules/
 
 # ─── Build Outputs ────────────────────────────────────────────────
 dist/
+build/
 .next/
 out/
 *.tsbuildinfo
@@ -60,3 +61,8 @@ yarn-error.log*
 .vercel/
 .cache/
 vps_reference.md
+
+# ─── Local scratch / scripts (never commit) ───────────────────────
+tmp_*
+*.tmp
+scratch/

@@ -2,6 +2,8 @@ import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { NotificationService } from '../notification';
+import { AgentRuntimeService } from './agent-runtime.service';
+import { ChatMessage } from '../agent/llm-router.service';
 
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
@@ -23,6 +25,7 @@ export class WhatsappService {
 
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly runtime: AgentRuntimeService,
     @Optional() private readonly notifications?: NotificationService,
   ) {}
 
@@ -118,38 +121,42 @@ export class WhatsappService {
       return;
     }
 
-    const reply = this.buildReply(cfg, params.text);
-    if (reply.escalate) {
+    const history = await this.recentHistory(tenantId, conv.id);
+    const result = await this.runtime.generate({
+      tenantId,
+      fromPhone: params.from,
+      outletId: null,
+      text: params.text,
+      basePrompt: cfg.base_prompt,
+      knowledge: cfg.product_knowledge,
+      history,
+    });
+    if (result.escalate || !result.text) {
       await this.escalate(tenantId, conv.id, cfg, params.from, params.text);
       return;
     }
-    await this.addMessage(tenantId, conv.id, 'outbound', reply.text, true);
+    await this.addMessage(tenantId, conv.id, 'outbound', result.text, true);
     await this.pool.query(
       `UPDATE wa_conversations SET messages_today = CASE WHEN messages_day = $2 THEN messages_today + 1 ELSE 1 END, messages_day = $2 WHERE id = $1`,
       [conv.id, today],
     );
-    await this.sendText(tenantId, params.from, reply.text);
+    await this.sendText(tenantId, params.from, result.text);
   }
 
-  /** Knowledge-grounded reply. Escalates when the question is outside the KB. */
-  private buildReply(cfg: AgentCfgRow, text: string): { text: string; escalate: boolean } {
-    const t = text.toLowerCase();
-    const kb = cfg.product_knowledge ?? '';
-    const wantsHuman = /(komplain|complaint|manusia|human|agent|bicara|lapor)/i.test(t);
-    if (wantsHuman) return { text: '', escalate: true };
-    if (kb) {
-      // Naive KB match: return the KB line most relevant to the query keywords.
-      const lines = kb.split(/\n+/).filter(Boolean);
-      const hit = lines.find((l) => t.split(/\s+/).some((w) => w.length > 3 && l.toLowerCase().includes(w)));
-      if (hit) return { text: hit.trim(), escalate: false };
-    }
-    const greeting = cfg.base_prompt?.trim()
-      ? `Halo! ${cfg.base_prompt.split('\n')[0]}`
-      : 'Halo! Terima kasih sudah menghubungi kami. Ada yang bisa kami bantu?';
-    // Outside KB → escalate so a human follows up.
-    return /(halo|hi|hai|pagi|siang|malam|thanks|terima kasih)/i.test(t)
-      ? { text: greeting, escalate: false }
-      : { text: '', escalate: true };
+  /** Last few turns of the conversation, mapped to LLM chat roles. */
+  private async recentHistory(tenantId: string, convId: string): Promise<ChatMessage[]> {
+    const r = await this.pool.query(
+      `SELECT direction, body FROM wa_messages
+       WHERE tenant_id = $1 AND conversation_id = $2
+       ORDER BY created_at DESC LIMIT 8`,
+      [tenantId, convId],
+    );
+    return r.rows
+      .reverse()
+      .map((m: { direction: string; body: string }) => ({
+        role: m.direction === 'inbound' ? ('user' as const) : ('assistant' as const),
+        content: m.body,
+      }));
   }
 
   private async escalate(tenantId: string, convId: string, cfg: AgentCfgRow | null, from: string, reason: string): Promise<void> {

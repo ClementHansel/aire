@@ -197,6 +197,27 @@ The test suite includes:
 - Scheduled AI analysis with LLM-powered insights
 - Per-tenant LLM provider selection (OpenRouter or self-hosted Hermes AI)
 
+### WhatsApp Customer Agents (rigid / fluid)
+- Customers talk to the business over WhatsApp (WAHA self-host by default, Kapso cloud optional).
+- A registry of named agents (Oline, Ersa, CS1, Tirta, Bayu, Nadia, Reza, Dimas …) with roles
+  (personal assistant / customer service / sales / supervisor), managed in the **Agent Workflow** page.
+- **Two reply modes sharing one scoped data source:**
+  - **Rigid** (AI off): deterministic, templated answers — predictable, no LLM.
+  - **Fluid** (AI on, per `ai_enabled` in Settings): the tenant's own LLM (OpenRouter API key) writes a
+    natural reply, grounded in the same data + knowledge base. Falls back to rigid on any LLM error.
+- **Strict data isolation:** the customer is resolved from the inbound phone number server-side; an agent
+  can only ever read **that customer's** orders, memberships, vouchers, bookings, and queue status — never
+  another customer's data or company financials. See [`docs/TECHNICAL.md`](docs/TECHNICAL.md#whatsapp-agent-runtime).
+
+### Bookings & Invoices
+- **Bookings** — schedule appointments (customer, vehicle, service, branch, time) with a status flow.
+- **Invoices** — printable A4 invoices (print-to-PDF) generated from completed orders.
+
+### Catalog, Service Packs & eMenu
+- Region-scoped service catalog (AIRE car wash, LEAD detailing with S-M / L-XL sizing).
+- **Service Packs** — sellable voucher templates (e.g. "10× Standard Wash", free add-on packs).
+- **Public eMenu** at `/menu/{tenantId}` — a shareable, no-login price list.
+
 ### Notifications
 - WhatsApp Business API integration
 - Tenant-scoped credentials with global fallback
@@ -230,6 +251,27 @@ See [`.env.example`](.env.example) for the full list of configurable environment
 | Storage | 20 GB SSD | 50 GB SSD |
 | PostgreSQL | 16.x | 16.x managed (RDS/Cloud SQL) |
 | Redis | 7.x | 7.x with persistence |
+
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| [`docs/TECHNICAL.md`](docs/TECHNICAL.md) | Architecture, module map, data model, WhatsApp agent runtime & security model, migrations |
+| [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | Configuring WhatsApp (WAHA/Kapso), the LLM (OpenRouter), payments, and branches/catalog — all via the UI |
+| [`AIRE-Consolidated-Requirements.md`](AIRE-Consolidated-Requirements.md) | Product requirements & locked decisions |
+| [`AIRE-Progress-Tracker.md`](AIRE-Progress-Tracker.md) | Live build checklist |
+
+## Demo Accounts
+
+The seeded demo tenant exposes these logins (password `password123`):
+
+| Role | Email | Lands on |
+|------|-------|----------|
+| Platform Super Admin | `superadmin@aire.com` | Platform admin |
+| Tenant Owner | `owner@demo.com` | Dashboard hub |
+| Cashier | `cashier1@sudirman.demo.com` | POS |
+
+Customer-facing (no login): Kiosk, Queue Board, and the public **eMenu** are linked from the sign-in page.
 
 ## License
 
