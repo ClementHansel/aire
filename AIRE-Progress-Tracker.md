@@ -133,13 +133,15 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [x] User tab (CRUD + placement + role RBAC)
 
 ### Agentic AI
-- [ ] Base prompt editor (full)
-- [ ] WA number connect via QR (unofficial gateway: WAHA/GoWA)
-- [ ] Kapso.com option (API key, number)
-- [ ] Max messages per user per day
-- [ ] Product Knowledge editor (hours, products, membership, SOP)
-- [ ] AI Agent Skills config
-- [ ] Escalation number config
+- [x] Base prompt editor
+- [x] WA number connect via QR (WAHA) — settings stored (live QR display needs running WAHA service)
+- [x] Kapso.com option (API key, number) — stored, masked on read
+- [x] Max messages per user per day
+- [x] Product Knowledge editor (hours, products, membership, SOP)
+- [x] AI Agent Skills config
+- [x] Escalation number config
+- [x] AI auto-reply on/off toggle
+- [ ] Live WAHA QR display + actual WA send/receive wiring (needs WAHA container)
 
 ### From PRD v1.2 still open
 - [ ] Effective-date pricing (PriceRule) + size variants (S/M, L/XL)
