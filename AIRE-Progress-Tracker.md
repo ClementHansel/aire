@@ -84,16 +84,17 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 
 ## ❌ NOT STARTED (new requirements)
 
-### Foundation
-- [ ] Branch CRUD UI (name, address, PT label — higher-permission to edit), tenant-created
-- [ ] Payment-method CRUD **per branch** (+ logo + color in POS)
-- [ ] Brand CRUD per branch
-- [ ] Dynamic RBAC — role CRUD + assignable permissions, UI-controllable (higher permission)
-- [ ] User CRUD + **multi-branch placement** (one staff → many branches; rolling cashier)
-- [ ] User↔branch many-to-many model (replace single `outlet_id`)
-- [ ] Product CRUD with **all / multi-select branch** scope
-- [ ] Category CRUD
-- [ ] Brand required + Category required on product create
+### Foundation (Phase 1 — ✅ DONE & deployed)
+- [x] Branch CRUD UI (name, address, PT label — higher-permission to edit), tenant-created
+- [x] Payment-method CRUD **per branch** (+ logo + color in POS dashboard)
+- [x] Brand CRUD per branch
+- [x] Dynamic RBAC — role CRUD + assignable permissions, UI-controllable (higher permission)
+- [x] User CRUD + **multi-branch placement** (one staff → many branches; rolling cashier)
+- [x] User↔branch many-to-many model (`user_outlets`)
+- [x] Product multi-branch scope backend (`outlet_ids`) + category/brand columns
+- [x] Category CRUD
+- [x] Brand required + Category required on product create (backend ready)
+- [ ] Product create/edit UI wiring for category + brand + multi-branch select (POS payment-method logos) — small follow-up
 
 ### Commerce
 - [ ] Membership **home-branch** tag
