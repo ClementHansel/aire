@@ -96,11 +96,14 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [x] Brand required + Category required on product create (backend ready)
 - [ ] Product create/edit UI wiring for category + brand + multi-branch select (POS payment-method logos) — small follow-up
 
-### Commerce
-- [ ] Membership **home-branch** tag
-- [ ] **Inter-branch settlement**: tracking ledger **+ payout flow** (top-level settlement report + drill-down)
-- [ ] Voucher redesign: `BRANCH(3)+ISSUEDATE(6)+NUMBER(6)` (e.g. `BTR-062026-000123`), shareable (no plate bind), buy-N bundles, single-use
-- [ ] **Promotion engine**: discount (fixed/percent) OR bundle (free product/service/voucher/future-discount), per-branch, with max quota
+### Commerce (Phase 2 — backend ✅ deployed, frontend pending)
+- [x] Membership **home-branch** tag (`home_outlet_id`) + per-plan settlement amount
+- [x] **Inter-branch settlement**: ledger + summary + drill-down + **payout batches** (backend + endpoints)
+- [ ] Wire settlement-entry creation into the membership redemption path (hook)
+- [x] Voucher redesign **backend**: `BRANCH-MMYYYY-NNNNNN` (e.g. `OUT-062026-000001`), shareable, buy-N books, single-use, WA delivery hook — verified
+- [x] **Promotion engine backend**: discount (fixed/percent) / free product / free voucher / future discount, per-branch, max quota
+- [ ] Phase 2 frontend: voucher-selling UI, promotions CRUD page, settlement page
+- [ ] Promotion application at POS checkout
 
 ### POS UX
 - [ ] Customer search + create-new in POS
