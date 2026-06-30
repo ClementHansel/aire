@@ -88,6 +88,9 @@ describe('OrderService', () => {
         rows: [{ settings: { service_charge_pct: 0.05, tax_pct: 0.11 } }],
       });
 
+      // promotions (none)
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
       // 3. generateOrderNumber - count query
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '5' }] });
 
@@ -280,6 +283,9 @@ describe('OrderService', () => {
         rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }],
       });
 
+      // promotions (none)
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
       // generateOrderNumber
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
@@ -378,6 +384,7 @@ describe('OrderService', () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }],
       });
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // promotions
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
       mockClient.query.mockResolvedValueOnce({}); // BEGIN
@@ -440,6 +447,8 @@ describe('OrderService', () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }],
       });
+      // promotions (none)
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
       // generateOrderNumber
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
@@ -494,6 +503,8 @@ describe('OrderService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: mockServices });
       // getOutletConfig - no settings
       mockPool.query.mockResolvedValueOnce({ rows: [{ settings: {} }] });
+      // promotions (none)
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
       // generateOrderNumber
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 

@@ -87,6 +87,7 @@ interface MembershipRow {
   uses_count: number;
   max_uses: number;
   daily_limit: number;
+  home_outlet_id: string | null;
 }
 
 interface MembershipPlanRow {
@@ -94,6 +95,7 @@ interface MembershipPlanRow {
   free_service_ids: string[] | null;
   discounted_services: Array<{ serviceId: string; discountPct: number }>;
   name: string;
+  settlement_amount: string | null;
 }
 
 /**
@@ -227,10 +229,12 @@ export class OrderService {
 
     // Step 5: Apply membership pricing if membershipId is provided
     let membershipApplied = false;
+    let membershipSettlement: { homeOutletId: string | null; amount: number } = { homeOutletId: null, amount: 0 };
     if (request.membershipId) {
-      const benefits = await this.getMembershipBenefits(request.membershipId);
-      if (benefits.length > 0) {
-        const pricingResult = applyMembershipPricing(cartItems, benefits);
+      const meta = await this.getMembershipBenefits(request.membershipId);
+      membershipSettlement = { homeOutletId: meta.homeOutletId, amount: meta.settlementAmount };
+      if (meta.benefits.length > 0) {
+        const pricingResult = applyMembershipPricing(cartItems, meta.benefits);
         cartItems = pricingResult.items;
         membershipApplied = pricingResult.appliedPricing.length > 0;
       }
@@ -270,12 +274,17 @@ export class OrderService {
     // Step 7: Get outlet config for charges
     const outletConfig = await this.getOutletConfig(user.outlet_id!);
 
+    // Step 7b: Resolve active promotions (discount rewards applied to the total).
+    const promoSubtotal = Math.max(0, cartItems.reduce((s, ci) => s + ci.quantity * ci.unitPrice - ci.discount, 0) - voucherDiscount);
+    const promo = await this.resolvePromotions(user.tenant_id, user.outlet_id ?? undefined, cartItems, promoSubtotal);
+    const promoDiscount = promo.discount;
+
     // Step 8: Calculate cart summary
     const cartSummary = calculateCartSummary(
       cartItems,
       outletConfig,
       voucherDiscount,
-      0, // promo discount (campaigns handled separately)
+      promoDiscount,
     );
 
     // Step 9: Generate order number
@@ -430,6 +439,37 @@ export class OrderService {
           [order.id, user.outlet_id ?? null, user.tenant_id, code],
         );
         if (r.rowCount === 0) throw new BadRequestException('A voucher is no longer available');
+      }
+
+      // Record promotion grants + decrement quota.
+      for (const g of promo.grants) {
+        await client.query(
+          `INSERT INTO promotion_grants (promotion_id, order_id, outlet_id, amount) VALUES ($1, $2, $3, $4)`,
+          [g.promotionId, order.id, user.outlet_id ?? null, g.amount],
+        );
+        await client.query(
+          `UPDATE promotions SET used_quota = used_quota + 1, updated_at = NOW() WHERE id = $1`,
+          [g.promotionId],
+        );
+      }
+
+      // Record membership usage + inter-branch settlement when the wash is
+      // redeemed at a branch other than where the membership was bought.
+      if (request.membershipId) {
+        const plateNorm = (request.selectedPlate ?? request.customer.licensePlate ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        const usage = await client.query<{ id: string }>(
+          `INSERT INTO membership_usages (membership_id, plate_normalized, order_id, outlet_id)
+           VALUES ($1, $2, $3, $4) RETURNING id`,
+          [request.membershipId, plateNorm, order.id, user.outlet_id ?? null],
+        );
+        if (membershipSettlement.homeOutletId && user.outlet_id &&
+            membershipSettlement.homeOutletId !== user.outlet_id && membershipSettlement.amount > 0) {
+          await client.query(
+            `INSERT INTO settlement_entries (tenant_id, membership_id, usage_id, owing_outlet_id, serving_outlet_id, amount)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [user.tenant_id, request.membershipId, usage.rows[0]!.id, membershipSettlement.homeOutletId, user.outlet_id, membershipSettlement.amount],
+          );
+        }
       }
 
       await client.query('COMMIT');
@@ -744,41 +784,85 @@ export class OrderService {
    */
   private async getMembershipBenefits(
     membershipId: string,
-  ): Promise<MembershipBenefit[]> {
+  ): Promise<{ benefits: MembershipBenefit[]; homeOutletId: string | null; settlementAmount: number }> {
     // Look up the membership and its plan
     const membershipResult = await this.pool.query<MembershipRow>(
-      `SELECT id, plan_id, status, uses_count, max_uses, daily_limit
+      `SELECT id, plan_id, status, uses_count, max_uses, daily_limit, home_outlet_id
        FROM memberships WHERE id = $1 AND status = 'active'`,
       [membershipId],
     );
 
     if (membershipResult.rows.length === 0) {
-      return [];
+      return { benefits: [], homeOutletId: null, settlementAmount: 0 };
     }
 
     const membership = membershipResult.rows[0]!;
 
     // Get the plan details
     const planResult = await this.pool.query<MembershipPlanRow>(
-      `SELECT id, name, free_service_ids, discounted_services
+      `SELECT id, name, free_service_ids, discounted_services, settlement_amount
        FROM membership_plans WHERE id = $1`,
       [membership.plan_id],
     );
 
     if (planResult.rows.length === 0) {
-      return [];
+      return { benefits: [], homeOutletId: membership.home_outlet_id ?? null, settlementAmount: 0 };
     }
 
     const plan = planResult.rows[0]!;
 
-    return [
-      {
-        membershipId: membership.id,
-        planName: plan.name,
-        freeServiceIds: plan.free_service_ids ?? [],
-        discountedServices: plan.discounted_services ?? [],
-      },
-    ];
+    return {
+      benefits: [
+        {
+          membershipId: membership.id,
+          planName: plan.name,
+          freeServiceIds: plan.free_service_ids ?? [],
+          discountedServices: plan.discounted_services ?? [],
+        },
+      ],
+      homeOutletId: membership.home_outlet_id ?? null,
+      settlementAmount: plan.settlement_amount ? parseFloat(plan.settlement_amount) : 0,
+    };
+  }
+
+  /**
+   * Resolve active promotions applicable to this order. Returns the total
+   * discount (fixed/percentage rewards) and the grants to record. Free-product /
+   * free-voucher / future-discount rewards are recorded as grants (qty tracked)
+   * without altering the current total.
+   */
+  private async resolvePromotions(
+    tenantId: string,
+    outletId: string | undefined,
+    cartItems: CartItem[],
+    subtotal: number,
+  ): Promise<{ discount: number; grants: Array<{ promotionId: string; amount: number }> }> {
+    const res = await this.pool.query<{
+      id: string; reward_type: string; reward_value: string;
+      outlet_ids: string[] | null; trigger_service_ids: string[] | null;
+    }>(
+      `SELECT id, reward_type, reward_value, outlet_ids, trigger_service_ids
+       FROM promotions
+       WHERE tenant_id = $1 AND is_active = true
+         AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE
+         AND (max_quota IS NULL OR used_quota < max_quota)`,
+      [tenantId],
+    );
+    let discount = 0;
+    const grants: Array<{ promotionId: string; amount: number }> = [];
+    const cartServiceIds = cartItems.map((ci) => ci.serviceId);
+    for (const p of res.rows) {
+      if (p.outlet_ids && outletId && !p.outlet_ids.includes(outletId)) continue;
+      if (p.trigger_service_ids && p.trigger_service_ids.length > 0 &&
+          !p.trigger_service_ids.some((sid) => cartServiceIds.includes(sid))) continue;
+      let amount = 0;
+      if (p.reward_type === 'discount_fixed') amount = Math.min(parseFloat(p.reward_value), subtotal - discount);
+      else if (p.reward_type === 'discount_percentage') amount = Math.round((subtotal * parseFloat(p.reward_value)) / 100);
+      discount += amount;
+      grants.push({ promotionId: p.id, amount });
+      if (discount >= subtotal) break;
+    }
+    return { discount: Math.min(discount, subtotal), grants };
   }
 
   /**
