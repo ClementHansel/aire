@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
 import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 
 interface HubTile {
@@ -15,6 +16,7 @@ interface HubTile {
 
 export default function HubPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [outletId, setOutletId] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
@@ -22,8 +24,18 @@ export default function HubPage() {
       window.location.href = '/';
       return;
     }
-    setUser(getUser());
+    const u = getUser();
+    setUser(u);
     setChecked(true);
+    // Resolve an outlet for the POS / Queue Board tiles. Outlet-scoped users
+    // already carry their outlet; owners/admins fetch the tenant's first outlet.
+    if (u?.outletId) {
+      setOutletId(u.outletId);
+    } else {
+      api.get<{ id: string }[]>('/outlets')
+        .then((outlets) => { const first = outlets[0]; if (first) setOutletId(first.id); })
+        .catch(() => { /* no outlet access; tiles fall back to tenant */ });
+    }
   }, []);
 
   if (!checked) {
@@ -37,7 +49,7 @@ export default function HubPage() {
   const isSuperAdmin = user?.role === 'platform_super_admin';
   // The POS URL param is a label only — the backend resolves the outlet/shift
   // from the authenticated session. Fall back to the tenant when no outlet is set.
-  const posAgent = user?.outletId ?? user?.tenantId ?? 'pos';
+  const posAgent = outletId ?? user?.tenantId ?? 'pos';
 
   const tiles: HubTile[] = [
     {
@@ -65,6 +77,17 @@ export default function HubPage() {
       accent: 'bg-violet-50 text-violet-700',
     },
   ];
+
+  if (outletId) {
+    tiles.push({
+      id: 'queue-board',
+      label: 'Queue Board',
+      description: 'Live outlet display of orders in progress and ready',
+      icon: '📺',
+      href: `/queue-board/${outletId}`,
+      accent: 'bg-sky-50 text-sky-700',
+    });
+  }
 
   if (isSuperAdmin) {
     tiles.push({

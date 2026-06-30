@@ -4,9 +4,18 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { setSession, type AuthSession } from '@/lib/auth';
 
-const DEMO_ACCOUNTS = [
+const DEMO_TENANT_ID = '11111111-1111-1111-1111-111111111111';
+const DEMO_OUTLET_ID = '22222222-2222-2222-2222-222222222201';
+
+const DEMO_LOGINS = [
   { label: 'Super Admin', email: 'superadmin@aire.com', password: 'password123', desc: 'Platform-wide administration' },
   { label: 'Tenant Owner', email: 'owner@demo.com', password: 'password123', desc: 'Full business owner access' },
+  { label: 'Employee · Cashier', email: 'cashier1@sudirman.demo.com', password: 'password123', desc: 'Signs in straight to the POS' },
+];
+
+const DEMO_PUBLIC = [
+  { label: 'Customer · Kiosk', href: `/kiosk/${DEMO_TENANT_ID}`, desc: 'Self-service order status', icon: '🖥️' },
+  { label: 'Queue Board', href: `/queue-board/${DEMO_OUTLET_ID}`, desc: 'Live outlet display', icon: '📺' },
 ];
 
 export default function LoginPage() {
@@ -21,7 +30,11 @@ export default function LoginPage() {
     try {
       const session = await api.post<AuthSession>('/auth/login', { email: loginEmail, password: loginPassword });
       setSession(session);
-      window.location.href = '/hub';
+      // Employees (cashiers) go straight to the POS; everyone else lands on the hub.
+      const dest = session.user.role === 'cashier'
+        ? `/pos/${session.user.outletId ?? session.user.tenantId}/new-order`
+        : '/hub';
+      window.location.href = dest;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Login failed';
       setError(message.includes('credentials') || message.includes('401') ? 'Invalid email or password' : message);
@@ -57,7 +70,7 @@ export default function LoginPage() {
         <div className="card mb-4">
           <p className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2">Try a demo account</p>
           <div className="grid grid-cols-2 gap-2">
-            {DEMO_ACCOUNTS.map((acc) => (
+            {DEMO_LOGINS.map((acc) => (
               <button
                 key={acc.email}
                 type="button"
@@ -71,6 +84,22 @@ export default function LoginPage() {
             ))}
           </div>
           <p className="text-xs text-text-muted mt-2">Clicking autofills the credentials and signs you in.</p>
+
+          <div className="mt-3 pt-3 border-t border-border">
+            <p className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2">Customer-facing (no sign-in)</p>
+            <div className="grid grid-cols-2 gap-2">
+              {DEMO_PUBLIC.map((p) => (
+                <a
+                  key={p.href}
+                  href={p.href}
+                  className="text-left rounded-lg border border-border p-3 hover:border-primary-300 hover:bg-primary-50 transition-colors"
+                >
+                  <p className="font-medium text-text-primary text-sm">{p.icon} {p.label}</p>
+                  <p className="text-xs text-text-muted mt-0.5">{p.desc}</p>
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="card">
