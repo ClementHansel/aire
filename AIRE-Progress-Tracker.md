@@ -115,22 +115,22 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [ ] Tablet 7" responsive pass
 
 ### Dashboard tabs
-- [ ] Transaction: revenue chart (D/W/M/custom)
-- [ ] Transaction: sales-per-product chart
-- [ ] Transaction: table top-20 + today/all + pagination 20/50/100 + view/edit/delete
-- [ ] Transaction: AI Analysis sub-tab
-- [ ] Transaction: Excel export (all / per payment channel)
-- [ ] Transaction: Executive Report PDF (AI-rendered HTML → PDF)
-- [ ] CRM: customer total / new-customer charts (D/W/M/custom)
-- [ ] CRM: customer table (view/edit/delete)
-- [ ] CRM: membership filters (Active / Suspended ≤H+14 / Expired >2wk)
-- [ ] CRM: plate CRUD + usage count + activity/change log
+- [x] Transaction: revenue chart (D/W/M/custom)
+- [x] Transaction: sales-per-product chart
+- [x] Transaction: table top-20 + today/all + pagination 20/50/100 + view/edit/delete (audit + day-lock)
+- [x] Transaction: AI Analysis sub-tab (deterministic insights; LLM upgrade pending AI connect)
+- [x] Transaction: Excel export (.xls) — per range
+- [x] Transaction: Executive Report PDF (print-to-PDF formatted HTML report)
+- [x] CRM: customer total / new-customer charts (D/W/M/custom)
+- [x] CRM: customer table (view/edit/delete)
+- [ ] CRM: membership filters (Active / Suspended ≤H+14 / Expired >2wk) + plate CRUD + usage + activity log
+- [ ] Transaction Excel: per-payment-channel split option (currently whole range)
 - [ ] Conversation Log: realtime customer↔AI view
 - [ ] Conversation Log: new-session button
 - [ ] Conversation Log: stop/start AI auto-reply
 - [ ] Conversation Log: AI summary
-- [ ] Promotion tab (CRUD per promotion engine)
-- [ ] User tab (CRUD + placement + role RBAC)
+- [x] Promotion tab (CRUD per promotion engine)
+- [x] User tab (CRUD + placement + role RBAC)
 
 ### Agentic AI
 - [ ] Base prompt editor (full)
