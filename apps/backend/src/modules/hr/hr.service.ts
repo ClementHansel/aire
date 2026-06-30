@@ -20,6 +20,22 @@ export interface LeaveRequestDto {
   endDate: string;
   type?: string;
   reason?: string;
+  paid?: boolean;
+}
+
+export interface ScheduleDto {
+  employeeId: string;
+  workDate: string;
+  startTime?: string;
+  endTime?: string;
+  outletId?: string;
+  notes?: string;
+}
+
+export interface HolidayDto {
+  date: string;
+  name: string;
+  isPaid?: boolean;
 }
 
 /**
@@ -68,9 +84,15 @@ export class HrService {
   ): Promise<Record<string, unknown>> {
     const emp = await this.pool.query(`SELECT id FROM employees WHERE id = $1 AND tenant_id = $2`, [employeeId, tenantId]);
     if (emp.rows.length === 0) throw new NotFoundException('Employee not found');
+    // Upsert one row per employee per day.
     const res = await this.pool.query(
       `INSERT INTO attendance_records (tenant_id, employee_id, status, check_in, check_out)
-       VALUES ($1,$2,COALESCE($3,'present'),$4,$5) RETURNING id, work_date, status`,
+       VALUES ($1,$2,COALESCE($3,'present'),$4,$5)
+       ON CONFLICT (employee_id, work_date) DO UPDATE
+         SET status = COALESCE(EXCLUDED.status, attendance_records.status),
+             check_in = COALESCE(EXCLUDED.check_in, attendance_records.check_in),
+             check_out = COALESCE(EXCLUDED.check_out, attendance_records.check_out)
+       RETURNING id, work_date, status`,
       [tenantId, employeeId, body.status ?? null, body.checkIn ?? null, body.checkOut ?? null],
     );
     void this.eventBus?.emit({
@@ -79,6 +101,95 @@ export class HrService {
       payload: { employeeId, status: res.rows[0]!.status },
     });
     return res.rows[0]!;
+  }
+
+  /** Clock in for today (log in). */
+  async clockIn(tenantId: string, employeeId: string, actor?: string): Promise<Record<string, unknown>> {
+    const emp = await this.pool.query(`SELECT id FROM employees WHERE id = $1 AND tenant_id = $2`, [employeeId, tenantId]);
+    if (emp.rows.length === 0) throw new NotFoundException('Employee not found');
+    const res = await this.pool.query(
+      `INSERT INTO attendance_records (tenant_id, employee_id, status, check_in)
+       VALUES ($1,$2,'present',NOW())
+       ON CONFLICT (employee_id, work_date) DO UPDATE
+         SET check_in = COALESCE(attendance_records.check_in, NOW()),
+             status = CASE WHEN attendance_records.status = 'absent' THEN 'present' ELSE attendance_records.status END
+       RETURNING id, work_date, check_in`,
+      [tenantId, employeeId],
+    );
+    void this.eventBus?.emit({ type: DomainEventType.Clocked, tenantId, actor: actor ?? employeeId, payload: { employeeId, action: 'in' } });
+    return res.rows[0]!;
+  }
+
+  /** Clock out for today (log out) — computes hours worked. */
+  async clockOut(tenantId: string, employeeId: string, actor?: string): Promise<Record<string, unknown>> {
+    const res = await this.pool.query(
+      `UPDATE attendance_records
+       SET check_out = NOW(),
+           hours_worked = ROUND(EXTRACT(EPOCH FROM (NOW() - check_in)) / 3600.0, 2)
+       WHERE employee_id = $1 AND tenant_id = $2 AND work_date = CURRENT_DATE AND check_in IS NOT NULL
+       RETURNING id, work_date, hours_worked`,
+      [employeeId, tenantId],
+    );
+    if (res.rows.length === 0) throw new BadRequestException('No open clock-in found for today');
+    void this.eventBus?.emit({ type: DomainEventType.Clocked, tenantId, actor: actor ?? employeeId, payload: { employeeId, action: 'out', hours: res.rows[0]!.hours_worked } });
+    return res.rows[0]!;
+  }
+
+  // ─── Schedules ────────────────────────────────────────────────────────────
+
+  async setSchedule(tenantId: string, dto: ScheduleDto, actor?: string): Promise<Record<string, unknown>> {
+    if (!dto.employeeId || !dto.workDate) throw new BadRequestException('employeeId and workDate are required');
+    const res = await this.pool.query(
+      `INSERT INTO employee_schedules (tenant_id, employee_id, outlet_id, work_date, start_time, end_time, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (employee_id, work_date) DO UPDATE
+         SET start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time, notes = EXCLUDED.notes, outlet_id = EXCLUDED.outlet_id
+       RETURNING id, work_date`,
+      [tenantId, dto.employeeId, dto.outletId ?? null, dto.workDate, dto.startTime ?? null, dto.endTime ?? null, dto.notes ?? null],
+    );
+    void this.eventBus?.emit({ type: DomainEventType.ScheduleSet, tenantId, actor: actor ?? 'system', payload: { employeeId: dto.employeeId, workDate: dto.workDate } });
+    return res.rows[0]!;
+  }
+
+  async listSchedules(tenantId: string, opts: { employeeId?: string; dateFrom?: string; dateTo?: string } = {}): Promise<unknown[]> {
+    const params: unknown[] = [tenantId];
+    let where = 'es.tenant_id = $1';
+    if (opts.employeeId) { params.push(opts.employeeId); where += ` AND es.employee_id = $${params.length}`; }
+    if (opts.dateFrom) { params.push(opts.dateFrom); where += ` AND es.work_date >= $${params.length}::date`; }
+    if (opts.dateTo) { params.push(opts.dateTo); where += ` AND es.work_date <= $${params.length}::date`; }
+    const res = await this.pool.query(
+      `SELECT es.id, es.work_date, es.start_time, es.end_time, es.notes, e.name AS employee, es.employee_id
+       FROM employee_schedules es JOIN employees e ON e.id = es.employee_id
+       WHERE ${where} ORDER BY es.work_date ASC, e.name ASC LIMIT 500`,
+      params,
+    );
+    return res.rows.map((r) => ({
+      id: r.id, employee: r.employee, employeeId: r.employee_id, workDate: r.work_date,
+      startTime: r.start_time, endTime: r.end_time, notes: r.notes,
+    }));
+  }
+
+  // ─── Holidays ─────────────────────────────────────────────────────────────
+
+  async listHolidays(tenantId: string): Promise<unknown[]> {
+    const res = await this.pool.query(
+      `SELECT id, holiday_date, name, is_paid FROM holidays WHERE tenant_id = $1 ORDER BY holiday_date DESC LIMIT 200`,
+      [tenantId],
+    );
+    return res.rows.map((r) => ({ id: r.id, date: r.holiday_date, name: r.name, isPaid: r.is_paid }));
+  }
+
+  async addHoliday(tenantId: string, dto: HolidayDto, actor?: string): Promise<Record<string, unknown>> {
+    if (!dto.date || !dto.name?.trim()) throw new BadRequestException('date and name are required');
+    const res = await this.pool.query(
+      `INSERT INTO holidays (tenant_id, holiday_date, name, is_paid)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (tenant_id, holiday_date) DO UPDATE SET name = EXCLUDED.name, is_paid = EXCLUDED.is_paid
+       RETURNING id, holiday_date, name`,
+      [tenantId, dto.date, dto.name.trim(), dto.isPaid ?? true],
+    );
+    void this.eventBus?.emit({ type: DomainEventType.HolidayAdded, tenantId, actor: actor ?? 'system', payload: { date: dto.date, name: dto.name.trim() } });
+    return { id: res.rows[0]!.id, date: res.rows[0]!.holiday_date, name: res.rows[0]!.name };
   }
 
   async listLeave(tenantId: string, status?: string): Promise<unknown[]> {
@@ -105,9 +216,9 @@ export class HrService {
       throw new BadRequestException('employeeId, startDate and endDate are required');
     }
     const res = await this.pool.query(
-      `INSERT INTO leave_requests (tenant_id, employee_id, start_date, end_date, type, reason)
-       VALUES ($1,$2,$3,$4,COALESCE($5,'annual'),$6) RETURNING id, status`,
-      [tenantId, dto.employeeId, dto.startDate, dto.endDate, dto.type ?? null, dto.reason ?? null],
+      `INSERT INTO leave_requests (tenant_id, employee_id, start_date, end_date, type, reason, paid)
+       VALUES ($1,$2,$3,$4,COALESCE($5,'annual'),$6,$7) RETURNING id, status`,
+      [tenantId, dto.employeeId, dto.startDate, dto.endDate, dto.type ?? null, dto.reason ?? null, dto.paid ?? true],
     );
     void this.eventBus?.emit({
       type: DomainEventType.LeaveRequested,

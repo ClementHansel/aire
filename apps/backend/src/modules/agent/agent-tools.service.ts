@@ -10,6 +10,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { FinanceService } from '../finance/finance.service';
 import { SalesService } from '../sales/sales.service';
 import { HrService } from '../hr/hr.service';
+import { PayrollService } from '../hr/payroll.service';
 import { ProcurementService } from '../procurement/procurement.service';
 import type { ToolInvocation, ToolResult } from './agent.types';
 
@@ -33,6 +34,7 @@ export class AgentToolsService {
     private readonly sales: SalesService,
     private readonly hr: HrService,
     private readonly procurement: ProcurementService,
+    private readonly payroll: PayrollService,
   ) {}
 
   /** Dispatch a tool invocation to its handler. */
@@ -93,6 +95,10 @@ export class AgentToolsService {
           return { success: true, data: { days: await this.dailySales(tenantId, p.dateFrom as string, p.dateTo as string) } };
         case 'list_shifts':
           return { success: true, data: { shifts: await this.recentShifts(tenantId, (p.limit as number) ?? 20) } };
+        case 'payroll_runs':
+          return { success: true, data: { runs: await this.payroll.listRuns(tenantId) } };
+        case 'list_loans':
+          return { success: true, data: { loans: await this.payroll.listLoans(tenantId, p.status as string) } };
         // ── Business module action tools ─────────────────────────────
         case 'adjust_inventory_stock':
           return {

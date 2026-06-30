@@ -15,6 +15,7 @@ const navItems = [
   { id: 'finance', label: 'Finance', href: '/dashboard/finance', icon: '💰' },
   { id: 'sales', label: 'Sales', href: '/dashboard/sales', icon: '📈' },
   { id: 'hr', label: 'HR', href: '/dashboard/hr', icon: '👥' },
+  { id: 'payroll', label: 'Payroll', href: '/dashboard/payroll', icon: '🧾' },
   { id: 'reports', label: 'Reports', href: '/dashboard/reports', icon: '📑' },
   { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: '📡' },
   { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },

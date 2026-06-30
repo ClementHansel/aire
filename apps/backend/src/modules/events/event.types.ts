@@ -50,6 +50,15 @@ export enum DomainEventType {
   ShiftClosed = 'shift.closed',
   PettyCashRecorded = 'shift.petty_cash_recorded',
   ShiftIssueReported = 'shift.issue_reported',
+  // HR / Payroll
+  ScheduleSet = 'hr.schedule_set',
+  Clocked = 'hr.clocked',
+  HolidayAdded = 'hr.holiday_added',
+  PayrollAdjustmentAdded = 'hr.payroll_adjustment_added',
+  LoanCreated = 'hr.loan_created',
+  LoanRepaid = 'hr.loan_repaid',
+  PayrollGenerated = 'hr.payroll_generated',
+  PayrollFinalized = 'hr.payroll_finalized',
 }
 
 /** Wildcard channel for subscribers that want every event. */
