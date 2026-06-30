@@ -2,7 +2,7 @@ import { Injectable, Inject, Logger, BadRequestException, NotFoundException } fr
 import { Pool } from 'pg';
 import { ConfigService } from '@nestjs/config';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { PaymentProviderRegistry, TenantPaymentConfig } from './payment-provider.registry';
+import { PaymentProviderRegistry, TenantPaymentConfig, isSandboxKey } from './payment-provider.registry';
 
 export interface QrisChargeResult {
   orderId: string;
@@ -86,6 +86,20 @@ export class PaymentService {
       `UPDATE orders SET payment_method = 'qris_dynamic', payment_reference = $1, updated_at = NOW() WHERE id = $2`,
       [result.transactionId, orderId],
     );
+
+    // Sandbox stand-in: no live gateway will send a webhook, so simulate the
+    // customer scanning and paying by confirming the order through the exact
+    // same DB path a real webhook uses, after a realistic delay. All state is
+    // real; only the gateway round-trip is simulated.
+    if (isSandboxKey(cfg.apiKey)) {
+      const delayMs = parseInt(this.config.get('PAYMENT_SANDBOX_CONFIRM_DELAY_MS') ?? '6000', 10) || 6000;
+      this.logger.log(`Sandbox: order ${orderId} will auto-confirm in ${delayMs}ms`);
+      setTimeout(() => {
+        this.confirmPaymentByReference(order.id).catch((err) =>
+          this.logger.error(`Sandbox auto-confirm failed for order ${order.id}: ${err?.message ?? err}`),
+        );
+      }, delayMs);
+    }
 
     return {
       orderId: order.id,

@@ -113,6 +113,17 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      # Payment gateway — single source of config. Key "mock" runs the full
+      # QRIS flow in sandbox (real DB, simulated gateway). Set XENDIT_API_KEY
+      # to the real secret in .env to go live — no code changes needed.
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-xendit}
+      PAYMENT_SANDBOX_CONFIRM_DELAY_MS: ${PAYMENT_SANDBOX_CONFIRM_DELAY_MS:-6000}
+      XENDIT_API_KEY: ${XENDIT_API_KEY:-mock}
+      XENDIT_WEBHOOK_SECRET: ${XENDIT_WEBHOOK_SECRET:-mock_webhook_secret}
+      MIDTRANS_API_KEY: ${MIDTRANS_API_KEY:-}
+      MIDTRANS_WEBHOOK_SECRET: ${MIDTRANS_WEBHOOK_SECRET:-}
+      STRIPE_API_KEY: ${STRIPE_API_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     volumes:

@@ -3,6 +3,19 @@ import { BackendPaymentProvider } from './payment-provider.interface';
 import { XenditProvider } from './providers/xendit.provider';
 import { MidtransProvider } from './providers/midtrans.provider';
 import { StripeProvider } from './providers/stripe.provider';
+import { SandboxProvider } from './providers/sandbox.provider';
+
+/**
+ * Detects the sandbox stand-in key. When the resolved API key is "mock"
+ * (case-insensitive, optionally "mock_*"), the registry returns a
+ * SandboxProvider that drives the real DB flow without calling an external
+ * gateway. Swap the env var for a real secret to go live.
+ */
+export function isSandboxKey(apiKey: string | undefined | null): boolean {
+  if (!apiKey) return false;
+  const k = apiKey.trim().toLowerCase();
+  return k === 'mock' || k.startsWith('mock_') || k.startsWith('mock-');
+}
 
 /**
  * Tenant-level payment provider configuration.
@@ -63,6 +76,17 @@ export class PaymentProviderRegistry {
    * @throws Error if the provider is not registered
    */
   getProvider(tenantId: string, config: TenantPaymentConfig): BackendPaymentProvider {
+    // Sandbox stand-in: real DB flow, simulated gateway round-trip.
+    if (isSandboxKey(config.apiKey)) {
+      const cacheKey = `${tenantId}:sandbox`;
+      const cached = this.providerCache.get(cacheKey);
+      if (cached) return cached;
+      const sandbox = new SandboxProvider(config.provider, config.webhookSecret);
+      this.providerCache.set(cacheKey, sandbox);
+      this.logger.log(`Using sandbox payment provider for tenant ${tenantId} (no live gateway key set)`);
+      return sandbox;
+    }
+
     // Cache key includes provider name so config changes create new instances
     const cacheKey = `${tenantId}:${config.provider}`;
 
@@ -89,6 +113,9 @@ export class PaymentProviderRegistry {
    * Uses a shared instance with the provided config.
    */
   getProviderByName(providerName: string, config: TenantPaymentConfig): BackendPaymentProvider {
+    if (isSandboxKey(config.apiKey)) {
+      return new SandboxProvider(providerName, config.webhookSecret);
+    }
     const factory = this.factories.get(providerName);
     if (!factory) {
       throw new Error(`Payment provider "${providerName}" is not registered.`);
