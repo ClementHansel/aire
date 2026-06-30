@@ -18,6 +18,9 @@ describe('ServiceService', () => {
     is_active: true,
     is_main_service: true,
     sort_order: 1,
+    category_id: null,
+    brand_id: null,
+    outlet_ids: null,
     created_at: new Date('2024-06-15T10:00:00.000Z'),
   };
 
@@ -51,6 +54,9 @@ describe('ServiceService', () => {
         isActive: true,
         isMainService: true,
         sortOrder: 1,
+        categoryId: null,
+        brandId: null,
+        outletIds: null,
       });
 
       expect(mockPool.query).toHaveBeenCalledTimes(1);
@@ -181,7 +187,8 @@ describe('ServiceService', () => {
       await service.findAll({ tenantId: 'tenant-001', outletId: 'outlet-001' });
 
       const [sql, params] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('(outlet_id = $2 OR outlet_id IS NULL)');
+      expect(sql).toContain('outlet_id = $2 OR');
+      expect(sql).toContain('$2 = ANY(outlet_ids)');
       expect(params[1]).toBe('outlet-001');
     });
 
@@ -208,7 +215,7 @@ describe('ServiceService', () => {
       const [sql, params] = mockPool.query.mock.calls[0];
       expect(sql).toContain('tenant_id = $1');
       expect(sql).toContain('category = $2');
-      expect(sql).toContain('(outlet_id = $3 OR outlet_id IS NULL)');
+      expect(sql).toContain('$3 = ANY(outlet_ids)');
       expect(sql).toContain('is_active = $4');
       expect(params).toEqual(['tenant-001', 'car_wash', 'outlet-001', true]);
     });

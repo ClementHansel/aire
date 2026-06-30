@@ -52,9 +52,9 @@ export class ServiceService {
         : dto.category === ServiceCategory.CarWash;
 
     const result = await this.pool.query(
-      `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, created_at`,
+      `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, created_at`,
       [
         tenantId,
         dto.outletId ?? null,
@@ -65,6 +65,9 @@ export class ServiceService {
         dto.isActive ?? true,
         isMainService,
         dto.sortOrder ?? 0,
+        dto.categoryId ?? null,
+        dto.brandId ?? null,
+        dto.outletIds && dto.outletIds.length > 0 ? dto.outletIds : null,
       ],
     );
 
@@ -96,8 +99,10 @@ export class ServiceService {
     }
 
     if (params.outletId) {
-      // Include services specific to this outlet AND services available to all outlets (outlet_id IS NULL)
-      conditions.push(`(outlet_id = $${paramIndex} OR outlet_id IS NULL)`);
+      // Include services specific to this outlet, services available to all outlets
+      // (outlet_id IS NULL and no outlet_ids restriction), and services whose
+      // multi-branch scope (outlet_ids) contains this outlet.
+      conditions.push(`(outlet_id = $${paramIndex} OR (outlet_id IS NULL AND (outlet_ids IS NULL OR outlet_ids = '{}')) OR $${paramIndex} = ANY(outlet_ids))`);
       values.push(params.outletId);
       paramIndex++;
     }
@@ -111,7 +116,7 @@ export class ServiceService {
     const whereClause = conditions.join(' AND ');
 
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids
        FROM services
        WHERE ${whereClause}
        ORDER BY category, sort_order, name`,
@@ -128,7 +133,7 @@ export class ServiceService {
    */
   async findOne(tenantId: string, id: string): Promise<ServiceDTO> {
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids
        FROM services
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -213,6 +218,24 @@ export class ServiceService {
       paramIndex++;
     }
 
+    if (dto.categoryId !== undefined) {
+      setClauses.push(`category_id = $${paramIndex}`);
+      values.push(dto.categoryId);
+      paramIndex++;
+    }
+
+    if (dto.brandId !== undefined) {
+      setClauses.push(`brand_id = $${paramIndex}`);
+      values.push(dto.brandId);
+      paramIndex++;
+    }
+
+    if (dto.outletIds !== undefined) {
+      setClauses.push(`outlet_ids = $${paramIndex}`);
+      values.push(dto.outletIds && dto.outletIds.length > 0 ? dto.outletIds : null);
+      paramIndex++;
+    }
+
     if (setClauses.length === 0) {
       return this.findOne(tenantId, id);
     }
@@ -223,7 +246,7 @@ export class ServiceService {
       `UPDATE services
        SET ${setClauses.join(', ')}
        WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order`,
+       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids`,
       [...values, id, tenantId],
     );
 
@@ -303,6 +326,9 @@ export class ServiceService {
       name: row.name,
       category: row.category as ServiceCategory,
       businessUnit: (row.business_unit ?? BusinessUnit.Aire) as BusinessUnit,
+      categoryId: row.category_id ?? null,
+      brandId: row.brand_id ?? null,
+      outletIds: row.outlet_ids ?? null,
       price: parseFloat(row.price),
       isActive: row.is_active,
       isMainService: row.is_main_service,

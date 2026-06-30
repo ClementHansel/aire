@@ -19,7 +19,9 @@ export interface OutletSettings {
 export interface CreateOutletDto {
   tenantId: string;
   name: string;
-  agentId: string;
+  agentId?: string;
+  code?: string;
+  legalEntity?: string;
   address?: string;
   timezone?: string;
   isActive?: boolean;
@@ -32,6 +34,8 @@ export interface CreateOutletDto {
 export interface UpdateOutletDto {
   name?: string;
   agentId?: string;
+  code?: string;
+  legalEntity?: string;
   address?: string;
   timezone?: string;
   isActive?: boolean;
@@ -46,6 +50,8 @@ export interface OutletRecord {
   tenantId: string;
   name: string;
   agentId: string;
+  code: string | null;
+  legalEntity: string | null;
   address: string | null;
   timezone: string;
   isActive: boolean;
@@ -72,14 +78,20 @@ export class OutletService {
    * Requirement 3.1: Creating outlets within a tenant.
    */
   async create(dto: CreateOutletDto): Promise<OutletRecord> {
+    // Derive a 3-letter branch code from the name when not supplied.
+    const code = (dto.code ?? dto.name.replace(/[^A-Za-z]/g, '').slice(0, 3)).toUpperCase();
+    // Agent id must be unique; auto-generate from the code when not provided.
+    const agentId = dto.agentId ?? `${code.toLowerCase()}-${Math.random().toString(36).slice(2, 8)}`;
     const result = await this.pool.query(
-      `INSERT INTO outlets (tenant_id, name, agent_id, address, timezone, is_active, settings)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at`,
+      `INSERT INTO outlets (tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at`,
       [
         dto.tenantId,
         dto.name,
-        dto.agentId,
+        agentId,
+        code,
+        dto.legalEntity ?? null,
         dto.address ?? null,
         dto.timezone ?? 'Asia/Jakarta',
         dto.isActive ?? true,
@@ -97,7 +109,7 @@ export class OutletService {
   async findAll(tenantId?: string): Promise<OutletRecord[]> {
     if (tenantId) {
       const result = await this.pool.query(
-        `SELECT id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at
+        `SELECT id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at
          FROM outlets WHERE tenant_id = $1
          ORDER BY created_at DESC`,
         [tenantId],
@@ -106,7 +118,7 @@ export class OutletService {
     }
 
     const result = await this.pool.query(
-      `SELECT id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at
+      `SELECT id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at
        FROM outlets
        ORDER BY created_at DESC`,
     );
@@ -119,7 +131,7 @@ export class OutletService {
    */
   async findById(id: string): Promise<OutletRecord> {
     const result = await this.pool.query(
-      `SELECT id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at
+      `SELECT id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at
        FROM outlets WHERE id = $1`,
       [id],
     );
@@ -149,6 +161,18 @@ export class OutletService {
     if (dto.agentId !== undefined) {
       setClauses.push(`agent_id = $${paramIndex}`);
       values.push(dto.agentId);
+      paramIndex++;
+    }
+
+    if (dto.code !== undefined) {
+      setClauses.push(`code = $${paramIndex}`);
+      values.push(dto.code.toUpperCase());
+      paramIndex++;
+    }
+
+    if (dto.legalEntity !== undefined) {
+      setClauses.push(`legal_entity = $${paramIndex}`);
+      values.push(dto.legalEntity);
       paramIndex++;
     }
 
@@ -186,7 +210,7 @@ export class OutletService {
     const result = await this.pool.query(
       `UPDATE outlets SET ${setClauses.join(', ')}
        WHERE id = $${paramIndex}
-       RETURNING id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at`,
+       RETURNING id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at`,
       values,
     );
 
@@ -205,7 +229,7 @@ export class OutletService {
     const result = await this.pool.query(
       `UPDATE outlets SET is_active = true, updated_at = NOW()
        WHERE id = $1
-       RETURNING id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at`,
+       RETURNING id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at`,
       [id],
     );
 
@@ -224,7 +248,7 @@ export class OutletService {
     const result = await this.pool.query(
       `UPDATE outlets SET is_active = false, updated_at = NOW()
        WHERE id = $1
-       RETURNING id, tenant_id, name, agent_id, address, timezone, is_active, settings, created_at, updated_at`,
+       RETURNING id, tenant_id, name, agent_id, code, legal_entity, address, timezone, is_active, settings, created_at, updated_at`,
       [id],
     );
 
@@ -244,6 +268,8 @@ export class OutletService {
       tenantId: row.tenant_id,
       name: row.name,
       agentId: row.agent_id,
+      code: row.code ?? null,
+      legalEntity: row.legal_entity ?? null,
       address: row.address,
       timezone: row.timezone,
       isActive: row.is_active,

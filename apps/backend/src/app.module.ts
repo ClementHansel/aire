@@ -28,6 +28,10 @@ import { SalesModule } from './modules/sales/sales.module';
 import { HrModule } from './modules/hr/hr.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { ShiftModule } from './modules/shift/shift.module';
+import { OutletModule } from './modules/outlet/outlet.module';
+import { PaymentMethodModule } from './modules/payment-method';
+import { CatalogModule } from './modules/catalog';
+import { AccessModule } from './modules/access';
 
 @Module({
   imports: [
@@ -60,6 +64,10 @@ import { ShiftModule } from './modules/shift/shift.module';
     HrModule,
     ProcurementModule,
     ShiftModule,
+    OutletModule,
+    PaymentMethodModule,
+    CatalogModule,
+    AccessModule,
   ],
   controllers: [AppController],
   providers: [AppService],
