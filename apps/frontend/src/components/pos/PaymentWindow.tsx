@@ -39,6 +39,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   [PaymentMethod.QrisStatic]: 'QRIS Static',
   [PaymentMethod.QrisDynamic]: 'QRIS Dynamic',
   [PaymentMethod.Edc]: 'EDC',
+  [PaymentMethod.CreditCard]: 'Credit Card',
   [PaymentMethod.Transfer]: 'Transfer',
 };
 

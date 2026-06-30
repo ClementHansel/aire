@@ -23,17 +23,18 @@ export class ReportService {
    * revenue (paid/confirmed/completed). Optional outlet filter.
    */
   async getDailySales(params: ReportQueryParams): Promise<{ date: string; orders: number; revenue: number; paidOrders: number }[]> {
-    const { dateFrom, dateTo, outletId } = params;
+    const { dateFrom, dateTo, outletId, businessUnit } = params;
     const qp: string[] = [dateFrom, dateTo];
-    let outletFilter = '';
-    if (outletId) { outletFilter = ' AND outlet_id = $3'; qp.push(outletId); }
+    let filter = '';
+    if (outletId) { filter += ` AND outlet_id = $${qp.length + 1}`; qp.push(outletId); }
+    if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
     const res = await this.pool.query<{ day: string; orders: string; revenue: string; paid: string }>(
       `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
               COUNT(*)::int AS orders,
               COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
               COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS paid
        FROM orders
-       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${outletFilter}
+       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${filter}
        GROUP BY day ORDER BY day ASC`,
       qp,
     );
@@ -98,21 +99,24 @@ export class ReportService {
    * - byService: JOIN order_items + services, GROUP BY service, ORDER BY quantity DESC LIMIT 10
    */
   async getSummary(params: ReportQueryParams): Promise<SummaryResponse> {
-    const { dateFrom, dateTo, outletId } = params;
+    const { dateFrom, dateTo, outletId, businessUnit } = params;
 
     const [
       overviewResult,
       paymentMethodResult,
+      businessUnitResult,
       serviceResult,
     ] = await Promise.all([
-      this.getOverviewStats(dateFrom, dateTo, outletId),
-      this.getPaymentMethodBreakdown(dateFrom, dateTo, outletId),
-      this.getServiceBreakdown(dateFrom, dateTo, outletId),
+      this.getOverviewStats(dateFrom, dateTo, outletId, businessUnit),
+      this.getPaymentMethodBreakdown(dateFrom, dateTo, outletId, businessUnit),
+      this.getBusinessUnitBreakdown(dateFrom, dateTo, outletId),
+      this.getServiceBreakdown(dateFrom, dateTo, outletId, businessUnit),
     ]);
 
     return {
       ...overviewResult,
       byPaymentMethod: paymentMethodResult,
+      byBusinessUnit: businessUnitResult,
       byService: serviceResult,
     };
   }
@@ -123,22 +127,23 @@ export class ReportService {
    * Payment Method, Total, Items, Note
    */
   async exportCsv(params: ReportQueryParams): Promise<string> {
-    const { dateFrom, dateTo, outletId } = params;
+    const { dateFrom, dateTo, outletId, businessUnit } = params;
 
     const queryParams: (string | undefined)[] = [dateFrom, dateTo];
-    let outletFilter = '';
-    if (outletId) {
-      outletFilter = ' AND o.outlet_id = $3';
-      queryParams.push(outletId);
-    }
+    let filter = '';
+    if (outletId) { filter += ` AND o.outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (businessUnit) { filter += ` AND o.business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
       order_number: string;
       created_at: Date;
+      business_unit: string;
       customer_name: string;
       customer_phone: string;
+      salesperson_name: string | null;
       status: string;
       payment_method: string | null;
+      payment_channel: string | null;
       total: string;
       note: string | null;
       items: string;
@@ -146,10 +151,13 @@ export class ReportService {
       `SELECT
         o.order_number,
         o.created_at,
+        o.business_unit,
         o.customer_name,
         o.customer_phone,
+        o.salesperson_name,
         o.status,
         o.payment_method,
+        o.payment_channel,
         o.total,
         o.note,
         COALESCE(
@@ -161,9 +169,10 @@ export class ReportService {
        LEFT JOIN services s ON s.id = oi.service_id
        WHERE o.created_at >= $1::timestamptz
          AND o.created_at < ($2::date + INTERVAL '1 day')
-         ${outletFilter}
-       GROUP BY o.id, o.order_number, o.created_at, o.customer_name,
-                o.customer_phone, o.status, o.payment_method, o.total, o.note
+         ${filter}
+       GROUP BY o.id, o.order_number, o.created_at, o.business_unit, o.customer_name,
+                o.customer_phone, o.salesperson_name, o.status, o.payment_method,
+                o.payment_channel, o.total, o.note
        ORDER BY o.created_at ASC`,
       queryParams.filter((p) => p !== undefined),
     );
@@ -171,10 +180,13 @@ export class ReportService {
     const headers = [
       'Order Number',
       'Date',
+      'Business Unit',
       'Customer',
       'Phone',
+      'Salesperson',
       'Status',
       'Payment Method',
+      'Payment Channel',
       'Total',
       'Items',
       'Note',
@@ -183,10 +195,13 @@ export class ReportService {
     const rows = result.rows.map((row) => [
       this.escapeCsv(row.order_number),
       this.escapeCsv(new Date(row.created_at).toISOString()),
+      this.escapeCsv(row.business_unit ?? ''),
       this.escapeCsv(row.customer_name),
       this.escapeCsv(row.customer_phone),
+      this.escapeCsv(row.salesperson_name ?? ''),
       this.escapeCsv(row.status),
       this.escapeCsv(row.payment_method ?? ''),
+      this.escapeCsv(row.payment_channel ?? ''),
       row.total,
       this.escapeCsv(row.items),
       this.escapeCsv(row.note ?? ''),
@@ -202,13 +217,12 @@ export class ReportService {
     dateFrom: string,
     dateTo: string,
     outletId?: string,
-  ): Promise<Omit<SummaryResponse, 'byPaymentMethod' | 'byService'>> {
+    businessUnit?: string,
+  ): Promise<Omit<SummaryResponse, 'byPaymentMethod' | 'byBusinessUnit' | 'byService'>> {
     const queryParams: string[] = [dateFrom, dateTo];
-    let outletFilter = '';
-    if (outletId) {
-      outletFilter = ' AND outlet_id = $3';
-      queryParams.push(outletId);
-    }
+    let filter = '';
+    if (outletId) { filter += ` AND outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
       total_orders: string;
@@ -228,7 +242,7 @@ export class ReportService {
        FROM orders
        WHERE created_at >= $1::timestamptz
          AND created_at < ($2::date + INTERVAL '1 day')
-         ${outletFilter}`,
+         ${filter}`,
       queryParams,
     );
 
@@ -247,13 +261,12 @@ export class ReportService {
     dateFrom: string,
     dateTo: string,
     outletId?: string,
+    businessUnit?: string,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
     const queryParams: string[] = [dateFrom, dateTo];
-    let outletFilter = '';
-    if (outletId) {
-      outletFilter = ' AND outlet_id = $3';
-      queryParams.push(outletId);
-    }
+    let filter = '';
+    if (outletId) { filter += ` AND outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
       payment_method: string;
@@ -269,7 +282,7 @@ export class ReportService {
          AND created_at < ($2::date + INTERVAL '1 day')
          AND status IN ('paid', 'confirmed', 'completed')
          AND payment_method IS NOT NULL
-         ${outletFilter}
+         ${filter}
        GROUP BY payment_method
        ORDER BY revenue DESC`,
       queryParams,
@@ -285,17 +298,55 @@ export class ReportService {
     return breakdown;
   }
 
+  /**
+   * Revenue + order count split by business unit (AIRE car wash vs LEAD detailing).
+   * Always returns both units (zero-filled) so the dashboard can render both P&L views.
+   */
+  private async getBusinessUnitBreakdown(
+    dateFrom: string,
+    dateTo: string,
+    outletId?: string,
+  ): Promise<Record<string, PaymentMethodBreakdown>> {
+    const queryParams: string[] = [dateFrom, dateTo];
+    let filter = '';
+    if (outletId) { filter += ` AND outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+
+    const result = await this.pool.query<{ business_unit: string; revenue: string; count: string }>(
+      `SELECT business_unit,
+              COALESCE(SUM(total), 0) AS revenue,
+              COUNT(*)::int AS count
+       FROM orders
+       WHERE created_at >= $1::timestamptz
+         AND created_at < ($2::date + INTERVAL '1 day')
+         AND status IN ('paid', 'confirmed', 'completed')
+         ${filter}
+       GROUP BY business_unit`,
+      queryParams,
+    );
+
+    const breakdown: Record<string, PaymentMethodBreakdown> = {
+      AIRE: { revenue: 0, count: 0 },
+      LEAD: { revenue: 0, count: 0 },
+    };
+    for (const row of result.rows) {
+      breakdown[row.business_unit] = {
+        revenue: parseFloat(row.revenue),
+        count: parseInt(row.count, 10),
+      };
+    }
+    return breakdown;
+  }
+
   private async getServiceBreakdown(
     dateFrom: string,
     dateTo: string,
     outletId?: string,
+    businessUnit?: string,
   ): Promise<ServiceBreakdown[]> {
     const queryParams: string[] = [dateFrom, dateTo];
-    let outletFilter = '';
-    if (outletId) {
-      outletFilter = ' AND o.outlet_id = $3';
-      queryParams.push(outletId);
-    }
+    let filter = '';
+    if (outletId) { filter += ` AND o.outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (businessUnit) { filter += ` AND o.business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
       service_id: string;
@@ -314,7 +365,7 @@ export class ReportService {
        WHERE o.created_at >= $1::timestamptz
          AND o.created_at < ($2::date + INTERVAL '1 day')
          AND o.status IN ('paid', 'confirmed', 'completed')
-         ${outletFilter}
+         ${filter}
        GROUP BY oi.service_id, s.name
        ORDER BY total_quantity DESC
        LIMIT 10`,

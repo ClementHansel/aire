@@ -9,6 +9,7 @@ interface ServiceDTO {
   id: string;
   name: string;
   category: 'car_wash' | 'product' | 'add_on';
+  businessUnit: 'AIRE' | 'LEAD';
   price: number;
   isActive: boolean;
 }
@@ -43,6 +44,8 @@ export default function NewOrderPage() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [plate, setPlate] = useState('');
+  const [businessUnit, setBusinessUnit] = useState<'AIRE' | 'LEAD'>('AIRE');
+  const [salesperson, setSalesperson] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [placing, setPlacing] = useState(false);
@@ -55,7 +58,7 @@ export default function NewOrderPage() {
 
   // payment state
   const [order, setOrder] = useState<CreatedOrder | null>(null);
-  const [payMethod, setPayMethod] = useState<'cash' | 'qris_dynamic' | 'edc' | 'transfer'>('cash');
+  const [payMethod, setPayMethod] = useState<'cash' | 'qris_dynamic' | 'edc' | 'cc' | 'transfer'>('cash');
   const [amountReceived, setAmountReceived] = useState('');
   const [paying, setPaying] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
@@ -138,6 +141,8 @@ export default function NewOrderPage() {
       const created = await api.post<CreatedOrder>('/orders', {
         customer: { name: name.trim(), phone: phone.trim(), licensePlate: plate.trim() || undefined },
         items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty })),
+        businessUnit,
+        salespersonName: salesperson.trim() || undefined,
         voucherCodes: voucherCodes.length ? voucherCodes : undefined,
       });
       setOrder(created);
@@ -163,6 +168,7 @@ export default function NewOrderPage() {
       }
       await api.post(`/orders/${order.id}/pay`, {
         method: payMethod,
+        paymentChannel: businessUnit,
         amountReceived: payMethod === 'cash' ? Number(amountReceived) : undefined,
       });
       const change = payMethod === 'cash' ? Math.max(0, Number(amountReceived) - order.total) : 0;
@@ -198,6 +204,7 @@ export default function NewOrderPage() {
   }, [polling, order]);
 
   const user = getUser();
+  const visibleServices = services.filter((s) => (s.businessUnit ?? 'AIRE') === businessUnit);
 
   if (loading) {
     return <div className="min-h-screen bg-surface flex items-center justify-center text-text-muted">Loading POS…</div>;
@@ -234,12 +241,28 @@ export default function NewOrderPage() {
       <div className="flex-1 grid lg:grid-cols-3 gap-5 p-5 min-h-0">
         {/* Service grid */}
         <div className="lg:col-span-2">
-          <h2 className="section-title mb-3">Services</h2>
-          {services.length === 0 ? (
-            <div className="card text-sm text-text-muted">No active services. Add some in the dashboard.</div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="section-title">Services</h2>
+            {/* Business unit switch — AIRE car wash vs LEAD detailing */}
+            <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5" role="tablist" aria-label="Business unit">
+              {(['AIRE', 'LEAD'] as const).map((bu) => (
+                <button
+                  key={bu}
+                  onClick={() => { if (bu !== businessUnit) { setBusinessUnit(bu); setCart([]); } }}
+                  className={`px-4 py-1.5 text-sm font-semibold rounded-full transition-colors ${
+                    businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {bu === 'AIRE' ? 'AIRE · Wash' : 'LEAD · Detail'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {visibleServices.length === 0 ? (
+            <div className="card text-sm text-text-muted">No active {businessUnit} services. Add some in the dashboard.</div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {services.map((s) => (
+              {visibleServices.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => addToCart(s)}
@@ -262,6 +285,7 @@ export default function NewOrderPage() {
             <input className="input-field" placeholder="Customer name *" value={name} onChange={(e) => setName(e.target.value)} />
             <input className="input-field" placeholder="Phone (e.g. 08123…) *" value={phone} onChange={(e) => setPhone(e.target.value)} />
             <input className="input-field" placeholder="License plate (optional)" value={plate} onChange={(e) => setPlate(e.target.value)} />
+            <input className="input-field" placeholder="Salesperson (optional)" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} />
           </div>
 
           <div className="flex-1 overflow-auto border-t border-border pt-3 space-y-2 min-h-[120px]">
@@ -337,9 +361,13 @@ export default function NewOrderPage() {
               <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
                 <option value="cash">Cash</option>
                 <option value="qris_dynamic">QRIS (scan to pay)</option>
-                <option value="edc">EDC / Card</option>
+                <option value="edc">EDC / Debit</option>
+                <option value="cc">Credit Card</option>
                 <option value="transfer">Bank Transfer</option>
               </select>
+              {payMethod !== 'cash' && (
+                <p className="mt-1.5 text-xs text-text-muted">Settles to the <span className="font-medium text-text-primary">{businessUnit}</span> {payMethod === 'qris_dynamic' ? 'QRIS' : payMethod === 'cc' ? 'CC' : payMethod === 'edc' ? 'EDC' : 'transfer'} account.</p>
+              )}
             </div>
 
             {payMethod === 'cash' && !qr && (

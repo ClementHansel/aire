@@ -37,6 +37,8 @@ export interface SummaryResponse {
   newMembers: number;
   /** Revenue and count breakdown by payment method */
   byPaymentMethod: Record<string, PaymentMethodBreakdown>;
+  /** Revenue and count breakdown by business unit (AIRE vs LEAD) */
+  byBusinessUnit: Record<string, PaymentMethodBreakdown>;
   /** Top 10 services by quantity and revenue */
   byService: ServiceBreakdown[];
 }
@@ -49,4 +51,6 @@ export interface ReportQueryParams {
   dateFrom: string;
   dateTo: string;
   outletId?: string;
+  /** Optional business-unit filter (AIRE / LEAD) */
+  businessUnit?: string;
 }

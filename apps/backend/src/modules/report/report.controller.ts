@@ -43,6 +43,7 @@ export class ReportController {
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('outletId') outletId?: string,
+    @Query('businessUnit') businessUnit?: string,
   ): Promise<SummaryResponse> {
     // Validate required date parameters
     if (!dateFrom || !dateTo) {
@@ -69,6 +70,7 @@ export class ReportController {
       dateFrom,
       dateTo,
       outletId: effectiveOutletId,
+      businessUnit,
     });
   }
 
@@ -81,11 +83,12 @@ export class ReportController {
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('outletId') outletId?: string,
+    @Query('businessUnit') businessUnit?: string,
   ) {
     if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
     const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
-    return this.reportService.getDailySales({ dateFrom, dateTo, outletId: effectiveOutletId });
+    return this.reportService.getDailySales({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit });
   }
 
   /**
@@ -120,6 +123,7 @@ export class ReportController {
     @Query('outletId') outletId?: string,
     @Query('format') format?: string,
     @Query('scope') scope?: string,
+    @Query('businessUnit') businessUnit?: string,
     @Res() reply?: FastifyReply,
   ): Promise<void> {
     // Validate required parameters
@@ -149,8 +153,8 @@ export class ReportController {
     const exportScope = scope === 'daily' ? 'daily' : 'orders';
     const csvContent =
       exportScope === 'daily'
-        ? await this.reportService.exportDailySalesCsv({ dateFrom, dateTo, outletId: effectiveOutletId })
-        : await this.reportService.exportCsv({ dateFrom, dateTo, outletId: effectiveOutletId });
+        ? await this.reportService.exportDailySalesCsv({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit })
+        : await this.reportService.exportCsv({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit });
 
     const filename =
       exportScope === 'daily'

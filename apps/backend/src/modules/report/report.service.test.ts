@@ -39,6 +39,14 @@ describe('ReportService', () => {
         ],
       });
 
+      // Business unit breakdown query
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          { business_unit: 'AIRE', revenue: '4000000.00', count: '18' },
+          { business_unit: 'LEAD', revenue: '1000000.00', count: '2' },
+        ],
+      });
+
       // Service breakdown query
       mockPool.query.mockResolvedValueOnce({
         rows: [
@@ -63,6 +71,10 @@ describe('ReportService', () => {
         qris_static: { revenue: 1500000, count: 6 },
         edc: { revenue: 1000000, count: 4 },
       });
+      expect(result.byBusinessUnit).toEqual({
+        AIRE: { revenue: 4000000, count: 18 },
+        LEAD: { revenue: 1000000, count: 2 },
+      });
       expect(result.byService).toEqual([
         { serviceId: 'svc-1', name: 'Premium Wash', quantity: 15, revenue: 3000000 },
         { serviceId: 'svc-2', name: 'Basic Wash', quantity: 10, revenue: 1000000 },
@@ -84,6 +96,7 @@ describe('ReportService', () => {
       });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       const result = await reportService.getSummary({
         dateFrom: '2024-01-01',
@@ -97,6 +110,7 @@ describe('ReportService', () => {
       expect(result.uniqueMembers).toBe(0);
       expect(result.newMembers).toBe(0);
       expect(result.byPaymentMethod).toEqual({});
+      expect(result.byBusinessUnit).toEqual({ AIRE: { revenue: 0, count: 0 }, LEAD: { revenue: 0, count: 0 } });
       expect(result.byService).toEqual([]);
     });
 
@@ -115,6 +129,7 @@ describe('ReportService', () => {
       });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       await reportService.getSummary({
         dateFrom: '2024-01-01',
@@ -122,8 +137,8 @@ describe('ReportService', () => {
         outletId: 'outlet-123',
       });
 
-      // Each of the 3 queries should receive 3 params (dateFrom, dateTo, outletId)
-      expect(mockPool.query).toHaveBeenCalledTimes(3);
+      // Overview, payment, business-unit, and service queries all receive outletId
+      expect(mockPool.query).toHaveBeenCalledTimes(4);
       for (const call of mockPool.query.mock.calls) {
         expect(call[1]).toContain('outlet-123');
       }
@@ -142,6 +157,7 @@ describe('ReportService', () => {
           },
         ],
       });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
@@ -193,7 +209,7 @@ describe('ReportService', () => {
 
       const lines = csv.split('\n');
       expect(lines[0]).toBe(
-        'Order Number,Date,Customer,Phone,Status,Payment Method,Total,Items,Note',
+        'Order Number,Date,Business Unit,Customer,Phone,Salesperson,Status,Payment Method,Payment Channel,Total,Items,Note',
       );
       expect(lines.length).toBe(3); // header + 2 rows
       expect(lines[1]).toContain('ORD-20240101-001');
@@ -214,7 +230,7 @@ describe('ReportService', () => {
       const lines = csv.split('\n');
       expect(lines.length).toBe(1);
       expect(lines[0]).toBe(
-        'Order Number,Date,Customer,Phone,Status,Payment Method,Total,Items,Note',
+        'Order Number,Date,Business Unit,Customer,Phone,Salesperson,Status,Payment Method,Payment Channel,Total,Items,Note',
       );
     });
 

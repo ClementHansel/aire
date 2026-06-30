@@ -1,4 +1,4 @@
-import { OrderStatus } from '../enums';
+import { OrderStatus, BusinessUnit } from '../enums';
 
 /**
  * Order item within a create order request.
@@ -27,6 +27,10 @@ export interface OrderCustomerInput {
 export interface CreateOrderRequest {
   customer: OrderCustomerInput;
   items: OrderItemInput[];
+  /** Business unit for this transaction (AIRE car wash / LEAD detailing). Defaults to AIRE. */
+  businessUnit?: BusinessUnit;
+  /** Salesperson credited for this transaction (distinct from the logged-in cashier). */
+  salespersonName?: string;
   voucherCodes?: string[];
   membershipId?: string;
   selectedPlate?: string;
@@ -38,7 +42,9 @@ export interface CreateOrderRequest {
  * POST /api/orders/:id/pay
  */
 export interface PayOrderRequest {
-  method: 'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'transfer';
+  method: 'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'cc' | 'transfer';
+  /** Payment channel (which business-unit account the money lands in). Defaults to the order's business unit. */
+  paymentChannel?: BusinessUnit;
   /** Amount received from customer (required for cash payments) */
   amountReceived?: number;
   /** Reference number (required for EDC/transfer payments) */

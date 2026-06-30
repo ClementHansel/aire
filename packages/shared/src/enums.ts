@@ -31,7 +31,19 @@ export enum PaymentMethod {
   QrisStatic = 'qris_static',
   QrisDynamic = 'qris_dynamic',
   Edc = 'edc',
+  CreditCard = 'cc',
   Transfer = 'transfer',
+}
+
+/**
+ * Co-located business units within a single outlet.
+ * AIRE = car wash; LEAD = detailing & polishing.
+ * Every transaction is tagged to exactly one unit; service catalogs,
+ * payment channels, and revenue reporting are segregated per unit.
+ */
+export enum BusinessUnit {
+  Aire = 'AIRE',
+  Lead = 'LEAD',
 }
 
 /**

@@ -1,6 +1,6 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
-import { ServiceDTO, CreateServiceRequest, ServiceCategory } from '@aire/shared';
+import { ServiceDTO, CreateServiceRequest, ServiceCategory, BusinessUnit } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 
 /**
@@ -9,6 +9,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 export interface ServiceQueryParams {
   tenantId: string;
   category?: ServiceCategory;
+  businessUnit?: BusinessUnit;
   outletId?: string;
   active?: boolean;
 }
@@ -27,6 +28,8 @@ const VALID_CATEGORIES: string[] = [
   ServiceCategory.AddOn,
 ];
 
+const VALID_BUSINESS_UNITS: string[] = [BusinessUnit.Aire, BusinessUnit.Lead];
+
 @Injectable()
 export class ServiceService {
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
@@ -40,6 +43,8 @@ export class ServiceService {
    */
   async create(tenantId: string, dto: CreateServiceRequest): Promise<ServiceDTO> {
     this.validateCategory(dto.category);
+    const businessUnit = dto.businessUnit ?? BusinessUnit.Aire;
+    this.validateBusinessUnit(businessUnit);
 
     const isMainService =
       dto.isMainService !== undefined
@@ -47,14 +52,15 @@ export class ServiceService {
         : dto.category === ServiceCategory.CarWash;
 
     const result = await this.pool.query(
-      `INSERT INTO services (tenant_id, outlet_id, name, category, price, is_active, is_main_service, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, tenant_id, outlet_id, name, category, price, is_active, is_main_service, sort_order, created_at`,
+      `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, created_at`,
       [
         tenantId,
         dto.outletId ?? null,
         dto.name,
         dto.category,
+        businessUnit,
         dto.price,
         dto.isActive ?? true,
         isMainService,
@@ -83,6 +89,12 @@ export class ServiceService {
       paramIndex++;
     }
 
+    if (params.businessUnit) {
+      conditions.push(`business_unit = $${paramIndex}`);
+      values.push(params.businessUnit);
+      paramIndex++;
+    }
+
     if (params.outletId) {
       // Include services specific to this outlet AND services available to all outlets (outlet_id IS NULL)
       conditions.push(`(outlet_id = $${paramIndex} OR outlet_id IS NULL)`);
@@ -99,7 +111,7 @@ export class ServiceService {
     const whereClause = conditions.join(' AND ');
 
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, price, is_active, is_main_service, sort_order
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order
        FROM services
        WHERE ${whereClause}
        ORDER BY category, sort_order, name`,
@@ -116,7 +128,7 @@ export class ServiceService {
    */
   async findOne(tenantId: string, id: string): Promise<ServiceDTO> {
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, price, is_active, is_main_service, sort_order
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order
        FROM services
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -142,6 +154,9 @@ export class ServiceService {
     if (dto.category) {
       this.validateCategory(dto.category);
     }
+    if (dto.businessUnit) {
+      this.validateBusinessUnit(dto.businessUnit);
+    }
 
     // Verify exists first
     await this.findOne(tenantId, id);
@@ -159,6 +174,12 @@ export class ServiceService {
     if (dto.category !== undefined) {
       setClauses.push(`category = $${paramIndex}`);
       values.push(dto.category);
+      paramIndex++;
+    }
+
+    if (dto.businessUnit !== undefined) {
+      setClauses.push(`business_unit = $${paramIndex}`);
+      values.push(dto.businessUnit);
       paramIndex++;
     }
 
@@ -202,7 +223,7 @@ export class ServiceService {
       `UPDATE services
        SET ${setClauses.join(', ')}
        WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-       RETURNING id, tenant_id, outlet_id, name, category, price, is_active, is_main_service, sort_order`,
+       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order`,
       [...values, id, tenantId],
     );
 
@@ -266,6 +287,14 @@ export class ServiceService {
     }
   }
 
+  private validateBusinessUnit(businessUnit: string): void {
+    if (!VALID_BUSINESS_UNITS.includes(businessUnit)) {
+      throw new BadRequestException(
+        `Invalid business unit: ${businessUnit}. Must be one of: ${VALID_BUSINESS_UNITS.join(', ')}`,
+      );
+    }
+  }
+
   private mapRow(row: any): ServiceDTO {
     return {
       id: row.id,
@@ -273,6 +302,7 @@ export class ServiceService {
       outletId: row.outlet_id ?? null,
       name: row.name,
       category: row.category as ServiceCategory,
+      businessUnit: (row.business_unit ?? BusinessUnit.Aire) as BusinessUnit,
       price: parseFloat(row.price),
       isActive: row.is_active,
       isMainService: row.is_main_service,

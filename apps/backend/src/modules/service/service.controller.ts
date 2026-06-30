@@ -12,7 +12,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { JWTPayload, CreateServiceRequest, ServiceDTO, ServiceCategory } from '@aire/shared';
+import { JWTPayload, CreateServiceRequest, ServiceDTO, ServiceCategory, BusinessUnit } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { ServiceService, ReorderItem } from './service.service';
@@ -58,12 +58,14 @@ export class ServiceController {
   async findAll(
     @CurrentUser() user: JWTPayload,
     @Query('category') category?: string,
+    @Query('businessUnit') businessUnit?: string,
     @Query('outletId') outletId?: string,
     @Query('active') active?: string,
   ): Promise<ServiceDTO[]> {
     return this.serviceService.findAll({
       tenantId: user.tenant_id,
       category: category as ServiceCategory | undefined,
+      businessUnit: businessUnit as BusinessUnit | undefined,
       outletId: outletId ?? undefined,
       active: active !== undefined ? active === 'true' : undefined,
     });

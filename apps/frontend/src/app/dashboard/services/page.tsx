@@ -9,6 +9,7 @@ interface ServiceDTO {
   outletId: string | null;
   name: string;
   category: 'car_wash' | 'product' | 'add_on';
+  businessUnit: 'AIRE' | 'LEAD';
   price: number;
   isActive: boolean;
   isMainService: boolean;
@@ -24,6 +25,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 interface FormState {
   name: string;
   category: ServiceDTO['category'];
+  businessUnit: ServiceDTO['businessUnit'];
   price: string;
   isActive: boolean;
   isMainService: boolean;
@@ -32,6 +34,7 @@ interface FormState {
 const EMPTY_FORM: FormState = {
   name: '',
   category: 'car_wash',
+  businessUnit: 'AIRE',
   price: '',
   isActive: true,
   isMainService: false,
@@ -51,6 +54,7 @@ function ServiceModal({
       ? {
           name: initial.name,
           category: initial.category,
+          businessUnit: initial.businessUnit ?? 'AIRE',
           price: String(initial.price),
           isActive: initial.isActive,
           isMainService: initial.isMainService,
@@ -67,6 +71,7 @@ function ServiceModal({
     const payload = {
       name: form.name,
       category: form.category,
+      businessUnit: form.businessUnit,
       price: Number(form.price),
       isActive: form.isActive,
       isMainService: form.isMainService,
@@ -94,6 +99,13 @@ function ServiceModal({
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Name</label>
             <input className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">Business unit</label>
+            <select className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as ServiceDTO['businessUnit'] })}>
+              <option value="AIRE">AIRE · Car Wash</option>
+              <option value="LEAD">LEAD · Detailing &amp; Polishing</option>
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Category</label>
@@ -184,6 +196,7 @@ export default function ServicesPage() {
             <thead>
               <tr className="border-b border-border bg-surface-sunken/50">
                 <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">Name</th>
+                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">Unit</th>
                 <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">Category</th>
                 <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">Price</th>
                 <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">Status</th>
@@ -194,6 +207,7 @@ export default function ServicesPage() {
               {services.map((s) => (
                 <tr key={s.id} className="hover:bg-surface-sunken/30 transition-colors" data-testid={`service-row-${s.id}`}>
                   <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{s.name}</td>
+                  <td className="px-5 py-3.5"><span className={`badge ${s.businessUnit === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{s.businessUnit ?? 'AIRE'}</span></td>
                   <td className="px-5 py-3.5"><span className="badge bg-primary-50 text-primary-700">{CATEGORY_LABELS[s.category]}</span></td>
                   <td className="px-5 py-3.5 text-sm text-text-primary text-right font-mono">Rp {s.price.toLocaleString('id-ID')}</td>
                   <td className="px-5 py-3.5 text-center">

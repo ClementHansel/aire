@@ -11,6 +11,7 @@ interface SummaryResponse {
   uniqueMembers: number;
   newMembers: number;
   byPaymentMethod: Record<string, { revenue: number; count: number }>;
+  byBusinessUnit: Record<string, { revenue: number; count: number }>;
   byService: { serviceId: string; name: string; quantity: number; revenue: number }[];
 }
 
@@ -25,6 +26,7 @@ function today(): string {
 export default function ReportsPage() {
   const [dateFrom, setDateFrom] = useState(today());
   const [dateTo, setDateTo] = useState(today());
+  const [businessUnit, setBusinessUnit] = useState<'' | 'AIRE' | 'LEAD'>('');
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [daily, setDaily] = useState<DailyRow[]>([]);
   const [shifts, setShifts] = useState<ShiftRow[]>([]);
@@ -35,7 +37,7 @@ export default function ReportsPage() {
     setLoading(true);
     setError('');
     try {
-      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}`;
+      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${businessUnit ? `&businessUnit=${businessUnit}` : ''}`;
       const [summary, dailyRows, shiftRows] = await Promise.all([
         api.get<SummaryResponse>(`/reports/summary?${qs}`),
         api.get<DailyRow[]>(`/reports/daily-sales?${qs}`),
@@ -49,12 +51,12 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, businessUnit]);
 
   const exportCsv = (scope: 'orders' | 'daily') => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('aire_access_token') : null;
     const base = process.env.NEXT_PUBLIC_API_URL || '/api';
-    const url = `${base}/reports/export?dateFrom=${dateFrom}&dateTo=${dateTo}&scope=${scope}`;
+    const url = `${base}/reports/export?dateFrom=${dateFrom}&dateTo=${dateTo}&scope=${scope}${businessUnit ? `&businessUnit=${businessUnit}` : ''}`;
     // Fetch with auth then trigger a download (export route requires the bearer token).
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then((r) => r.blob())
@@ -93,6 +95,14 @@ export default function ReportsPage() {
             <label className="block text-xs font-medium text-text-secondary mb-1">To</label>
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1">Business unit</label>
+            <select value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
+              <option value="">All units</option>
+              <option value="AIRE">AIRE · Car Wash</option>
+              <option value="LEAD">LEAD · Detailing</option>
+            </select>
+          </div>
           <button className="btn-primary" onClick={loadReport} disabled={loading}>
             {loading ? 'Loading…' : 'Generate Report'}
           </button>
@@ -127,6 +137,22 @@ export default function ReportsPage() {
               <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">Cancelled</p>
               <p className="text-2xl font-bold text-error mt-1">{data.cancelledCount}</p>
             </div>
+          </div>
+
+          {/* Business unit P&L split */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            {(['AIRE', 'LEAD'] as const).map((bu) => {
+              const v = data.byBusinessUnit?.[bu] ?? { revenue: 0, count: 0 };
+              return (
+                <div key={bu} className="card">
+                  <div className="flex items-center justify-between">
+                    <span className={`badge ${bu === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{bu === 'AIRE' ? 'AIRE · Car Wash' : 'LEAD · Detailing'}</span>
+                    <span className="text-xs text-text-muted">{v.count} orders</span>
+                  </div>
+                  <p className="text-2xl font-bold text-text-primary mt-2">{fmt(v.revenue)}</p>
+                </div>
+              );
+            })}
           </div>
 
           {/* Tables */}

@@ -28,6 +28,7 @@ import {
   evaluateVoucher,
   hashVoucherCode,
   MAX_VOUCHER_CODES_PER_ORDER,
+  BusinessUnit,
 } from '@aire/shared';
 import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
 
@@ -73,6 +74,7 @@ interface ServiceRow {
   price: string;
   is_main_service: boolean;
   is_active: boolean;
+  business_unit: string;
 }
 
 /**
@@ -155,6 +157,20 @@ export class OrderService {
     // Step 1: Look up services by ID to get prices and isMainService flags
     const serviceIds = request.items.map((item) => item.serviceId);
     const services = await this.lookupServices(serviceIds);
+
+    // A transaction belongs to exactly one business unit (AIRE car wash / LEAD
+    // detailing). Every line item must belong to that same unit.
+    const businessUnit = request.businessUnit ?? BusinessUnit.Aire;
+    for (const item of request.items) {
+      const svc = services.get(item.serviceId);
+      if (svc && svc.business_unit && svc.business_unit !== businessUnit) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: ERR_VALIDATION_FAILED,
+          message: `All items must belong to the ${businessUnit} business unit. "${svc.name}" belongs to ${svc.business_unit}.`,
+        });
+      }
+    }
 
     // Step 2: Build validation input
     const validationInput: OrderValidationInput = {
@@ -271,8 +287,8 @@ export class OrderService {
           (tenant_id, outlet_id, operator_id, order_number, status,
            customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
            subtotal, service_charge, tax, voucher_discount, promo_discount, total,
-           note, membership_id, shift_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+           note, membership_id, business_unit, salesperson_name, shift_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
            (SELECT id FROM pos_shifts WHERE tenant_id = $1 AND operator_id = $3 AND status = 'open' ORDER BY opened_at DESC LIMIT 1))
          RETURNING *`,
         [
@@ -294,6 +310,8 @@ export class OrderService {
           cartSummary.total,
           request.note ?? null,
           request.membershipId ?? null,
+          businessUnit,
+          request.salespersonName ?? null,
         ],
       );
 
@@ -467,7 +485,8 @@ export class OrderService {
     orderId: string,
     user: JWTPayload,
     payment: {
-      method: 'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'transfer';
+      method: 'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'cc' | 'transfer';
+      paymentChannel?: BusinessUnit;
       amountReceived?: number;
       referenceNumber?: string;
     },
@@ -506,6 +525,13 @@ export class OrderService {
       changeAmount = received - total;
     }
 
+    // Cash is unit-agnostic (single drawer); electronic channels settle to the
+    // business unit's own account, defaulting to the order's business unit.
+    const paymentChannel =
+      payment.method === 'cash'
+        ? null
+        : (payment.paymentChannel ?? order.business_unit ?? BusinessUnit.Aire);
+
     const updated = await this.pool.query(
       `UPDATE orders
        SET status = 'paid',
@@ -513,15 +539,17 @@ export class OrderService {
            payment_reference = $2,
            amount_received = $3,
            change_amount = $4,
+           payment_channel = $5,
            paid_at = NOW(),
            updated_at = NOW()
-       WHERE id = $5
+       WHERE id = $6
        RETURNING *`,
       [
         payment.method,
         payment.referenceNumber ?? null,
         payment.amountReceived ?? null,
         changeAmount,
+        paymentChannel,
         orderId,
       ],
     );
@@ -609,7 +637,7 @@ export class OrderService {
 
     const placeholders = serviceIds.map((_, i) => `$${i + 1}`).join(', ');
     const result = await this.pool.query<ServiceRow>(
-      `SELECT id, name, category, price, is_main_service, is_active
+      `SELECT id, name, category, price, is_main_service, is_active, business_unit
        FROM services
        WHERE id IN (${placeholders})`,
       serviceIds,

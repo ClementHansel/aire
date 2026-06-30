@@ -13,6 +13,7 @@ describe('ServiceService', () => {
     outlet_id: null,
     name: 'Super Wash',
     category: 'car_wash',
+    business_unit: 'AIRE',
     price: '50000',
     is_active: true,
     is_main_service: true,
@@ -45,6 +46,7 @@ describe('ServiceService', () => {
         outletId: null,
         name: 'Super Wash',
         category: 'car_wash',
+        businessUnit: 'AIRE',
         price: 50000,
         isActive: true,
         isMainService: true,
@@ -58,10 +60,11 @@ describe('ServiceService', () => {
       expect(params[1]).toBeNull(); // outlet_id
       expect(params[2]).toBe('Super Wash');
       expect(params[3]).toBe('car_wash');
-      expect(params[4]).toBe(50000);
-      expect(params[5]).toBe(true); // is_active
-      expect(params[6]).toBe(true); // is_main_service (car_wash default)
-      expect(params[7]).toBe(0); // sort_order
+      expect(params[4]).toBe('AIRE'); // business_unit (defaults to AIRE)
+      expect(params[5]).toBe(50000);
+      expect(params[6]).toBe(true); // is_active
+      expect(params[7]).toBe(true); // is_main_service (car_wash default)
+      expect(params[8]).toBe(0); // sort_order
     });
 
     it('should default is_main_service to true for car_wash category', async () => {
@@ -74,7 +77,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[6]).toBe(true); // is_main_service defaults to true
+      expect(params[7]).toBe(true); // is_main_service defaults to true
     });
 
     it('should default is_main_service to false for product category', async () => {
@@ -88,7 +91,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[6]).toBe(false); // is_main_service defaults to false for product
+      expect(params[7]).toBe(false); // is_main_service defaults to false for product
     });
 
     it('should default is_main_service to false for add_on category', async () => {
@@ -102,7 +105,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[6]).toBe(false); // is_main_service defaults to false for add_on
+      expect(params[7]).toBe(false); // is_main_service defaults to false for add_on
     });
 
     it('should allow explicit is_main_service override', async () => {
@@ -117,7 +120,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[6]).toBe(false); // explicit override
+      expect(params[7]).toBe(false); // explicit override
     });
 
     it('should set outlet_id when provided', async () => {
