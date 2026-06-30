@@ -48,15 +48,20 @@ export class HrService {
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
-  async listEmployees(tenantId: string): Promise<unknown[]> {
+  async listEmployees(tenantId: string, outletId?: string): Promise<unknown[]> {
+    const params: unknown[] = [tenantId];
+    let where = 'e.tenant_id = $1';
+    if (outletId) { params.push(outletId); where += ` AND e.outlet_id = $${params.length}`; }
     const res = await this.pool.query(
-      `SELECT id, name, role, phone, email, salary, status, hired_at, outlet_id
-       FROM employees WHERE tenant_id = $1 ORDER BY name ASC`,
-      [tenantId],
+      `SELECT e.id, e.name, e.role, e.phone, e.email, e.salary, e.status, e.hired_at, e.outlet_id, o.name AS outlet_name
+       FROM employees e LEFT JOIN outlets o ON o.id = e.outlet_id
+       WHERE ${where} ORDER BY e.name ASC`,
+      params,
     );
     return res.rows.map((r) => ({
       id: r.id, name: r.name, role: r.role, phone: r.phone, email: r.email,
-      salary: parseFloat(r.salary), status: r.status, hiredAt: r.hired_at, outletId: r.outlet_id,
+      salary: parseFloat(r.salary), status: r.status, hiredAt: r.hired_at,
+      outletId: r.outlet_id, outletName: r.outlet_name ?? null,
     }));
   }
 
@@ -151,21 +156,26 @@ export class HrService {
     return res.rows[0]!;
   }
 
-  async listSchedules(tenantId: string, opts: { employeeId?: string; dateFrom?: string; dateTo?: string } = {}): Promise<unknown[]> {
+  async listSchedules(tenantId: string, opts: { employeeId?: string; dateFrom?: string; dateTo?: string; outletId?: string } = {}): Promise<unknown[]> {
     const params: unknown[] = [tenantId];
     let where = 'es.tenant_id = $1';
     if (opts.employeeId) { params.push(opts.employeeId); where += ` AND es.employee_id = $${params.length}`; }
+    if (opts.outletId) { params.push(opts.outletId); where += ` AND es.outlet_id = $${params.length}`; }
     if (opts.dateFrom) { params.push(opts.dateFrom); where += ` AND es.work_date >= $${params.length}::date`; }
     if (opts.dateTo) { params.push(opts.dateTo); where += ` AND es.work_date <= $${params.length}::date`; }
     const res = await this.pool.query(
-      `SELECT es.id, es.work_date, es.start_time, es.end_time, es.notes, e.name AS employee, es.employee_id
-       FROM employee_schedules es JOIN employees e ON e.id = es.employee_id
+      `SELECT es.id, es.work_date, es.start_time, es.end_time, es.notes, e.name AS employee, es.employee_id,
+              es.outlet_id, o.name AS outlet_name
+       FROM employee_schedules es
+       JOIN employees e ON e.id = es.employee_id
+       LEFT JOIN outlets o ON o.id = es.outlet_id
        WHERE ${where} ORDER BY es.work_date ASC, e.name ASC LIMIT 500`,
       params,
     );
     return res.rows.map((r) => ({
       id: r.id, employee: r.employee, employeeId: r.employee_id, workDate: r.work_date,
       startTime: r.start_time, endTime: r.end_time, notes: r.notes,
+      outletId: r.outlet_id, outletName: r.outlet_name ?? null,
     }));
   }
 
