@@ -7,7 +7,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { KioskService, KioskQueueStatus, KioskQueueEntry } from './kiosk.service';
+import { KioskService, KioskQueueStatus, KioskQueueEntry, PublicMenu } from './kiosk.service';
 
 /**
  * Request body for joining the queue.
@@ -33,6 +33,19 @@ export interface JoinQueueRequest {
 @Controller('api/kiosk')
 export class KioskController {
   constructor(private readonly kioskService: KioskService) {}
+
+  /**
+   * GET /api/kiosk/menu?tenantId=&outletId=
+   * Public customer-facing eMenu (no auth).
+   */
+  @Get('menu')
+  @HttpCode(HttpStatus.OK)
+  async getMenu(
+    @Query('tenantId') tenantId: string,
+    @Query('outletId') outletId?: string,
+  ): Promise<PublicMenu> {
+    return this.kioskService.getMenu(tenantId, outletId);
+  }
 
   /**
    * GET /api/kiosk/queue-status?orderNumber=

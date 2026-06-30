@@ -71,6 +71,64 @@ export class VoucherTemplateService {
     return this.map(res.rows[0]!);
   }
 
+  /** Update an existing voucher template. */
+  async updateTemplate(
+    tenantId: string,
+    id: string,
+    dto: Partial<CreateVoucherTemplateDto>,
+  ): Promise<VoucherTemplate> {
+    await this.getTemplate(tenantId, id); // 404 if not found
+
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    const push = (col: string, val: unknown) => { sets.push(`${col} = $${i++}`); vals.push(val); };
+
+    if (dto.name !== undefined) push('name', dto.name.trim());
+    if (dto.type !== undefined) {
+      if (!VALID_VOUCHER_TYPES.includes(dto.type)) {
+        throw new BadRequestException(`Invalid voucher type. Must be one of: ${VALID_VOUCHER_TYPES.join(', ')}`);
+      }
+      push('type', dto.type);
+    }
+    if (dto.value !== undefined) push('value', dto.value);
+    if (dto.maxUses !== undefined) {
+      if (dto.maxUses <= 0) throw new BadRequestException('maxUses must be greater than 0');
+      push('max_uses', dto.maxUses);
+    }
+    if (dto.salePrice !== undefined) {
+      if (dto.salePrice < 0) throw new BadRequestException('salePrice cannot be negative');
+      push('sale_price', dto.salePrice);
+    }
+    if (dto.validityDays !== undefined) push('validity_days', dto.validityDays);
+    if (dto.serviceIds !== undefined) push('service_ids', dto.serviceIds);
+    if (dto.outletIds !== undefined) push('outlet_ids', dto.outletIds);
+    if (dto.brandScope !== undefined) push('brand_scope', dto.brandScope);
+    if (dto.minOrderAmount !== undefined) push('min_order_amount', dto.minOrderAmount);
+    if (dto.startDate !== undefined) push('start_date', dto.startDate);
+    if (dto.expiryDate !== undefined) push('expiry_date', dto.expiryDate);
+
+    if (sets.length === 0) return this.map(await this.getTemplate(tenantId, id));
+
+    vals.push(id, tenantId);
+    const res = await this.pool.query<VoucherTemplateRow>(
+      `UPDATE voucher_templates SET ${sets.join(', ')}
+       WHERE id = $${i++} AND tenant_id = $${i}
+       RETURNING *`,
+      vals,
+    );
+    return this.map(res.rows[0]!);
+  }
+
+  /** Soft-delete (deactivate) a voucher template. */
+  async deactivateTemplate(tenantId: string, id: string): Promise<void> {
+    const res = await this.pool.query(
+      `UPDATE voucher_templates SET is_active = false WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId],
+    );
+    if (res.rowCount === 0) throw new NotFoundException(ERR_VOUCHER_PACK_NOT_FOUND);
+  }
+
   private map(r: VoucherTemplateRow): VoucherTemplate {
     return {
       id: r.id,

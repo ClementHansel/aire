@@ -2,6 +2,9 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Delete,
+  Param,
   Body,
   UseGuards,
   HttpCode,
@@ -89,6 +92,21 @@ export class VoucherTemplateController {
   @HttpCode(HttpStatus.CREATED)
   async create(@CurrentUser() user: JWTPayload, @Body() dto: CreateVoucherTemplateDto) {
     return this.templates.createTemplate(user.tenant_id, dto);
+  }
+
+  @Put(':id')
+  async update(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() dto: Partial<CreateVoucherTemplateDto>,
+  ) {
+    return this.templates.updateTemplate(user.tenant_id, id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@CurrentUser() user: JWTPayload, @Param('id') id: string): Promise<void> {
+    return this.templates.deactivateTemplate(user.tenant_id, id);
   }
 }
 

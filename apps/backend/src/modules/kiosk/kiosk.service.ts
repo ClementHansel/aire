@@ -33,6 +33,23 @@ export interface KioskQueueEntry {
 /** Average service time per vehicle in minutes (used for wait time estimation) */
 const AVG_SERVICE_TIME_MINUTES = 15;
 
+/** Public menu item for the customer-facing eMenu. */
+export interface MenuItem {
+  id: string;
+  name: string;
+  category: string;
+  businessUnit: string;
+  price: number;
+  isMainService: boolean;
+}
+
+/** Public eMenu payload. */
+export interface PublicMenu {
+  tenantName: string;
+  services: MenuItem[];
+  plans: { name: string; durationMonths: number; price: number }[];
+}
+
 /**
  * Kiosk service providing self-service queue operations.
  *
@@ -44,6 +61,59 @@ const AVG_SERVICE_TIME_MINUTES = 15;
 @Injectable()
 export class KioskService {
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Public customer-facing menu (eMenu): active services grouped by business
+   * unit + active membership plans. Optionally scoped to a single outlet.
+   * No authentication — published for QR/link sharing.
+   */
+  async getMenu(tenantId: string, outletId?: string): Promise<PublicMenu> {
+    if (!tenantId || tenantId.trim() === '') {
+      throw new BadRequestException('tenantId is required');
+    }
+
+    const tenant = await this.pool.query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+
+    const serviceParams: unknown[] = [tenantId];
+    let outletClause = '';
+    if (outletId && outletId.trim() !== '') {
+      serviceParams.push(outletId);
+      outletClause = ` AND (outlet_id = $2 OR (outlet_id IS NULL AND (outlet_ids IS NULL OR outlet_ids = '{}')) OR $2 = ANY(outlet_ids))`;
+    }
+
+    const services = await this.pool.query(
+      `SELECT id, name, category, business_unit, price, is_main_service
+       FROM services
+       WHERE tenant_id = $1 AND is_active = true${outletClause}
+       ORDER BY business_unit, category, sort_order, name`,
+      serviceParams,
+    );
+
+    const plans = await this.pool.query(
+      `SELECT name, duration_months, price
+       FROM membership_plans
+       WHERE tenant_id = $1 AND is_active = true
+       ORDER BY price`,
+      [tenantId],
+    );
+
+    return {
+      tenantName: tenant.rows[0]?.name ?? 'AIRE',
+      services: services.rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        category: r.category,
+        businessUnit: r.business_unit,
+        price: parseFloat(r.price),
+        isMainService: r.is_main_service,
+      })),
+      plans: plans.rows.map((r: any) => ({
+        name: r.name,
+        durationMonths: r.duration_months,
+        price: parseFloat(r.price),
+      })),
+    };
+  }
 
   /**
    * Look up queue status by order number.

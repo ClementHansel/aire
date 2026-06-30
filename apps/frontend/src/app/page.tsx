@@ -16,6 +16,7 @@ const DEMO_LOGINS = [
 const DEMO_PUBLIC = [
   { label: 'Customer · Kiosk', href: `/kiosk/${DEMO_TENANT_ID}`, desc: 'Self-service order status', icon: '🖥️' },
   { label: 'Queue Board', href: `/queue-board/${DEMO_OUTLET_ID}`, desc: 'Live outlet display', icon: '📺' },
+  { label: 'Price eMenu', href: `/menu/${DEMO_TENANT_ID}`, desc: 'Public service price list', icon: '📋' },
 ];
 
 export default function LoginPage() {
