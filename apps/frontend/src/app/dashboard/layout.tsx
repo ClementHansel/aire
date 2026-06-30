@@ -28,6 +28,7 @@ const navItems = [
   { id: 'users', label: 'Users & Roles', href: '/dashboard/users', icon: '🔑' },
   { id: 'reports', label: 'Reports', href: '/dashboard/reports', icon: '📑' },
   { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: '📡' },
+  { id: 'ai-agent', label: 'Agentic AI', href: '/dashboard/ai-agent', icon: '🧠' },
   { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: '⚙️' },
 ];
 

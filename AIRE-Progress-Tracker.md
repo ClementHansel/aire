@@ -107,11 +107,11 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 
 ### POS UX
 - [ ] Customer search + create-new in POS
-- [ ] Vehicle brand + type capture (master list)
+- [x] Vehicle brand + type capture (free-text fields in POS)
 - [ ] Inline membership plate add (+ button, up to 3) at sale
-- [ ] Payment-method buttons with logos/colors
+- [x] Payment-method buttons with logos/colors (dynamic per branch)
 - [ ] Daily transaction total + payment history view for cashier
-- [ ] Queue input (resto-style, arrival order; product/payment at end)
+- [x] Queue input (resto-style, arrival order; product/payment at end) — migration 014 + POS Queue page
 - [ ] Tablet 7" responsive pass
 
 ### Dashboard tabs

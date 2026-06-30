@@ -36,6 +36,7 @@ import { VoucherTicketModule } from './modules/voucher-ticket';
 import { PromotionModule } from './modules/promotion';
 import { SettlementModule } from './modules/settlement';
 import { VehicleQueueModule } from './modules/vehicle-queue';
+import { AgentConfigModule } from './modules/agent-config';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { VehicleQueueModule } from './modules/vehicle-queue';
     PromotionModule,
     SettlementModule,
     VehicleQueueModule,
+    AgentConfigModule,
   ],
   controllers: [AppController],
   providers: [AppService],
