@@ -270,7 +270,9 @@ export class AdminMetricsService {
       const tid = setTimeout(() => controller.abort(), 3000);
       const res = await fetch(`${wahaUrl}/api/sessions`, { signal: controller.signal });
       clearTimeout(tid);
-      waha = { ok: res.ok, status: res.ok ? 'reachable' : `http_${res.status}` };
+      // A 401 means WAHA is up but requires an API key — still "reachable".
+      const reachable = res.ok || res.status === 401 || res.status === 403;
+      waha = { ok: reachable, status: res.ok ? 'reachable' : `reachable_http_${res.status}` };
     } catch { waha = { ok: false, status: 'unreachable' }; }
 
     return {
