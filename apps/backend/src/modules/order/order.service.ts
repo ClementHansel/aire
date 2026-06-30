@@ -240,6 +240,7 @@ export class OrderService {
     // the discount. Codes are atomically redeemed inside the transaction below.
     let voucherDiscount = 0;
     let resolvedVoucherHashes: string[] = [];
+    let resolvedTicketCodes: string[] = [];
     if (request.voucherCodes && request.voucherCodes.length > 0) {
       const preSubtotal = cartItems.reduce(
         (sum, ci) => sum + ci.quantity * ci.unitPrice - ci.discount,
@@ -260,6 +261,10 @@ export class OrderService {
       );
       voucherDiscount = resolved.discount;
       resolvedVoucherHashes = resolved.codeHashes;
+      // Also resolve shareable digital voucher tickets (BRANCH-MMYYYY-NNNNNN).
+      const digital = await this.resolveDigitalVouchers(user.tenant_id, request.voucherCodes, preSubtotal, cartItems);
+      voucherDiscount = Math.min(preSubtotal, voucherDiscount + digital.discount);
+      resolvedTicketCodes = digital.codes;
     }
 
     // Step 7: Get outlet config for charges
@@ -415,6 +420,16 @@ export class OrderService {
            WHERE id = $1`,
           [redeemed.rows[0]!.pack_id],
         );
+      }
+
+      // Redeem shareable digital voucher tickets (single-use).
+      for (const code of resolvedTicketCodes) {
+        const r = await client.query(
+          `UPDATE voucher_tickets SET status = 'redeemed', redeemed_at = NOW(), redeemed_order_id = $1, redeemed_outlet_id = $2
+           WHERE tenant_id = $3 AND code = $4 AND status = 'active' RETURNING id`,
+          [order.id, user.outlet_id ?? null, user.tenant_id, code],
+        );
+        if (r.rowCount === 0) throw new BadRequestException('A voucher is no longer available');
       }
 
       await client.query('COMMIT');
@@ -806,6 +821,47 @@ export class OrderService {
     }
 
     return { discount: Math.min(discount, context.orderSubtotal), codeHashes };
+  }
+
+  /**
+   * Resolve shareable digital voucher tickets (plaintext codes). Returns the
+   * total discount and the codes to redeem. Not customer/plate bound.
+   */
+  private async resolveDigitalVouchers(
+    tenantId: string,
+    codes: string[],
+    subtotal: number,
+    cartItems: CartItem[],
+  ): Promise<{ discount: number; codes: string[] }> {
+    let discount = 0;
+    const out: string[] = [];
+    for (const raw of codes) {
+      const code = raw.trim().toUpperCase();
+      const res = await this.pool.query<{
+        status: string; expiry_date: string | null; benefit_type: string;
+        benefit_value: string; benefit_service_id: string | null;
+      }>(
+        `SELECT t.status, t.expiry_date, b.benefit_type, b.benefit_value, b.benefit_service_id
+         FROM voucher_tickets t JOIN voucher_books b ON b.id = t.book_id
+         WHERE t.tenant_id = $1 AND t.code = $2`,
+        [tenantId, code],
+      );
+      const t = res.rows[0];
+      if (!t || t.status !== 'active') continue;
+      if (t.expiry_date && new Date(t.expiry_date) < new Date(new Date().toDateString())) continue;
+      let amt = 0;
+      if (t.benefit_type === 'fixed') {
+        amt = Math.min(parseFloat(t.benefit_value), subtotal);
+      } else if (t.benefit_type === 'percentage') {
+        amt = Math.round((subtotal * parseFloat(t.benefit_value)) / 100);
+      } else {
+        const svc = cartItems.find((ci) => ci.serviceId === t.benefit_service_id);
+        amt = svc ? svc.unitPrice * svc.quantity : parseFloat(t.benefit_value || '0');
+      }
+      discount += amt;
+      out.push(code);
+    }
+    return { discount, codes: out };
   }
 
   /** Look up a child voucher code and assemble VoucherData; null if not found. */

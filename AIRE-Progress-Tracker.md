@@ -125,10 +125,10 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [x] CRM: customer table (view/edit/delete)
 - [ ] CRM: membership filters (Active / Suspended ≤H+14 / Expired >2wk) + plate CRUD + usage + activity log
 - [ ] Transaction Excel: per-payment-channel split option (currently whole range)
-- [ ] Conversation Log: realtime customer↔AI view
-- [ ] Conversation Log: new-session button
-- [ ] Conversation Log: stop/start AI auto-reply
-- [ ] Conversation Log: AI summary
+- [x] Conversation Log: realtime customer↔AI view (polling)
+- [x] Conversation Log: new-session button
+- [x] Conversation Log: stop/start AI auto-reply (per conversation)
+- [x] Conversation Log: AI summary + manual reply send
 - [x] Promotion tab (CRUD per promotion engine)
 - [x] User tab (CRUD + placement + role RBAC)
 
@@ -141,7 +141,7 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [x] AI Agent Skills config
 - [x] Escalation number config
 - [x] AI auto-reply on/off toggle
-- [ ] Live WAHA QR display + actual WA send/receive wiring (needs WAHA container)
+- [x] Live WhatsApp send/receive wiring — WAHA + Kapso provider abstraction, inbound webhook, knowledge-grounded auto-reply + escalation (UI-config-driven). WAHA container added (start with `docker compose up -d waha`); Kapso works with just an API key.
 
 ### From PRD v1.2 still open
 - [ ] Effective-date pricing (PriceRule) + size variants (S/M, L/XL)
