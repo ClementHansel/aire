@@ -27,6 +27,7 @@ interface CreatedOrder {
   subtotal: number;
   serviceCharge: number;
   tax: number;
+  voucherDiscount: number;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -45,6 +46,12 @@ export default function NewOrderPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [placing, setPlacing] = useState(false);
+
+  // voucher redemption
+  const [voucherCodes, setVoucherCodes] = useState<string[]>([]);
+  const [voucherInput, setVoucherInput] = useState('');
+  const [voucherMsg, setVoucherMsg] = useState('');
+  const [checkingVoucher, setCheckingVoucher] = useState(false);
 
   // payment state
   const [order, setOrder] = useState<CreatedOrder | null>(null);
@@ -87,6 +94,39 @@ export default function NewOrderPage() {
   const subtotal = cart.reduce((sum, l) => sum + l.price * l.qty, 0);
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
+  const applyVoucher = async () => {
+    const code = voucherInput.trim();
+    if (!code) return;
+    if (voucherCodes.includes(code)) {
+      setVoucherMsg('Code already added');
+      return;
+    }
+    setCheckingVoucher(true);
+    setVoucherMsg('');
+    try {
+      const res = await api.post<{ status: string; message: string; discountAmount?: number }>(
+        '/vouchers/validate',
+        { code, serviceIdsInCart: cart.map((l) => l.serviceId), orderSubtotal: subtotal },
+      );
+      if (res.status === 'valid_applicable') {
+        setVoucherCodes((prev) => [...prev, code]);
+        setVoucherInput('');
+        setVoucherMsg(`Applied: −${fmt(res.discountAmount ?? 0)}`);
+      } else {
+        setVoucherMsg(res.message || 'Voucher cannot be applied');
+      }
+    } catch (e) {
+      setVoucherMsg(e instanceof Error ? e.message : 'Validation failed');
+    } finally {
+      setCheckingVoucher(false);
+    }
+  };
+
+  const removeVoucher = (code: string) => {
+    setVoucherCodes((prev) => prev.filter((c) => c !== code));
+    setVoucherMsg('');
+  };
+
   const placeOrder = async () => {
     setError('');
     if (!name.trim() || !phone.trim() || cart.length === 0) {
@@ -98,6 +138,7 @@ export default function NewOrderPage() {
       const created = await api.post<CreatedOrder>('/orders', {
         customer: { name: name.trim(), phone: phone.trim(), licensePlate: plate.trim() || undefined },
         items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty })),
+        voucherCodes: voucherCodes.length ? voucherCodes : undefined,
       });
       setOrder(created);
       setAmountReceived(String(created.total));
@@ -136,6 +177,7 @@ export default function NewOrderPage() {
   const finishSale = (orderNumber: string, total: number, change: number) => {
     setReceipt({ orderNumber, total, change });
     setCart([]); setName(''); setPhone(''); setPlate('');
+    setVoucherCodes([]); setVoucherInput(''); setVoucherMsg('');
     setOrder(null); setQr(null); setPolling(false); setPaying(false);
   };
 
@@ -239,6 +281,33 @@ export default function NewOrderPage() {
           </div>
 
           <div className="border-t border-border pt-3 mt-3">
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Voucher Code</label>
+            <div className="flex gap-2">
+              <input
+                className="input-field flex-1"
+                placeholder="Enter code"
+                value={voucherInput}
+                onChange={(e) => setVoucherInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyVoucher(); } }}
+              />
+              <button onClick={applyVoucher} disabled={checkingVoucher || !voucherInput.trim()} className="btn-secondary">
+                {checkingVoucher ? '…' : 'Apply'}
+              </button>
+            </div>
+            {voucherMsg && <p className="mt-1 text-xs text-text-secondary">{voucherMsg}</p>}
+            {voucherCodes.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {voucherCodes.map((c) => (
+                  <span key={c} className="badge bg-primary-50 text-primary-700 flex items-center gap-1">
+                    {c}
+                    <button onClick={() => removeVoucher(c)} className="text-primary-400 hover:text-primary-700">✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-border pt-3 mt-3">
             <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">Subtotal</span><span className="font-medium">{fmt(subtotal)}</span></div>
             <p className="text-xs text-text-muted mb-3">Service charge &amp; tax calculated at order time.</p>
             <button onClick={placeOrder} disabled={placing || cart.length === 0} className="btn-primary w-full">
@@ -257,6 +326,7 @@ export default function NewOrderPage() {
               <div className="flex justify-between"><span className="text-text-secondary">Subtotal</span><span>{fmt(order.subtotal)}</span></div>
               <div className="flex justify-between"><span className="text-text-secondary">Service charge</span><span>{fmt(order.serviceCharge)}</span></div>
               <div className="flex justify-between"><span className="text-text-secondary">Tax</span><span>{fmt(order.tax)}</span></div>
+              {order.voucherDiscount > 0 && <div className="flex justify-between"><span className="text-text-secondary">Voucher</span><span className="text-green-600">−{fmt(order.voucherDiscount)}</span></div>}
               <div className="flex justify-between text-base font-semibold border-t border-border pt-2 mt-2"><span>Total</span><span className="text-primary-600">{fmt(order.total)}</span></div>
             </div>
 

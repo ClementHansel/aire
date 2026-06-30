@@ -185,6 +185,54 @@ async function seed(): Promise<void> {
     `, [tenantId]);
     console.log('  ✓ Membership plans created (2)');
 
+    // Voucher Templates (sellable packs)
+    await client.query(`
+      INSERT INTO voucher_templates
+        (id, tenant_id, name, type, value, max_uses, sale_price, validity_days, service_ids, min_order_amount, is_active)
+      VALUES
+        (
+          '88888888-8888-8888-8888-888888888801',
+          $1,
+          '10x Express Wash Pack',
+          'service_pack',
+          0,
+          10,
+          300000,
+          180,
+          ARRAY['44444444-4444-4444-4444-444444444401'::uuid],
+          0,
+          true
+        ),
+        (
+          '88888888-8888-8888-8888-888888888802',
+          $1,
+          'Rp 25.000 Discount x5',
+          'fixed',
+          25000,
+          5,
+          100000,
+          90,
+          NULL,
+          50000,
+          true
+        ),
+        (
+          '88888888-8888-8888-8888-888888888803',
+          $1,
+          '20% Off x3',
+          'percentage',
+          20,
+          3,
+          50000,
+          60,
+          NULL,
+          0,
+          true
+        )
+      ON CONFLICT DO NOTHING;
+    `, [tenantId]);
+    console.log('  ✓ Voucher templates created (3)');
+
     // Bays
     await client.query(`
       INSERT INTO bays (id, tenant_id, outlet_id, name, status)

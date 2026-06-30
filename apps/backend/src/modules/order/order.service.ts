@@ -19,6 +19,12 @@ import {
   assignCustomerTags,
   CustomerTag,
   ERR_VALIDATION_FAILED,
+  VoucherType,
+  VoucherData,
+  VoucherEvaluationContext,
+  evaluateVoucher,
+  hashVoucherCode,
+  MAX_VOUCHER_CODES_PER_ORDER,
 } from '@aire/shared';
 import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
 
@@ -209,13 +215,30 @@ export class OrderService {
       }
     }
 
-    // Step 6: Apply voucher discounts (calculate voucher discount amount)
+    // Step 6: Apply voucher discounts — resolve codes (read-only) and compute
+    // the discount. Codes are atomically redeemed inside the transaction below.
     let voucherDiscount = 0;
+    let resolvedVoucherHashes: string[] = [];
     if (request.voucherCodes && request.voucherCodes.length > 0) {
-      voucherDiscount = await this.calculateVoucherDiscount(
+      const preSubtotal = cartItems.reduce(
+        (sum, ci) => sum + ci.quantity * ci.unitPrice - ci.discount,
+        0,
+      );
+      const voucherContext: VoucherEvaluationContext = {
+        outletId: user.outlet_id ?? '',
+        vehicleBrand: request.customer.brand,
+        serviceIdsInCart: cartItems.map((ci) => ci.serviceId),
+        orderSubtotal: preSubtotal,
+        currentDate: new Date().toISOString().slice(0, 10),
+      };
+      const resolved = await this.resolveVouchers(
+        user.tenant_id,
         request.voucherCodes,
+        voucherContext,
         cartItems,
       );
+      voucherDiscount = resolved.discount;
+      resolvedVoucherHashes = resolved.codeHashes;
     }
 
     // Step 7: Get outlet config for charges
@@ -342,6 +365,33 @@ export class OrderService {
           logEntry.timestamp,
         ],
       );
+
+      // Atomically redeem any applied voucher codes (single-use guard). If a
+      // code was consumed concurrently, the redeem fails and the order rolls back.
+      for (const codeHash of resolvedVoucherHashes) {
+        const redeemed = await client.query<{ pack_id: string }>(
+          `UPDATE voucher_codes vc
+           SET status = 'redeemed', redeemed_at = NOW(), order_id = $1
+           FROM voucher_packs vp
+           WHERE vc.code_hash = $2
+             AND vc.pack_id = vp.id
+             AND vp.tenant_id = $3
+             AND vc.status = 'active'
+           RETURNING vc.pack_id`,
+          [order.id, codeHash, user.tenant_id],
+        );
+        if (redeemed.rowCount === 0) {
+          throw new BadRequestException('A voucher code is no longer available');
+        }
+        await client.query(
+          `UPDATE voucher_packs
+           SET uses_count = uses_count + 1,
+               status = CASE WHEN uses_count + 1 >= total_uses THEN 'fully_redeemed' ELSE status END,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [redeemed.rows[0]!.pack_id],
+        );
+      }
 
       await client.query('COMMIT');
 
@@ -591,18 +641,93 @@ export class OrderService {
   }
 
   /**
-   * Calculates voucher discount amount.
-   * This is a simplified implementation - full voucher resolution
-   * happens in the voucher module. Here we look up applied voucher values.
+   * Resolve voucher codes for an order (read-only). Returns the total discount
+   * and the hashes of the codes to redeem. Enforces one voucher per type
+   * (stacking limit, Requirement 17.2) and caps total discount at the subtotal.
    */
-  private async calculateVoucherDiscount(
-    _voucherCodes: string[],
-    _cartItems: CartItem[],
-  ): Promise<number> {
-    // Voucher discount calculation is handled by the voucher module
-    // For now, return 0 as the voucher module will handle full resolution
-    // In a complete implementation, this would call the voucher service
-    return 0;
+  private async resolveVouchers(
+    tenantId: string,
+    codes: string[],
+    context: VoucherEvaluationContext,
+    cartItems: CartItem[],
+  ): Promise<{ discount: number; codeHashes: string[] }> {
+    const typesSeen = new Set<VoucherType>();
+    const codeHashes: string[] = [];
+    let discount = 0;
+
+    for (const raw of codes.slice(0, MAX_VOUCHER_CODES_PER_ORDER)) {
+      const codeHash = hashVoucherCode(raw.trim());
+      const data = await this.lookupVoucher(tenantId, codeHash);
+      const state = evaluateVoucher(data, context);
+      if (state.status !== 'valid_applicable') continue;
+      if (typesSeen.has(state.type)) continue; // max 1 voucher per type
+      typesSeen.add(state.type);
+
+      let amount = 0;
+      if (state.type === VoucherType.Fixed) {
+        amount = Math.min(state.discountValue, context.orderSubtotal);
+      } else if (state.type === VoucherType.Percentage) {
+        amount = Math.round((context.orderSubtotal * state.discountValue) / 100);
+      } else {
+        // service_pack: discount equals the price of covered services in the cart
+        const ids = data?.serviceIds ?? null;
+        amount = cartItems
+          .filter((ci) => ids === null || ids.includes(ci.serviceId))
+          .reduce((sum, ci) => sum + ci.quantity * ci.unitPrice, 0);
+      }
+      discount += amount;
+      codeHashes.push(codeHash);
+    }
+
+    return { discount: Math.min(discount, context.orderSubtotal), codeHashes };
+  }
+
+  /** Look up a child voucher code and assemble VoucherData; null if not found. */
+  private async lookupVoucher(tenantId: string, codeHash: string): Promise<VoucherData | null> {
+    const res = await this.pool.query<{
+      code_status: string;
+      pack_status: string;
+      pack_expiry: string | null;
+      type: VoucherType;
+      value: string;
+      template_start: string | null;
+      template_expiry: string | null;
+      outlet_ids: string[] | null;
+      brand_scope: string[] | null;
+      service_ids: string[] | null;
+      min_order_amount: string;
+      template_active: boolean;
+      is_parent: boolean;
+    }>(
+      `SELECT vc.status AS code_status, vp.status AS pack_status, vp.expiry_date AS pack_expiry,
+              vt.type, vt.value::text AS value,
+              vt.start_date AS template_start, vt.expiry_date AS template_expiry,
+              vt.outlet_ids, vt.brand_scope, vt.service_ids,
+              vt.min_order_amount::text AS min_order_amount, vt.is_active AS template_active,
+              false AS is_parent
+       FROM voucher_codes vc
+       JOIN voucher_packs vp ON vp.id = vc.pack_id
+       JOIN voucher_templates vt ON vt.id = vp.template_id
+       WHERE vc.code_hash = $1 AND vp.tenant_id = $2`,
+      [codeHash, tenantId],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+
+    return {
+      type: row.type,
+      value: parseFloat(row.value),
+      maxUses: 1,
+      currentUses: row.code_status === 'active' ? 0 : 1,
+      startDate: row.template_start,
+      expiryDate: row.pack_expiry ?? row.template_expiry,
+      outletIds: row.outlet_ids,
+      brandScope: row.brand_scope,
+      serviceIds: row.service_ids,
+      minOrderAmount: parseFloat(row.min_order_amount),
+      isActive: row.template_active && row.pack_status === 'active' && row.code_status === 'active',
+      isParentCode: false,
+    };
   }
 
   /**

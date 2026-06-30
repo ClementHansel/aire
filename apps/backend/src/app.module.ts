@@ -19,6 +19,7 @@ import { CustomerModule } from './modules/customer';
 import { KioskModule } from './modules/kiosk';
 import { AgentModule } from './modules/agent';
 import { PaymentModule } from './modules/payment';
+import { VoucherModule } from './modules/voucher';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { PaymentModule } from './modules/payment';
     ReceiptModule,
     ReportModule,
     ServiceModule,
+    VoucherModule,
   ],
   controllers: [AppController],
   providers: [AppService],
