@@ -13,6 +13,17 @@ const nextConfig = {
     dirs: ['src/app', 'src/components', 'src/hooks', 'src/lib', 'src/stores'],
     ignoreDuringBuilds: true,
   },
+  // Proxy /api to the backend so the frontend works even when accessed directly
+  // (e.g. on :3000), not only through nginx. When behind nginx, nginx handles
+  // /api first and this rewrite is never reached.
+  async rewrites() {
+    const backend = process.env.BACKEND_ORIGIN || 'http://backend:4000';
+    return [
+      { source: '/api/:path*', destination: `${backend}/api/:path*` },
+      { source: '/socket.io/:path*', destination: `${backend}/socket.io/:path*` },
+    ];
+  },
 };
 
 export default nextConfig;
+
