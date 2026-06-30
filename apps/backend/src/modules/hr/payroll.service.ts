@@ -113,8 +113,8 @@ export class PayrollService {
       const pay = Math.min(amount, balance);
       const newBalance = balance - pay;
       await client.query(
-        `UPDATE employee_loans SET balance = $1, status = CASE WHEN $1 <= 0 THEN 'paid' ELSE status END, updated_at = NOW() WHERE id = $2`,
-        [newBalance, loanId],
+        `UPDATE employee_loans SET balance = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+        [newBalance, newBalance <= 0 ? 'paid' : 'active', loanId],
       );
       await client.query(
         `INSERT INTO loan_repayments (tenant_id, loan_id, amount, method) VALUES ($1,$2,$3,'manual')`,
@@ -260,8 +260,8 @@ export class PayrollService {
           if (pay <= 0) continue;
           const newBalance = balance - pay;
           await client.query(
-            `UPDATE employee_loans SET balance = $1, status = CASE WHEN $1 <= 0 THEN 'paid' ELSE status END, updated_at = NOW() WHERE id = $2`,
-            [newBalance, loan.id],
+            `UPDATE employee_loans SET balance = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+            [newBalance, newBalance <= 0 ? 'paid' : 'active', loan.id],
           );
           await client.query(
             `INSERT INTO loan_repayments (tenant_id, loan_id, amount, period, method, run_id) VALUES ($1,$2,$3,$4,'payroll',$5)`,
@@ -274,13 +274,13 @@ export class PayrollService {
         const leaveRes = await client.query<{ days: string }>(
           `SELECT COALESCE(SUM(
               GREATEST(0,
-                (LEAST(end_date, (to_date($3,'YYYY-MM') + INTERVAL '1 month - 1 day')::date)
+                (LEAST(end_date, (to_date($3,'YYYY-MM') + INTERVAL '1 month' - INTERVAL '1 day')::date)
                  - GREATEST(start_date, to_date($3,'YYYY-MM')::date)) + 1
               )
             ), 0) AS days
            FROM leave_requests
            WHERE tenant_id = $1 AND employee_id = $2 AND status = 'approved' AND paid = false
-             AND start_date <= (to_date($3,'YYYY-MM') + INTERVAL '1 month - 1 day')::date
+             AND start_date <= (to_date($3,'YYYY-MM') + INTERVAL '1 month' - INTERVAL '1 day')::date
              AND end_date >= to_date($3,'YYYY-MM')::date`,
           [tenantId, emp.id, period],
         );
