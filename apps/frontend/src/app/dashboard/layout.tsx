@@ -22,6 +22,7 @@ const navSections: NavSection[] = [
     title: 'Analytics',
     items: [
       { id: 'transactions', label: 'Transactions', href: '/dashboard/transactions', icon: '🧾' },
+      { id: 'invoices', label: 'Invoices', href: '/dashboard/invoices', icon: '🧮' },
       { id: 'reports', label: 'Reports', href: '/dashboard/reports', icon: '📑' },
       { id: 'sales', label: 'Sales & Leads', href: '/dashboard/sales', icon: '📈' },
     ],
@@ -30,6 +31,7 @@ const navSections: NavSection[] = [
     title: 'Customers',
     items: [
       { id: 'crm', label: 'Customers & CRM', href: '/dashboard/crm', icon: '🧑‍🤝‍🧑' },
+      { id: 'bookings', label: 'Bookings', href: '/dashboard/bookings', icon: '📅' },
       { id: 'memberships', label: 'Memberships', href: '/dashboard/memberships', icon: '🎫' },
       { id: 'vouchers', label: 'Vouchers', href: '/dashboard/vouchers', icon: '🎟️' },
       { id: 'promotions', label: 'Promotions', href: '/dashboard/promotions', icon: '🎉' },
