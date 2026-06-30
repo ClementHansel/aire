@@ -14,6 +14,15 @@ interface ServiceDTO {
   isActive: boolean;
 }
 
+interface PaymentMethodDTO {
+  id: string;
+  name: string;
+  kind: 'cash' | 'qris' | 'edc' | 'cc' | 'transfer';
+  businessUnit: 'AIRE' | 'LEAD' | null;
+  logoUrl: string | null;
+  color: string;
+}
+
 interface CartLine {
   serviceId: string;
   name: string;
@@ -44,8 +53,12 @@ export default function NewOrderPage() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [plate, setPlate] = useState('');
+  const [brand, setBrand] = useState('');
+  const [model, setModel] = useState('');
   const [businessUnit, setBusinessUnit] = useState<'AIRE' | 'LEAD'>('AIRE');
   const [salesperson, setSalesperson] = useState('');
+  const [payMethods, setPayMethods] = useState<PaymentMethodDTO[]>([]);
+  const [selectedPmId, setSelectedPmId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [placing, setPlacing] = useState(false);
@@ -74,6 +87,10 @@ export default function NewOrderPage() {
       .then((data) => setServices(data.filter((s) => s.isActive)))
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load services'))
       .finally(() => setLoading(false));
+    // Load this branch's configured payment methods (with logos/colors).
+    const u = getUser();
+    const pmUrl = u?.outletId ? `/payment-methods?active=true&outletId=${u.outletId}` : '/payment-methods?active=true';
+    api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* falls back to default buttons */ });
   }, []);
 
   const addToCart = useCallback((s: ServiceDTO) => {
@@ -139,7 +156,7 @@ export default function NewOrderPage() {
     setPlacing(true);
     try {
       const created = await api.post<CreatedOrder>('/orders', {
-        customer: { name: name.trim(), phone: phone.trim(), licensePlate: plate.trim() || undefined },
+        customer: { name: name.trim(), phone: phone.trim(), licensePlate: plate.trim() || undefined, brand: brand.trim() || undefined, model: model.trim() || undefined },
         items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty })),
         businessUnit,
         salespersonName: salesperson.trim() || undefined,
@@ -168,7 +185,7 @@ export default function NewOrderPage() {
       }
       await api.post(`/orders/${order.id}/pay`, {
         method: payMethod,
-        paymentChannel: businessUnit,
+        paymentChannel: payMethods.find((m) => m.id === selectedPmId)?.businessUnit ?? businessUnit,
         amountReceived: payMethod === 'cash' ? Number(amountReceived) : undefined,
       });
       const change = payMethod === 'cash' ? Math.max(0, Number(amountReceived) - order.total) : 0;
@@ -182,9 +199,9 @@ export default function NewOrderPage() {
 
   const finishSale = (orderNumber: string, total: number, change: number) => {
     setReceipt({ orderNumber, total, change });
-    setCart([]); setName(''); setPhone(''); setPlate('');
+    setCart([]); setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
     setVoucherCodes([]); setVoucherInput(''); setVoucherMsg('');
-    setOrder(null); setQr(null); setPolling(false); setPaying(false);
+    setOrder(null); setQr(null); setPolling(false); setPaying(false); setSelectedPmId(null);
   };
 
   // Poll order status while waiting for QRIS gateway confirmation
@@ -226,6 +243,7 @@ export default function NewOrderPage() {
             <a href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</a>
             <span className="btn-ghost py-1.5 px-3 bg-surface-sunken">New Order</span>
             <a href={`/pos/${params.outletAgentId}/orders`} className="btn-ghost py-1.5 px-3">Orders</a>
+            <a href={`/pos/${params.outletAgentId}/queue`} className="btn-ghost py-1.5 px-3">Queue</a>
             <a href={`/pos/${params.outletAgentId}/summary`} className="btn-ghost py-1.5 px-3">Summary</a>
             <a href={`/pos/${params.outletAgentId}/shift`} className="btn-ghost py-1.5 px-3">Shift</a>
           </nav>
@@ -285,6 +303,10 @@ export default function NewOrderPage() {
             <input className="input-field" placeholder="Customer name *" value={name} onChange={(e) => setName(e.target.value)} />
             <input className="input-field" placeholder="Phone (e.g. 08123…) *" value={phone} onChange={(e) => setPhone(e.target.value)} />
             <input className="input-field" placeholder="License plate (optional)" value={plate} onChange={(e) => setPlate(e.target.value)} />
+            <div className="grid grid-cols-2 gap-2">
+              <input className="input-field" placeholder="Vehicle brand" value={brand} onChange={(e) => setBrand(e.target.value)} />
+              <input className="input-field" placeholder="Vehicle type" value={model} onChange={(e) => setModel(e.target.value)} />
+            </div>
             <input className="input-field" placeholder="Salesperson (optional)" value={salesperson} onChange={(e) => setSalesperson(e.target.value)} />
           </div>
 
@@ -358,15 +380,41 @@ export default function NewOrderPage() {
 
             <div className="mt-4">
               <label className="block text-sm font-medium mb-1.5">Payment Method</label>
-              <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
-                <option value="cash">Cash</option>
-                <option value="qris_dynamic">QRIS (scan to pay)</option>
-                <option value="edc">EDC / Debit</option>
-                <option value="cc">Credit Card</option>
-                <option value="transfer">Bank Transfer</option>
-              </select>
+              {payMethods.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {payMethods.map((pm) => {
+                    const mapped = pm.kind === 'qris' ? 'qris_dynamic' : pm.kind;
+                    const active = selectedPmId === pm.id;
+                    return (
+                      <button
+                        key={pm.id}
+                        type="button"
+                        disabled={polling}
+                        onClick={() => { setSelectedPmId(pm.id); setPayMethod(mapped as typeof payMethod); }}
+                        className={`flex items-center gap-2 rounded-xl border p-2.5 text-left transition-all ${active ? 'border-primary-500 ring-2 ring-primary-100' : 'border-border hover:border-border-strong'}`}
+                      >
+                        <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-[10px] font-bold shrink-0" style={{ background: pm.color }}>
+                          {pm.logoUrl ? <img src={pm.logoUrl} alt="" className="w-6 h-6 object-contain" /> : pm.kind.toUpperCase().slice(0, 3)}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-text-primary truncate">{pm.name}</span>
+                          <span className="block text-[11px] text-text-muted">{pm.kind.toUpperCase()}{pm.businessUnit ? ` · ${pm.businessUnit}` : ''}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
+                  <option value="cash">Cash</option>
+                  <option value="qris_dynamic">QRIS (scan to pay)</option>
+                  <option value="edc">EDC / Debit</option>
+                  <option value="cc">Credit Card</option>
+                  <option value="transfer">Bank Transfer</option>
+                </select>
+              )}
               {payMethod !== 'cash' && (
-                <p className="mt-1.5 text-xs text-text-muted">Settles to the <span className="font-medium text-text-primary">{businessUnit}</span> {payMethod === 'qris_dynamic' ? 'QRIS' : payMethod === 'cc' ? 'CC' : payMethod === 'edc' ? 'EDC' : 'transfer'} account.</p>
+                <p className="mt-1.5 text-xs text-text-muted">Settles to the <span className="font-medium text-text-primary">{payMethods.find((m) => m.id === selectedPmId)?.businessUnit ?? businessUnit}</span> account.</p>
               )}
             </div>
 

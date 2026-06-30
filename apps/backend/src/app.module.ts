@@ -35,6 +35,7 @@ import { AccessModule } from './modules/access';
 import { VoucherTicketModule } from './modules/voucher-ticket';
 import { PromotionModule } from './modules/promotion';
 import { SettlementModule } from './modules/settlement';
+import { VehicleQueueModule } from './modules/vehicle-queue';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { SettlementModule } from './modules/settlement';
     VoucherTicketModule,
     PromotionModule,
     SettlementModule,
+    VehicleQueueModule,
   ],
   controllers: [AppController],
   providers: [AppService],
