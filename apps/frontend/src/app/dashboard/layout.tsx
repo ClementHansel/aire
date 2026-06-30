@@ -66,6 +66,7 @@ const navSections: NavSection[] = [
     title: 'AI',
     items: [
       { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: '🤖' },
+      { id: 'agents', label: 'Agent Workflow', href: '/dashboard/agents', icon: '🕸️' },
       { id: 'ai-agent', label: 'Agentic AI (WhatsApp)', href: '/dashboard/ai-agent', icon: '🧠' },
       { id: 'conversations', label: 'Conversations', href: '/dashboard/conversations', icon: '💬' },
       { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: '📡' },

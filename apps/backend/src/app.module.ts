@@ -39,6 +39,7 @@ import { VehicleQueueModule } from './modules/vehicle-queue';
 import { AgentConfigModule } from './modules/agent-config';
 import { WhatsappModule } from './modules/whatsapp';
 import { BookingModule } from './modules/booking';
+import { AgentRegistryModule } from './modules/agent-registry';
 
 @Module({
   imports: [
@@ -82,6 +83,7 @@ import { BookingModule } from './modules/booking';
     AgentConfigModule,
     WhatsappModule,
     BookingModule,
+    AgentRegistryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
