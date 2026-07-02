@@ -85,7 +85,7 @@ export default function HrPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-text-primary">HR</h1>
         <div className="flex items-center gap-3">
-          <select className="input-field max-w-[200px]" value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
+          <select aria-label="Branch Filter" className="input-field max-w-[200px]" value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
             <option value="">All branches (global)</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
@@ -112,11 +112,11 @@ export default function HrPage() {
           <div className="card">
             <h2 className="section-title mb-3">Add employee</h2>
             <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
-              <input className="input-field" placeholder="Name *" value={empForm.name} onChange={(e) => setEmpForm({ ...empForm, name: e.target.value })} />
-              <input className="input-field" placeholder="Role" value={empForm.role} onChange={(e) => setEmpForm({ ...empForm, role: e.target.value })} />
-              <input className="input-field" placeholder="Phone" value={empForm.phone} onChange={(e) => setEmpForm({ ...empForm, phone: e.target.value })} />
-              <input className="input-field" type="number" placeholder="Salary" value={empForm.salary} onChange={(e) => setEmpForm({ ...empForm, salary: e.target.value })} />
-              <select className="input-field" value={empForm.outletId} onChange={(e) => setEmpForm({ ...empForm, outletId: e.target.value })}>
+              <input aria-label="Name" className="input-field" placeholder="Name *" value={empForm.name} onChange={(e) => setEmpForm({ ...empForm, name: e.target.value })} />
+              <input aria-label="Role" className="input-field" placeholder="Role" value={empForm.role} onChange={(e) => setEmpForm({ ...empForm, role: e.target.value })} />
+              <input aria-label="Phone" className="input-field" placeholder="Phone" value={empForm.phone} onChange={(e) => setEmpForm({ ...empForm, phone: e.target.value })} />
+              <input aria-label="Salary" className="input-field" type="number" placeholder="Salary" value={empForm.salary} onChange={(e) => setEmpForm({ ...empForm, salary: e.target.value })} />
+              <select aria-label="Outlet Id" className="input-field" value={empForm.outletId} onChange={(e) => setEmpForm({ ...empForm, outletId: e.target.value })}>
                 <option value="">No branch</option>
                 {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
@@ -157,14 +157,14 @@ export default function HrPage() {
           <div className="card">
             <h2 className="section-title mb-3">Set schedule</h2>
             <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
-              <select className="input-field" value={schedForm.employeeId} onChange={(e) => setSchedForm({ ...schedForm, employeeId: e.target.value })}>
+              <select aria-label="Employee Id" className="input-field" value={schedForm.employeeId} onChange={(e) => setSchedForm({ ...schedForm, employeeId: e.target.value })}>
                 <option value="">Employee *</option>
                 {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
               </select>
-              <input className="input-field" type="date" value={schedForm.workDate} onChange={(e) => setSchedForm({ ...schedForm, workDate: e.target.value })} />
-              <input className="input-field" type="time" value={schedForm.startTime} onChange={(e) => setSchedForm({ ...schedForm, startTime: e.target.value })} />
-              <input className="input-field" type="time" value={schedForm.endTime} onChange={(e) => setSchedForm({ ...schedForm, endTime: e.target.value })} />
-              <select className="input-field" value={schedForm.outletId} onChange={(e) => setSchedForm({ ...schedForm, outletId: e.target.value })}>
+              <input aria-label="Work Date" className="input-field" type="date" value={schedForm.workDate} onChange={(e) => setSchedForm({ ...schedForm, workDate: e.target.value })} />
+              <input aria-label="Start Time" className="input-field" type="time" value={schedForm.startTime} onChange={(e) => setSchedForm({ ...schedForm, startTime: e.target.value })} />
+              <input aria-label="End Time" className="input-field" type="time" value={schedForm.endTime} onChange={(e) => setSchedForm({ ...schedForm, endTime: e.target.value })} />
+              <select aria-label="Outlet Id" className="input-field" value={schedForm.outletId} onChange={(e) => setSchedForm({ ...schedForm, outletId: e.target.value })}>
                 <option value="">Branch…</option>
                 {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
@@ -192,12 +192,12 @@ export default function HrPage() {
           <div className="card">
             <h2 className="section-title mb-3">Request leave</h2>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-center">
-              <select className="input-field" value={leaveForm.employeeId} onChange={(e) => setLeaveForm({ ...leaveForm, employeeId: e.target.value })}>
+              <select aria-label="Employee Id" className="input-field" value={leaveForm.employeeId} onChange={(e) => setLeaveForm({ ...leaveForm, employeeId: e.target.value })}>
                 <option value="">Employee *</option>
                 {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
               </select>
-              <input className="input-field" type="date" value={leaveForm.startDate} onChange={(e) => setLeaveForm({ ...leaveForm, startDate: e.target.value })} />
-              <input className="input-field" type="date" value={leaveForm.endDate} onChange={(e) => setLeaveForm({ ...leaveForm, endDate: e.target.value })} />
+              <input aria-label="Start Date" className="input-field" type="date" value={leaveForm.startDate} onChange={(e) => setLeaveForm({ ...leaveForm, startDate: e.target.value })} />
+              <input aria-label="End Date" className="input-field" type="date" value={leaveForm.endDate} onChange={(e) => setLeaveForm({ ...leaveForm, endDate: e.target.value })} />
               <label className="flex items-center gap-1.5 text-sm text-text-secondary"><input type="checkbox" checked={leaveForm.paid} onChange={(e) => setLeaveForm({ ...leaveForm, paid: e.target.checked })} />Paid</label>
               <button className="btn-primary" onClick={requestLeave}>Request</button>
             </div>
@@ -227,8 +227,8 @@ export default function HrPage() {
           <div className="card">
             <h2 className="section-title mb-3">Add holiday</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-center">
-              <input className="input-field" type="date" value={holForm.date} onChange={(e) => setHolForm({ ...holForm, date: e.target.value })} />
-              <input className="input-field" placeholder="Name *" value={holForm.name} onChange={(e) => setHolForm({ ...holForm, name: e.target.value })} />
+              <input aria-label="Date" className="input-field" type="date" value={holForm.date} onChange={(e) => setHolForm({ ...holForm, date: e.target.value })} />
+              <input aria-label="Name" className="input-field" placeholder="Name *" value={holForm.name} onChange={(e) => setHolForm({ ...holForm, name: e.target.value })} />
               <label className="flex items-center gap-1.5 text-sm text-text-secondary"><input type="checkbox" checked={holForm.isPaid} onChange={(e) => setHolForm({ ...holForm, isPaid: e.target.checked })} />Paid</label>
               <button className="btn-primary" onClick={addHoliday}>Add</button>
             </div>

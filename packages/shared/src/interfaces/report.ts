@@ -51,6 +51,11 @@ export interface ReportQueryParams {
   dateFrom: string;
   dateTo: string;
   outletId?: string;
+  /**
+   * Restrict to a set of branches. null/undefined = all branches; [] = none.
+   * Resolved server-side from the caller's role + branch assignment.
+   */
+  outletIds?: string[] | null;
   /** Optional business-unit filter (AIRE / LEAD) */
   businessUnit?: string;
 }

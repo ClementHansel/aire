@@ -14,6 +14,7 @@ import { Roles, CurrentUser } from '../../common/decorators';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../../common/guards';
 import { CustomerService } from './customer.service';
+import { ScopeService } from '../../common/scope/scope.service';
 
 /**
  * Customer CRM controller providing profile, analytics, and search endpoints.
@@ -27,7 +28,10 @@ import { CustomerService } from './customer.service';
  */
 @Controller('api/customers')
 export class CustomerController {
-  constructor(private readonly customerService: CustomerService) {}
+  constructor(
+    private readonly customerService: CustomerService,
+    private readonly scope: ScopeService,
+  ) {}
 
   /**
    * GET /api/customers/list — paginated CRM customer list (tenant-scoped).
@@ -42,12 +46,13 @@ export class CustomerController {
     @Query('pageSize') pageSizeStr?: string,
     @Query('outletId') outletId?: string,
   ) {
+    const ids = await this.scope.resolveOutletIds(user, outletId);
     return this.customerService.listCustomers(
       user.tenant_id,
       pageStr ? parseInt(pageStr, 10) : 1,
       pageSizeStr ? parseInt(pageSizeStr, 10) : 50,
       search,
-      outletId,
+      ids,
     );
   }
 

@@ -24,10 +24,10 @@ export class FinanceService {
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
-  async listExpenses(tenantId: string, limit = 50, outletId?: string): Promise<unknown[]> {
+  async listExpenses(tenantId: string, limit = 50, outletIds?: string[] | null): Promise<unknown[]> {
     const params: unknown[] = [tenantId, Math.min(limit, 200)];
     let outletFilter = '';
-    if (outletId) { params.push(outletId); outletFilter = ` AND outlet_id = $${params.length}`; }
+    if (outletIds != null) { params.push(outletIds); outletFilter = ` AND outlet_id = ANY($${params.length}::uuid[])`; }
     const res = await this.pool.query(
       `SELECT id, category, description, amount, expense_date, payment_method
        FROM expenses WHERE tenant_id = $1${outletFilter} ORDER BY expense_date DESC, created_at DESC LIMIT $2`,
@@ -59,12 +59,12 @@ export class FinanceService {
     return { id: e.id, category: e.category, amount: parseFloat(e.amount), date: e.expense_date };
   }
 
-  /** Profit/loss summary for a window: revenue (paid orders) - expenses. Optional per-branch. */
-  async summary(tenantId: string, days = 30, outletId?: string): Promise<Record<string, unknown>> {
+  /** Profit/loss summary for a window: revenue (paid orders) - expenses. Optional per-branch(es). */
+  async summary(tenantId: string, days = 30, outletIds?: string[] | null): Promise<Record<string, unknown>> {
     const interval = `${days} days`;
-    // $3 = outletId (optional); the filter is a no-op when it's NULL.
-    const outletFilter = ' AND ($3::uuid IS NULL OR outlet_id = $3::uuid)';
-    const p: unknown[] = [tenantId, interval, outletId ?? null];
+    // $3 = outlet ids (optional); the filter is a no-op when it's NULL (all branches).
+    const outletFilter = ' AND ($3::uuid[] IS NULL OR outlet_id = ANY($3::uuid[]))';
+    const p: unknown[] = [tenantId, interval, outletIds ?? null];
     const revenue = await this.pool.query<{ revenue: string }>(
       `SELECT COALESCE(SUM(total), 0) AS revenue FROM orders
        WHERE tenant_id = $1 AND status IN ('paid','confirmed','completed')

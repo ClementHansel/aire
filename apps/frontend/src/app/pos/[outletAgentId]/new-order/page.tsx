@@ -81,6 +81,22 @@ export default function NewOrderPage() {
   // The branch this POS is operating. POS follows the HR schedule: it's today's
   // scheduled branch when set, otherwise the operator's home outlet.
   const [operatingOutletId, setOperatingOutletId] = useState<string | null>(null);
+  const [scheduledOutletId, setScheduledOutletId] = useState<string | null>(null);
+  const [homeOutletId, setHomeOutletId] = useState<string | null>(null);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [offScheduleReason, setOffScheduleReason] = useState('');
+
+  // Load the service catalog + payment methods for a branch (pricing is
+  // branch-specific). Called on mount and whenever the operator switches branch.
+  const loadCatalog = useCallback((outletId: string | null) => {
+    const svcUrl = outletId ? `/services?outletId=${outletId}` : '/services';
+    api.get<ServiceDTO[]>(svcUrl)
+      .then((data) => setServices(data.filter((s) => s.isActive)))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load services'))
+      .finally(() => setLoading(false));
+    const pmUrl = outletId ? `/payment-methods?active=true&outletId=${outletId}` : '/payment-methods?active=true';
+    api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* default buttons */ });
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -88,22 +104,31 @@ export default function NewOrderPage() {
       return;
     }
     const u = getUser();
-    // Resolve the operating branch from the HR schedule, then scope services +
-    // payment methods to it so region/branch-specific pricing shows correctly.
-    api.get<{ todayOutletId: string | null }>('/hr/my/branch-context')
-      .then((ctx) => ctx?.todayOutletId ?? u?.outletId ?? null)
-      .catch(() => u?.outletId ?? null)
-      .then((activeOutletId) => {
-        setOperatingOutletId(activeOutletId);
-        const svcUrl = activeOutletId ? `/services?outletId=${activeOutletId}` : '/services';
-        api.get<ServiceDTO[]>(svcUrl)
-          .then((data) => setServices(data.filter((s) => s.isActive)))
-          .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load services'))
-          .finally(() => setLoading(false));
-        const pmUrl = activeOutletId ? `/payment-methods?active=true&outletId=${activeOutletId}` : '/payment-methods?active=true';
-        api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* falls back to default buttons */ });
-      });
-  }, []);
+    setHomeOutletId(u?.outletId ?? null);
+    // POS follows the HR schedule: default to today's scheduled branch, else home.
+    api.get<{ todayOutletId: string | null; branches: { id: string; name: string }[] }>('/hr/my/branch-context')
+      .then((ctx) => {
+        setBranches(ctx?.branches ?? []);
+        setScheduledOutletId(ctx?.todayOutletId ?? null);
+        const active = ctx?.todayOutletId ?? u?.outletId ?? null;
+        setOperatingOutletId(active);
+        loadCatalog(active);
+      })
+      .catch(() => { const active = u?.outletId ?? null; setOperatingOutletId(active); loadCatalog(active); });
+  }, [loadCatalog]);
+
+  // Manually switch the operating branch. Clears the cart (branch pricing differs).
+  const changeBranch = (id: string) => {
+    if (id === operatingOutletId) return;
+    setOperatingOutletId(id);
+    setOffScheduleReason('');
+    setCart([]);
+    loadCatalog(id);
+  };
+
+  // Operating a branch that is neither the operator's home nor today's scheduled
+  // one — the backend requires (and audit-logs) a reason for this.
+  const offSchedule = !!operatingOutletId && operatingOutletId !== homeOutletId && operatingOutletId !== scheduledOutletId;
 
   const addToCart = useCallback((s: ServiceDTO) => {
     setCart((prev) => {
@@ -165,6 +190,10 @@ export default function NewOrderPage() {
       setError('Enter customer name, phone, and add at least one service.');
       return;
     }
+    if (offSchedule && !offScheduleReason.trim()) {
+      setError('Enter a reason for operating an off-schedule branch.');
+      return;
+    }
     setPlacing(true);
     try {
       const created = await api.post<CreatedOrder>('/orders', {
@@ -174,6 +203,7 @@ export default function NewOrderPage() {
         salespersonName: salesperson.trim() || undefined,
         voucherCodes: voucherCodes.length ? voucherCodes : undefined,
         operatingOutletId: operatingOutletId ?? undefined,
+        offScheduleReason: offSchedule ? offScheduleReason.trim() : undefined,
       });
       setOrder(created);
       setAmountReceived(String(created.total));
@@ -250,13 +280,44 @@ export default function NewOrderPage() {
 
       {error && <div className="mx-5 mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
 
+      {/* Operating branch — follows the HR schedule; can be overridden with a reason. */}
+      {branches.length > 0 && (
+        <div className="mx-5 mt-4 flex items-center gap-3 flex-wrap">
+          <label htmlFor="pos-branch" className="text-sm text-text-muted">Operating branch</label>
+          <select
+            id="pos-branch"
+            aria-label="Operating branch"
+            className="input-field py-1 max-w-[240px]"
+            value={operatingOutletId ?? ''}
+            onChange={(e) => changeBranch(e.target.value)}
+          >
+            {operatingOutletId == null && <option value="">Select branch…</option>}
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}{b.id === scheduledOutletId ? ' — scheduled' : ''}</option>
+            ))}
+          </select>
+          {operatingOutletId && operatingOutletId === scheduledOutletId && (
+            <span className="badge bg-green-50 text-green-700 text-xs">On schedule</span>
+          )}
+          {offSchedule && (
+            <input
+              className="input-field py-1 flex-1 min-w-[220px]"
+              aria-label="Off-schedule reason"
+              placeholder="Reason for off-schedule branch (required — logged)"
+              value={offScheduleReason}
+              onChange={(e) => setOffScheduleReason(e.target.value)}
+            />
+          )}
+        </div>
+      )}
+
       <div className="flex-1 grid lg:grid-cols-3 gap-5 p-5 min-h-0">
         {/* Service grid */}
         <div className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h2 className="section-title">Services</h2>
             {/* Business unit switch — AIRE car wash vs LEAD detailing */}
-            <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5" role="tablist" aria-label="Business unit">
+            <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5" role="group" aria-label="Business unit">
               {(['AIRE', 'LEAD'] as const).map((bu) => (
                 <button
                   key={bu}
@@ -399,7 +460,7 @@ export default function NewOrderPage() {
                   })}
                 </div>
               ) : (
-                <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
+                <select aria-label="Payment method" className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
                   <option value="cash">Cash</option>
                   <option value="qris_dynamic">QRIS (scan to pay)</option>
                   <option value="edc">EDC / Debit</option>
@@ -415,7 +476,7 @@ export default function NewOrderPage() {
             {payMethod === 'cash' && !qr && (
               <div className="mt-3">
                 <label className="block text-sm font-medium mb-1.5">Amount Received</label>
-                <input type="number" className="input-field" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
+                <input aria-label="Amount received" type="number" className="input-field" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
                 <p className="mt-1 text-sm text-text-secondary">Change: <span className="font-medium text-text-primary">{fmt(Math.max(0, Number(amountReceived || 0) - order.total))}</span></p>
               </div>
             )}

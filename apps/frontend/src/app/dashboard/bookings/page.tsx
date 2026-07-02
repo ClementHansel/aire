@@ -71,14 +71,14 @@ function BookingModal({ initial, branches, services, onClose, onSaved }: {
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Customer name</label><input className="input-field" value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Phone</label><input className="input-field" value={form.customerPhone} onChange={(e) => setForm({ ...form, customerPhone: e.target.value })} placeholder="08123…" /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Customer name</label><input aria-label="Customer Name" className="input-field" value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Phone</label><input aria-label="Customer Phone" className="input-field" value={form.customerPhone} onChange={(e) => setForm({ ...form, customerPhone: e.target.value })} placeholder="08123…" /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">License plate</label><input className="input-field uppercase" value={form.licensePlate} onChange={(e) => setForm({ ...form, licensePlate: e.target.value.toUpperCase() })} placeholder="D1234ABC" /></div>
+            <div><label className="block text-sm font-medium mb-1.5">License plate</label><input aria-label="License Plate" className="input-field uppercase" value={form.licensePlate} onChange={(e) => setForm({ ...form, licensePlate: e.target.value.toUpperCase() })} placeholder="D1234ABC" /></div>
             <div>
               <label className="block text-sm font-medium mb-1.5">Branch</label>
-              <select className="input-field" value={form.outletId} onChange={(e) => setForm({ ...form, outletId: e.target.value })}>
+              <select aria-label="Outlet Id" className="input-field" value={form.outletId} onChange={(e) => setForm({ ...form, outletId: e.target.value })}>
                 <option value="">—</option>
                 {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
@@ -86,18 +86,18 @@ function BookingModal({ initial, branches, services, onClose, onSaved }: {
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">Service</label>
-            <select className="input-field" value={form.serviceId} onChange={(e) => setForm({ ...form, serviceId: e.target.value })}>
+            <select aria-label="Service Id" className="input-field" value={form.serviceId} onChange={(e) => setForm({ ...form, serviceId: e.target.value })}>
               <option value="">— select —</option>
               {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">Scheduled date &amp; time</label>
-            <input type="datetime-local" className="input-field" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} required />
+            <input aria-label="Scheduled At" type="datetime-local" className="input-field" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} required />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">Notes</label>
-            <input className="input-field" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+            <input aria-label="Notes" className="input-field" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>

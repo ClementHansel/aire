@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ScopeModule } from './common/scope/scope.module';
 import { AuthModule } from './modules/auth';
 import { AuditModule } from './modules/audit';
 import { AdminModule } from './modules/admin';
@@ -46,6 +47,7 @@ import { AgentRegistryModule } from './modules/agent-registry';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScopeModule,
     EventsModule,
     MonitoringModule,
     AgentModule,

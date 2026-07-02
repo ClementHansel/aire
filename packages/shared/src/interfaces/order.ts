@@ -88,6 +88,8 @@ export interface OrderQueryParams {
   dateFrom?: string;
   dateTo?: string;
   outletId?: string;
+  /** Restrict to a set of branches (role-resolved). null/undefined = all; [] = none. */
+  outletIds?: string[] | null;
   page?: number;
   pageSize?: number;
 }

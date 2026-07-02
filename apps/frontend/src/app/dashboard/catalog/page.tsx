@@ -57,7 +57,7 @@ export default function CatalogPage() {
         <div className="card">
           <h2 className="section-title mb-3">Categories</h2>
           <div className="flex gap-2 mb-3">
-            <input className="input-field flex-1" placeholder="New category name" value={catName} onChange={(e) => setCatName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addCategory(); }} />
+            <input aria-label="New category name" className="input-field flex-1" placeholder="New category name" value={catName} onChange={(e) => setCatName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addCategory(); }} />
             <button className="btn-primary" onClick={addCategory}>Add</button>
           </div>
           <div className="space-y-1.5">
@@ -74,9 +74,9 @@ export default function CatalogPage() {
         <div className="card">
           <h2 className="section-title mb-3">Brands</h2>
           <div className="flex gap-2 mb-3">
-            <input className="input-field w-20 uppercase" placeholder="CODE" maxLength={10} value={brandCode} onChange={(e) => setBrandCode(e.target.value.toUpperCase())} />
-            <input className="input-field flex-1" placeholder="Brand name" value={brandName} onChange={(e) => setBrandName(e.target.value)} />
-            <input type="color" className="input-field w-12 h-10 p-1" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} />
+            <input aria-label="CODE" className="input-field w-20 uppercase" placeholder="CODE" maxLength={10} value={brandCode} onChange={(e) => setBrandCode(e.target.value.toUpperCase())} />
+            <input aria-label="Brand name" className="input-field flex-1" placeholder="Brand name" value={brandName} onChange={(e) => setBrandName(e.target.value)} />
+            <input aria-label="Brand Color" type="color" className="input-field w-12 h-10 p-1" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} />
             <button className="btn-primary" onClick={addBrand}>Add</button>
           </div>
           <div className="space-y-1.5">

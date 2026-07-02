@@ -169,14 +169,14 @@ export default function TransactionsPage() {
       {/* Filters */}
       <div className="card mb-6">
         <div className="flex flex-wrap items-end gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1">From</label><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1">To</label><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1">From</label><input aria-label="Date From" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1">To</label><input aria-label="Date To" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1">Group by</label>
-            <select value={granularity} onChange={(e) => setGranularity(e.target.value as 'day' | 'week' | 'month')} className="input-field">
+            <select aria-label="Granularity" value={granularity} onChange={(e) => setGranularity(e.target.value as 'day' | 'week' | 'month')} className="input-field">
               <option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option>
             </select></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1">Business unit</label>
-            <select value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
+            <select aria-label="Business Unit" value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
               <option value="">All</option><option value="AIRE">AIRE</option><option value="LEAD">LEAD</option>
             </select></div>
           <BranchFilter value={branch} onChange={setBranch} label="Branch" />
@@ -214,7 +214,7 @@ export default function TransactionsPage() {
           <h2 className="text-sm font-semibold text-text-primary">Transactions ({total})</h2>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" checked={todayOnly} onChange={(e) => { setTodayOnly(e.target.checked); setPage(1); }} /> Today only</label>
-            <select className="input-field py-1 text-xs" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
+            <select aria-label="Page Size" className="input-field py-1 text-xs" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
               <option value={20}>20</option><option value={50}>50</option><option value={100}>100</option>
             </select>
           </div>
@@ -284,8 +284,8 @@ function EditModal({ order, onClose, onSave }: { order: OrderCard; onClose: () =
       <div className="card w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
         <h3 className="section-title mb-4">Edit {order.orderNumber}</h3>
         <div className="space-y-3">
-          <div><label className="block text-sm font-medium mb-1.5">Customer name</label><input className="input-field" value={customerName} onChange={(e) => setName(e.target.value)} /></div>
-          <div><label className="block text-sm font-medium mb-1.5">Phone</label><input className="input-field" value={customerPhone} onChange={(e) => setPhone(e.target.value)} /></div>
+          <div><label className="block text-sm font-medium mb-1.5">Customer name</label><input aria-label="Customer Name" className="input-field" value={customerName} onChange={(e) => setName(e.target.value)} /></div>
+          <div><label className="block text-sm font-medium mb-1.5">Phone</label><input aria-label="Customer Phone" className="input-field" value={customerPhone} onChange={(e) => setPhone(e.target.value)} /></div>
         </div>
         <div className="flex gap-2 justify-end mt-4">
           <button className="btn-secondary" onClick={onClose}>Cancel</button>

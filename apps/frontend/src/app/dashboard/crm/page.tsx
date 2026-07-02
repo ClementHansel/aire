@@ -111,10 +111,10 @@ export default function CrmPage() {
 
       <div className="card mb-6">
         <div className="flex flex-wrap items-end gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1">From</label><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1">To</label><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1">From</label><input aria-label="Date From" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1">To</label><input aria-label="Date To" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1">Group by</label>
-            <select value={granularity} onChange={(e) => setGranularity(e.target.value as 'day' | 'week' | 'month')} className="input-field">
+            <select aria-label="Granularity" value={granularity} onChange={(e) => setGranularity(e.target.value as 'day' | 'week' | 'month')} className="input-field">
               <option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option>
             </select></div>
           <div className="card bg-surface-sunken px-4 py-2"><p className="text-xs text-text-muted">New customers</p><p className="text-xl font-bold">{totalNew}</p></div>
@@ -128,7 +128,7 @@ export default function CrmPage() {
           <h2 className="text-sm font-semibold text-text-primary">Customers ({total})</h2>
           <div className="flex items-center gap-2">
             <BranchFilter value={branch} onChange={(v) => { setBranch(v); setPage(1); }} />
-            <input className="input-field max-w-xs py-1 text-sm" placeholder="Search name or phone…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+            <input aria-label="Search name or phone…" className="input-field max-w-xs py-1 text-sm" placeholder="Search name or phone…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
           </div>
         </div>
         <table className="w-full">
@@ -222,8 +222,8 @@ function EditCustomer({ customer, onSave, onClose }: { customer: Customer; onSav
   return (
     <>
       <div className="space-y-3">
-        <div><label className="block text-sm font-medium mb-1.5">Name</label><input className="input-field" value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div><label className="block text-sm font-medium mb-1.5">Phone</label><input className="input-field" value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+        <div><label className="block text-sm font-medium mb-1.5">Name</label><input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} /></div>
+        <div><label className="block text-sm font-medium mb-1.5">Phone</label><input aria-label="Phone" className="input-field" value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
       </div>
       <div className="flex gap-2 justify-end mt-4">
         <button className="btn-secondary" onClick={onClose}>Cancel</button>

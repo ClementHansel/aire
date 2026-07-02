@@ -61,32 +61,32 @@ function PromoModal({ initial, branches, services, onClose, onSaved }: { initial
         <h3 className="section-title mb-4">{initial ? 'Edit Promotion' : 'Add Promotion'}</h3>
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
-          <div><label className="block text-sm font-medium mb-1.5">Name</label><input className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
-          <div><label className="block text-sm font-medium mb-1.5">Description</label><input className="input-field" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
+          <div><label className="block text-sm font-medium mb-1.5">Name</label><input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+          <div><label className="block text-sm font-medium mb-1.5">Description</label><input aria-label="Description" className="input-field" value={description} onChange={(e) => setDescription(e.target.value)} /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Start date</label><input type="date" className="input-field" value={startDate} onChange={(e) => setStartDate(e.target.value)} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">End date</label><input type="date" className="input-field" value={endDate} onChange={(e) => setEndDate(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Start date</label><input aria-label="Start Date" type="date" className="input-field" value={startDate} onChange={(e) => setStartDate(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">End date</label><input aria-label="End Date" type="date" className="input-field" value={endDate} onChange={(e) => setEndDate(e.target.value)} required /></div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
               <label className="block text-sm font-medium mb-1.5">Reward</label>
-              <select className="input-field" value={rewardType} onChange={(e) => setRewardType(e.target.value)}>
+              <select aria-label="Reward Type" className="input-field" value={rewardType} onChange={(e) => setRewardType(e.target.value)}>
                 {REWARD_TYPES.map((r) => <option key={r.v} value={r.v}>{r.l}</option>)}
               </select>
             </div>
-            <div><label className="block text-sm font-medium mb-1.5">Value</label><input type="number" className="input-field" value={rewardValue} onChange={(e) => setRewardValue(e.target.value)} /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Value</label><input aria-label="Reward Value" type="number" className="input-field" value={rewardValue} onChange={(e) => setRewardValue(e.target.value)} /></div>
           </div>
           {(rewardType === 'free_product' || rewardType === 'future_discount') && (
             <div>
               <label className="block text-sm font-medium mb-1.5">Reward product/service</label>
-              <select className="input-field" value={rewardServiceId} onChange={(e) => setRewardServiceId(e.target.value)}>
+              <select aria-label="Reward Service Id" className="input-field" value={rewardServiceId} onChange={(e) => setRewardServiceId(e.target.value)}>
                 <option value="">— select —</option>
                 {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Max quota (blank = unlimited)</label><input type="number" className="input-field" value={maxQuota} onChange={(e) => setMaxQuota(e.target.value)} /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Max quota (blank = unlimited)</label><input aria-label="Max Quota" type="number" className="input-field" value={maxQuota} onChange={(e) => setMaxQuota(e.target.value)} /></div>
             <label className="flex items-center gap-2 text-sm text-text-secondary mt-7"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> Active</label>
           </div>
           <div>

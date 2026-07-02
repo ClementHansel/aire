@@ -575,7 +575,7 @@ export class CustomerService {
     page = 1,
     pageSize = 50,
     search?: string,
-    outletId?: string,
+    outletIds?: string[] | null,
   ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; totalVisits: number }[]; total: number }> {
     const effectivePageSize = Math.min(Math.max(pageSize, 1), 200);
     const offset = (Math.max(page, 1) - 1) * effectivePageSize;
@@ -588,11 +588,11 @@ export class CustomerService {
       where.push(`(c.name ILIKE $${params.length + 1} OR c.phone ILIKE $${params.length + 1})`);
       params.push(`%${search.trim()}%`);
     }
-    if (outletId) {
+    if (outletIds != null) {
       where.push(
-        `EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.outlet_id = $${params.length + 1} AND o.status <> 'cancelled')`,
+        `EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.outlet_id = ANY($${params.length + 1}::uuid[]) AND o.status <> 'cancelled')`,
       );
-      params.push(outletId);
+      params.push(outletIds);
     }
     const whereSql = where.join(' AND ');
     const countRes = await this.pool.query<{ total: number }>(

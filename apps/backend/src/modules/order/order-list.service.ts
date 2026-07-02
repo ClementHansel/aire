@@ -159,10 +159,10 @@ export class OrderListService {
    */
   private buildWhereClause(params: OrderQueryParams): {
     whereClause: string;
-    queryParams: (string | number)[];
+    queryParams: unknown[];
   } {
     const conditions: string[] = [];
-    const queryParams: (string | number)[] = [];
+    const queryParams: unknown[] = [];
     let paramIdx = 1;
 
     // Status filter
@@ -196,10 +196,10 @@ export class OrderListService {
       paramIdx++;
     }
 
-    // Outlet filter (explicit, for Tenant_Owner use case)
-    if (params.outletId) {
-      conditions.push(`o.outlet_id = $${paramIdx}::uuid`);
-      queryParams.push(params.outletId);
+    // Branch filter (role-resolved set). null/undefined = all branches; [] = none.
+    if (params.outletIds != null) {
+      conditions.push(`o.outlet_id = ANY($${paramIdx}::uuid[])`);
+      queryParams.push(params.outletIds);
       paramIdx++;
     }
 

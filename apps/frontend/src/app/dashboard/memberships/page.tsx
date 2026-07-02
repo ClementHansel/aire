@@ -120,11 +120,11 @@ function PlanModal({
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Plan Name</label>
-            <input className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <input aria-label="Name" className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Duration</label>
-            <select className="input-field" value={form.durationMonths} onChange={(e) => setForm({ ...form, durationMonths: e.target.value })}>
+            <select aria-label="Duration Months" className="input-field" value={form.durationMonths} onChange={(e) => setForm({ ...form, durationMonths: e.target.value })}>
               <option value="1">1 month</option>
               <option value="3">3 months</option>
               <option value="6">6 months</option>
@@ -134,20 +134,20 @@ function PlanModal({
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">Max Uses</label>
-              <input type="number" min="1" className="input-field" value={form.maxUses} onChange={(e) => setForm({ ...form, maxUses: e.target.value })} required />
+              <input aria-label="Max Uses" type="number" min="1" className="input-field" value={form.maxUses} onChange={(e) => setForm({ ...form, maxUses: e.target.value })} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">Daily</label>
-              <input type="number" min="1" className="input-field" value={form.dailyLimit} onChange={(e) => setForm({ ...form, dailyLimit: e.target.value })} required />
+              <input aria-label="Daily Limit" type="number" min="1" className="input-field" value={form.dailyLimit} onChange={(e) => setForm({ ...form, dailyLimit: e.target.value })} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">Plates</label>
-              <input type="number" min="1" className="input-field" value={form.maxPlates} onChange={(e) => setForm({ ...form, maxPlates: e.target.value })} required />
+              <input aria-label="Max Plates" type="number" min="1" className="input-field" value={form.maxPlates} onChange={(e) => setForm({ ...form, maxPlates: e.target.value })} required />
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Price (Rp)</label>
-            <input type="number" min="0" className="input-field" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required />
+            <input aria-label="Price" type="number" min="0" className="input-field" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required />
           </div>
 
           <div>

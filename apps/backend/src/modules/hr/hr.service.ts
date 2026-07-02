@@ -26,6 +26,7 @@ export interface BranchContext {
   todayOutletId: string | null;  // scheduled branch for CURRENT_DATE, if any
   todayScheduled: boolean;
   assignedOutletIds: string[];   // union of every branch they're scheduled at (+ home)
+  branches: { id: string; name: string }[]; // all active tenant branches (for the POS override picker)
 }
 
 export interface LeaveRequestDto {
@@ -106,12 +107,18 @@ export class HrService {
    * fall back to the user's own JWT outlet_id (backward compatible).
    */
   async getBranchContext(tenantId: string, userId: string): Promise<BranchContext> {
+    const branchesRes = await this.pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name`,
+      [tenantId],
+    );
+    const branches = branchesRes.rows.map((r) => ({ id: r.id, name: r.name }));
+
     const empRes = await this.pool.query<{ id: string; outlet_id: string | null }>(
       `SELECT id, outlet_id FROM employees WHERE tenant_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1`,
       [tenantId, userId],
     );
     if (empRes.rows.length === 0) {
-      return { employeeId: null, homeOutletId: null, todayOutletId: null, todayScheduled: false, assignedOutletIds: [] };
+      return { employeeId: null, homeOutletId: null, todayOutletId: null, todayScheduled: false, assignedOutletIds: [], branches };
     }
     const emp = empRes.rows[0]!;
     const todayRes = await this.pool.query<{ outlet_id: string | null }>(
@@ -131,6 +138,7 @@ export class HrService {
       todayOutletId: today,
       todayScheduled: today != null,
       assignedOutletIds: [...assigned],
+      branches,
     };
   }
 

@@ -34,11 +34,11 @@ export class InventoryService {
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
-  async list(tenantId: string, opts: { lowStockOnly?: boolean; outletId?: string } = {}): Promise<unknown[]> {
+  async list(tenantId: string, opts: { lowStockOnly?: boolean; outletIds?: string[] | null } = {}): Promise<unknown[]> {
     const params: unknown[] = [tenantId];
     let where = 'tenant_id = $1 AND is_active = true';
     if (opts.lowStockOnly) where += ' AND quantity <= reorder_level';
-    if (opts.outletId) { params.push(opts.outletId); where += ` AND outlet_id = $${params.length}`; }
+    if (opts.outletIds != null) { params.push(opts.outletIds); where += ` AND outlet_id = ANY($${params.length}::uuid[])`; }
     const res = await this.pool.query(
       `SELECT id, sku, name, category, unit, quantity, reorder_level, unit_cost, supplier_id, outlet_id
        FROM inventory_items WHERE ${where} ORDER BY name ASC`,
@@ -122,14 +122,14 @@ export class InventoryService {
     }
   }
 
-  async summary(tenantId: string, outletId?: string): Promise<Record<string, unknown>> {
+  async summary(tenantId: string, outletIds?: string[] | null): Promise<Record<string, unknown>> {
     const res = await this.pool.query<{ items: string; low: string; value: string }>(
       `SELECT COUNT(*) AS items,
               COUNT(*) FILTER (WHERE quantity <= reorder_level) AS low,
               COALESCE(SUM(quantity * unit_cost), 0) AS value
        FROM inventory_items
-       WHERE tenant_id = $1 AND is_active = true AND ($2::uuid IS NULL OR outlet_id = $2::uuid)`,
-      [tenantId, outletId ?? null],
+       WHERE tenant_id = $1 AND is_active = true AND ($2::uuid[] IS NULL OR outlet_id = ANY($2::uuid[]))`,
+      [tenantId, outletIds ?? null],
     );
     const r = res.rows[0]!;
     return { totalItems: parseInt(r.items, 10), lowStockItems: parseInt(r.low, 10), stockValue: parseFloat(r.value) };

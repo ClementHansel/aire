@@ -53,21 +53,21 @@ function SellModal({ branches, services, onClose, onSold }: { branches: Branch[]
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1.5">Branch (voucher code prefix)</label>
-            <select className="input-field" value={outletId} onChange={(e) => setOutletId(e.target.value)} required>
+            <select aria-label="Outlet Id" className="input-field" value={outletId} onChange={(e) => setOutletId(e.target.value)} required>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Buyer name</label><input className="input-field" value={buyerName} onChange={(e) => setBuyerName(e.target.value)} /></div>
-            <div><label className="block text-sm font-medium mb-1.5">WhatsApp number</label><input className="input-field" value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} placeholder="08123…" /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Buyer name</label><input aria-label="Buyer Name" className="input-field" value={buyerName} onChange={(e) => setBuyerName(e.target.value)} /></div>
+            <div><label className="block text-sm font-medium mb-1.5">WhatsApp number</label><input aria-label="Buyer Phone" className="input-field" value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} placeholder="08123…" /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Quantity</label><input type="number" min="1" max="1000" className="input-field" value={quantity} onChange={(e) => setQuantity(e.target.value)} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Price each (Rp)</label><input type="number" className="input-field" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Quantity</label><input aria-label="Quantity" type="number" min="1" max="1000" className="input-field" value={quantity} onChange={(e) => setQuantity(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Price each (Rp)</label><input aria-label="Unit Price" type="number" className="input-field" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} /></div>
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">Each voucher gives</label>
-            <select className="input-field" value={benefitType} onChange={(e) => setBenefitType(e.target.value)}>
+            <select aria-label="Benefit Type" className="input-field" value={benefitType} onChange={(e) => setBenefitType(e.target.value)}>
               <option value="service">A free service</option>
               <option value="fixed">Fixed discount (Rp)</option>
               <option value="percentage">Percentage discount (%)</option>
@@ -76,15 +76,15 @@ function SellModal({ branches, services, onClose, onSold }: { branches: Branch[]
           {benefitType === 'service' ? (
             <div>
               <label className="block text-sm font-medium mb-1.5">Free service</label>
-              <select className="input-field" value={benefitServiceId} onChange={(e) => setBenefitServiceId(e.target.value)}>
+              <select aria-label="Benefit Service Id" className="input-field" value={benefitServiceId} onChange={(e) => setBenefitServiceId(e.target.value)}>
                 <option value="">— select —</option>
                 {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
           ) : (
-            <div><label className="block text-sm font-medium mb-1.5">Value</label><input type="number" className="input-field" value={benefitValue} onChange={(e) => setBenefitValue(e.target.value)} /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Value</label><input aria-label="Benefit Value" type="number" className="input-field" value={benefitValue} onChange={(e) => setBenefitValue(e.target.value)} /></div>
           )}
-          <div><label className="block text-sm font-medium mb-1.5">Expiry date (optional)</label><input type="date" className="input-field" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} /></div>
+          <div><label className="block text-sm font-medium mb-1.5">Expiry date (optional)</label><input aria-label="Expiry Date" type="date" className="input-field" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} /></div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Issuing…' : 'Sell & Issue'}</button>
@@ -142,12 +142,12 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1.5">Pack name</label>
-            <input className="input-field" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Voucher Pack 10x Standard Car Wash" />
+            <input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Voucher Pack 10x Standard Car Wash" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1.5">Type</label>
-              <select className="input-field" value={type} onChange={(e) => setType(e.target.value as Template['type'])}>
+              <select aria-label="Type" className="input-field" value={type} onChange={(e) => setType(e.target.value as Template['type'])}>
                 <option value="service_pack">Free service(s)</option>
                 <option value="fixed">Fixed discount (Rp)</option>
                 <option value="percentage">Percentage (%)</option>
@@ -156,14 +156,14 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
             {type !== 'service_pack' && (
               <div>
                 <label className="block text-sm font-medium mb-1.5">{type === 'percentage' ? 'Percent' : 'Amount (Rp)'}</label>
-                <input type="number" className="input-field" value={value} onChange={(e) => setValue(e.target.value)} />
+                <input aria-label="Value" type="number" className="input-field" value={value} onChange={(e) => setValue(e.target.value)} />
               </div>
             )}
           </div>
           <div className="grid grid-cols-3 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Uses</label><input type="number" min="1" className="input-field" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Price (Rp)</label><input type="number" min="0" className="input-field" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Valid (days)</label><input type="number" min="1" className="input-field" value={validityDays} onChange={(e) => setValidityDays(e.target.value)} /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Uses</label><input aria-label="Max Uses" type="number" min="1" className="input-field" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Price (Rp)</label><input aria-label="Sale Price" type="number" min="0" className="input-field" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Valid (days)</label><input aria-label="Validity Days" type="number" min="1" className="input-field" value={validityDays} onChange={(e) => setValidityDays(e.target.value)} /></div>
           </div>
           {type === 'service_pack' && (
             <div>

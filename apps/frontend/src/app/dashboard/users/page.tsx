@@ -43,19 +43,19 @@ function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: Us
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Name</label><input className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Email</label><input className="input-field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!initial} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Name</label><input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Email</label><input aria-label="Email" className="input-field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!initial} required /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1.5">Base role</label>
-              <select className="input-field" value={role} onChange={(e) => setRole(e.target.value)}>
+              <select aria-label="Role" className="input-field" value={role} onChange={(e) => setRole(e.target.value)}>
                 {BASE_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5">Custom role (optional)</label>
-              <select className="input-field" value={customRoleId} onChange={(e) => setCustomRoleId(e.target.value)}>
+              <select aria-label="Custom Role Id" className="input-field" value={customRoleId} onChange={(e) => setCustomRoleId(e.target.value)}>
                 <option value="">— none —</option>
                 {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
@@ -63,7 +63,7 @@ function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: Us
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{initial ? 'New password (leave blank to keep)' : 'Password'}</label>
-            <input className="input-field" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required={!initial} placeholder="••••••••" />
+            <input aria-label="Password" className="input-field" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required={!initial} placeholder="••••••••" />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">Branch placement (multi-select)</label>
@@ -111,10 +111,10 @@ function RoleModal({ initial, perms, onClose, onSaved }: { initial: RoleRow | nu
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Role name</label><input className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">Role name</label><input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
             <div>
               <label className="block text-sm font-medium mb-1.5">Base role (hierarchy)</label>
-              <select className="input-field" value={baseRole} onChange={(e) => setBaseRole(e.target.value)}>
+              <select aria-label="Base Role" className="input-field" value={baseRole} onChange={(e) => setBaseRole(e.target.value)}>
                 {BASE_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
               </select>
             </div>

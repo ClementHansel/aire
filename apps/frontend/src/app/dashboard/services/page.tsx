@@ -98,18 +98,18 @@ function ServiceModal({
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Name</label>
-            <input className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <input aria-label="Name" className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Business unit</label>
-            <select className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as ServiceDTO['businessUnit'] })}>
+            <select aria-label="Business Unit" className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as ServiceDTO['businessUnit'] })}>
               <option value="AIRE">AIRE · Car Wash</option>
               <option value="LEAD">LEAD · Detailing &amp; Polishing</option>
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Category</label>
-            <select className="input-field" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ServiceDTO['category'] })}>
+            <select aria-label="Category" className="input-field" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ServiceDTO['category'] })}>
               <option value="car_wash">Car Wash</option>
               <option value="add_on">Add-on</option>
               <option value="product">Product</option>
@@ -117,7 +117,7 @@ function ServiceModal({
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">Price (Rp)</label>
-            <input type="number" min="0" className="input-field" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required />
+            <input aria-label="Price" type="number" min="0" className="input-field" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required />
           </div>
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm text-text-secondary">

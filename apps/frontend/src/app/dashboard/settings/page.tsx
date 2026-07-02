@@ -38,7 +38,7 @@ export default function SettingsPage() {
           <div className="mt-4 space-y-4">
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">Phone Number (E.164)</label>
-              <input
+              <input aria-label="Field"
                 type="tel"
                 placeholder="+628123456789"
                 value={phone}
@@ -50,7 +50,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">API Token</label>
-              <input type="password" placeholder="••••••••••••" className="input-field" data-testid="whatsapp-token-input" />
+              <input aria-label="••••••••••••" type="password" placeholder="••••••••••••" className="input-field" data-testid="whatsapp-token-input" />
             </div>
             <button className="btn-primary" data-testid="whatsapp-save-button" onClick={() => setSaveSuccess(true)}>
               Save WhatsApp Settings
@@ -67,7 +67,7 @@ export default function SettingsPage() {
               <p className="section-description">Enable AI-powered insights and actions.</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input
+              <input aria-label="Field"
                 type="checkbox"
                 checked={aiEnabled}
                 onChange={() => setAiEnabled(!aiEnabled)}
@@ -82,7 +82,7 @@ export default function SettingsPage() {
             <div className="mt-5 pt-5 border-t border-border space-y-4" data-testid="ai-hidden-when-off">
               <div>
                 <label className="block text-sm font-medium text-text-primary mb-1.5">LLM Provider</label>
-                <select
+                <select aria-label="Select option"
                   value={provider}
                   onChange={(e) => setProvider(e.target.value as 'hermes_ai' | 'openrouter')}
                   className="input-field"
@@ -96,13 +96,13 @@ export default function SettingsPage() {
               {provider === 'openrouter' && (
                 <div>
                   <label className="block text-sm font-medium text-text-primary mb-1.5">API Key</label>
-                  <input type="password" placeholder="sk-or-..." className="input-field" data-testid="ai-api-key-input" />
+                  <input aria-label="sk-or-..." type="password" placeholder="sk-or-..." className="input-field" data-testid="ai-api-key-input" />
                 </div>
               )}
 
               <div>
                 <label className="block text-sm font-medium text-text-primary mb-1.5">Schedule Interval</label>
-                <select className="input-field" data-testid="ai-schedule-select">
+                <select aria-label="Select option" className="input-field" data-testid="ai-schedule-select">
                   <option value="">Disabled</option>
                   <option value="hourly">Hourly</option>
                   <option value="daily">Daily</option>
@@ -133,7 +133,7 @@ export default function SettingsPage() {
                   <p className="text-xs text-text-muted" data-testid={`toggle-description-${item.key}`}>{item.desc}</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input
+                  <input aria-label="Field"
                     type="checkbox"
                     disabled={!aiEnabled}
                     className="sr-only peer"

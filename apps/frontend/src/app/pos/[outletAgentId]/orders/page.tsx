@@ -67,7 +67,7 @@ export default function OrdersPage() {
       <div className="p-5 flex-1">
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <input className="input-field max-w-xs" placeholder="Search order # / name / phone…" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
-          <select className="input-field max-w-[160px]" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <select aria-label="Filter by status" className="input-field max-w-[160px]" value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s === 'all' ? 'All statuses' : s}</option>)}
           </select>
           <button className="btn-secondary" onClick={load}>Refresh</button>

@@ -23,10 +23,10 @@ export class ReportService {
    * revenue (paid/confirmed/completed). Optional outlet filter.
    */
   async getDailySales(params: ReportQueryParams): Promise<{ date: string; orders: number; revenue: number; paidOrders: number }[]> {
-    const { dateFrom, dateTo, outletId, businessUnit } = params;
-    const qp: string[] = [dateFrom, dateTo];
+    const { dateFrom, dateTo, outletIds, businessUnit } = params;
+    const qp: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND outlet_id = $${qp.length + 1}`; qp.push(outletId); }
+    if (outletIds != null) { filter += ` AND outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
     const res = await this.pool.query<{ day: string; orders: string; revenue: string; paid: string }>(
       `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
@@ -43,10 +43,10 @@ export class ReportService {
 
   /** Shift-by-shift report: each register session with its sales + cash reconciliation. */
   async getShiftReport(params: ReportQueryParams): Promise<Record<string, unknown>[]> {
-    const { dateFrom, dateTo, outletId } = params;
-    const qp: string[] = [dateFrom, dateTo];
+    const { dateFrom, dateTo, outletIds } = params;
+    const qp: unknown[] = [dateFrom, dateTo];
     let outletFilter = '';
-    if (outletId) { outletFilter = ' AND s.outlet_id = $3'; qp.push(outletId); }
+    if (outletIds != null) { outletFilter = ' AND s.outlet_id = ANY($3::uuid[])'; qp.push(outletIds); }
     const res = await this.pool.query(
       `SELECT s.id, s.operator_name, s.status, s.opening_float, s.closing_counted, s.expected_cash,
               s.variance, s.total_sales, s.cash_sales, s.non_cash_sales, s.order_count, s.opened_at, s.closed_at,
@@ -91,12 +91,12 @@ export class ReportService {
    * Transaction-tab charts (daily/weekly/monthly/custom range).
    */
   async getRevenueSeries(params: ReportQueryParams & { granularity?: 'day' | 'week' | 'month' }): Promise<{ period: string; revenue: number; orders: number }[]> {
-    const { dateFrom, dateTo, outletId, businessUnit } = params;
+    const { dateFrom, dateTo, outletIds, businessUnit } = params;
     const gran = params.granularity ?? 'day';
     const trunc = gran === 'month' ? 'month' : gran === 'week' ? 'week' : 'day';
-    const qp: string[] = [dateFrom, dateTo];
+    const qp: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND outlet_id = $${qp.length + 1}`; qp.push(outletId); }
+    if (outletIds != null) { filter += ` AND outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
     const res = await this.pool.query<{ period: string; revenue: string; orders: string }>(
       `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period,
@@ -139,7 +139,7 @@ export class ReportService {
    * - byService: JOIN order_items + services, GROUP BY service, ORDER BY quantity DESC LIMIT 10
    */
   async getSummary(params: ReportQueryParams): Promise<SummaryResponse> {
-    const { dateFrom, dateTo, outletId, businessUnit } = params;
+    const { dateFrom, dateTo, outletIds, businessUnit } = params;
 
     const [
       overviewResult,
@@ -147,10 +147,10 @@ export class ReportService {
       businessUnitResult,
       serviceResult,
     ] = await Promise.all([
-      this.getOverviewStats(dateFrom, dateTo, outletId, businessUnit),
-      this.getPaymentMethodBreakdown(dateFrom, dateTo, outletId, businessUnit),
-      this.getBusinessUnitBreakdown(dateFrom, dateTo, outletId),
-      this.getServiceBreakdown(dateFrom, dateTo, outletId, businessUnit),
+      this.getOverviewStats(dateFrom, dateTo, outletIds, businessUnit),
+      this.getPaymentMethodBreakdown(dateFrom, dateTo, outletIds, businessUnit),
+      this.getBusinessUnitBreakdown(dateFrom, dateTo, outletIds),
+      this.getServiceBreakdown(dateFrom, dateTo, outletIds, businessUnit),
     ]);
 
     return {
@@ -191,11 +191,11 @@ export class ReportService {
    * Payment Method, Total, Items, Note
    */
   async exportCsv(params: ReportQueryParams): Promise<string> {
-    const { dateFrom, dateTo, outletId, businessUnit } = params;
+    const { dateFrom, dateTo, outletIds, businessUnit } = params;
 
-    const queryParams: (string | undefined)[] = [dateFrom, dateTo];
+    const queryParams: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND o.outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (outletIds != null) { filter += ` AND o.outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND o.business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
@@ -280,12 +280,12 @@ export class ReportService {
   private async getOverviewStats(
     dateFrom: string,
     dateTo: string,
-    outletId?: string,
+    outletIds?: string[] | null,
     businessUnit?: string,
   ): Promise<Omit<SummaryResponse, 'byPaymentMethod' | 'byBusinessUnit' | 'byService'>> {
-    const queryParams: string[] = [dateFrom, dateTo];
+    const queryParams: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
@@ -324,12 +324,12 @@ export class ReportService {
   private async getPaymentMethodBreakdown(
     dateFrom: string,
     dateTo: string,
-    outletId?: string,
+    outletIds?: string[] | null,
     businessUnit?: string,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
-    const queryParams: string[] = [dateFrom, dateTo];
+    const queryParams: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{
@@ -369,11 +369,11 @@ export class ReportService {
   private async getBusinessUnitBreakdown(
     dateFrom: string,
     dateTo: string,
-    outletId?: string,
+    outletIds?: string[] | null,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
-    const queryParams: string[] = [dateFrom, dateTo];
+    const queryParams: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
 
     const result = await this.pool.query<{ business_unit: string; revenue: string; count: string }>(
       `SELECT business_unit,
@@ -404,12 +404,12 @@ export class ReportService {
   private async getServiceBreakdown(
     dateFrom: string,
     dateTo: string,
-    outletId?: string,
+    outletIds?: string[] | null,
     businessUnit?: string,
   ): Promise<ServiceBreakdown[]> {
-    const queryParams: string[] = [dateFrom, dateTo];
+    const queryParams: unknown[] = [dateFrom, dateTo];
     let filter = '';
-    if (outletId) { filter += ` AND o.outlet_id = $${queryParams.length + 1}`; queryParams.push(outletId); }
+    if (outletIds != null) { filter += ` AND o.outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND o.business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{

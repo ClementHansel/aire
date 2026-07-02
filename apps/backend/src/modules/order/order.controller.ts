@@ -25,6 +25,7 @@ import {
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
+import { ScopeService } from '../../common/scope/scope.service';
 import { OrderListService } from './order-list.service';
 import { OrderService } from './order.service';
 
@@ -34,6 +35,7 @@ export class OrderController {
   constructor(
     private readonly orderListService: OrderListService,
     private readonly orderService: OrderService,
+    private readonly scope: ScopeService,
   ) {}
 
   /**
@@ -124,19 +126,16 @@ export class OrderController {
       throw new BadRequestException('pageSize must be a positive integer.');
     }
 
-    // Cashier cannot filter by outletId (they're already scoped by RLS)
-    // Tenant_Owner / Outlet_Admin can filter by outletId
-    const effectiveOutletId =
-      user.role === Role.Cashier || user.role === Role.OutletAdmin
-        ? undefined
-        : outletId;
+    // Owners/super-admins span branches (optionally narrowed by outletId);
+    // outlet-bound roles are restricted to the branches assigned to them.
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
 
     const params: OrderQueryParams = {
       status: status as OrderStatus | undefined,
       search,
       dateFrom,
       dateTo,
-      outletId: effectiveOutletId,
+      outletIds,
       page,
       pageSize,
     };

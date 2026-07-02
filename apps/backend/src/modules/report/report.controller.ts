@@ -7,9 +7,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { SummaryResponse, JWTPayload, Role } from '@aire/shared';
+import { SummaryResponse, JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
+import { ScopeService } from '../../common/scope/scope.service';
 import { ReportService } from './report.service';
 import { ReportPdfService } from './report-pdf.service';
 
@@ -28,6 +29,7 @@ export class ReportController {
   constructor(
     private readonly reportService: ReportService,
     private readonly reportPdfService: ReportPdfService,
+    private readonly scope: ScopeService,
   ) {}
 
   /**
@@ -63,17 +65,14 @@ export class ReportController {
       throw new BadRequestException('Invalid dateTo format. Use ISO date string.');
     }
 
-    // Cashiers are scoped by RLS to their own outlet
-    // Tenant_Owner/Outlet_Admin can filter by outletId
-    const effectiveOutletId =
-      user.role === Role.Cashier || user.role === Role.OutletAdmin
-        ? undefined
-        : outletId;
+    // Owners/super-admins span branches (optionally narrowed by outletId);
+    // outlet-bound roles are restricted to the branches assigned to them.
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
 
     return this.reportService.getSummary({
       dateFrom,
       dateTo,
-      outletId: effectiveOutletId,
+      outletIds,
       businessUnit,
     });
   }
@@ -92,9 +91,9 @@ export class ReportController {
   ) {
     if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
-    const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
     const gran = (['day', 'week', 'month'].includes(granularity ?? '') ? granularity : 'day') as 'day' | 'week' | 'month';
-    return this.reportService.getRevenueSeries({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit, granularity: gran });
+    return this.reportService.getRevenueSeries({ dateFrom, dateTo, outletIds, businessUnit, granularity: gran });
   }
 
   /**
@@ -126,8 +125,8 @@ export class ReportController {
   ) {
     if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
-    const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
-    return this.reportService.getDailySales({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit });
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
+    return this.reportService.getDailySales({ dateFrom, dateTo, outletIds, businessUnit });
   }
 
   /**
@@ -142,8 +141,8 @@ export class ReportController {
   ) {
     if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
-    const effectiveOutletId = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
-    return this.reportService.getShiftReport({ dateFrom, dateTo, outletId: effectiveOutletId });
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
+    return this.reportService.getShiftReport({ dateFrom, dateTo, outletIds });
   }
 
   /**
@@ -183,18 +182,17 @@ export class ReportController {
       throw new BadRequestException('Supported formats: csv, pdf.');
     }
 
-    const effectiveOutletId =
-      user.role === Role.Cashier || user.role === Role.OutletAdmin
-        ? undefined
-        : outletId;
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
+    // For the PDF header, name the branch only when scoped to exactly one.
+    const headerOutletId = outletIds && outletIds.length === 1 ? outletIds[0] : undefined;
 
     // ── PDF: a polished, branded business report (KPIs, P&L, charts, tables) ───
     if (format === 'pdf') {
       const [summary, daily, shifts, names] = await Promise.all([
-        this.reportService.getSummary({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit }),
-        this.reportService.getDailySales({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit }),
-        this.reportService.getShiftReport({ dateFrom, dateTo, outletId: effectiveOutletId }),
-        this.reportService.getScopeNames(user.tenant_id, effectiveOutletId),
+        this.reportService.getSummary({ dateFrom, dateTo, outletIds, businessUnit }),
+        this.reportService.getDailySales({ dateFrom, dateTo, outletIds, businessUnit }),
+        this.reportService.getShiftReport({ dateFrom, dateTo, outletIds }),
+        this.reportService.getScopeNames(user.tenant_id, headerOutletId),
       ]);
       const pdf = await this.reportPdfService.build({
         tenantName: names.tenantName,
@@ -217,8 +215,8 @@ export class ReportController {
     const exportScope = scope === 'daily' ? 'daily' : 'orders';
     const csvContent =
       exportScope === 'daily'
-        ? await this.reportService.exportDailySalesCsv({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit })
-        : await this.reportService.exportCsv({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit });
+        ? await this.reportService.exportDailySalesCsv({ dateFrom, dateTo, outletIds, businessUnit })
+        : await this.reportService.exportCsv({ dateFrom, dateTo, outletIds, businessUnit });
 
     const filename =
       exportScope === 'daily'
