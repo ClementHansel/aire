@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface Booking {
   id: string;
@@ -113,6 +114,7 @@ export default function BookingsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [services, setServices] = useState<ServiceLite[]>([]);
   const [filter, setFilter] = useState('all');
+  const [branch, setBranch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [modal, setModal] = useState<{ open: boolean; editing: Booking | null }>({ open: false, editing: null });
@@ -120,7 +122,10 @@ export default function BookingsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const qs = filter === 'all' ? '' : `?status=${filter}`;
+      const params = new URLSearchParams();
+      if (filter !== 'all') params.set('status', filter);
+      if (branch) params.set('outletId', branch);
+      const qs = params.toString() ? `?${params.toString()}` : '';
       const [bk, br, sv] = await Promise.all([
         api.get<Booking[]>(`/bookings${qs}`),
         api.get<Branch[]>('/outlets'),
@@ -129,7 +134,7 @@ export default function BookingsPage() {
       setBookings(bk); setBranches(br); setServices(sv);
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
     finally { setLoading(false); }
-  }, [filter]);
+  }, [filter, branch]);
   useEffect(() => { load(); }, [load]);
 
   const setStatus = async (b: Booking, status: Booking['status']) => {
@@ -152,10 +157,13 @@ export default function BookingsPage() {
         <button className="btn-primary" onClick={() => setModal({ open: true, editing: null })}>+ New Booking</button>
       </div>
 
-      <div className="flex gap-2 mb-4">
-        {FILTERS.map((f) => (
-          <button key={f} onClick={() => setFilter(f)} className={`badge capitalize ${filter === f ? 'bg-primary-500 text-white' : 'bg-surface-sunken text-text-secondary'}`}>{f}</button>
-        ))}
+      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+        <div className="flex gap-2">
+          {FILTERS.map((f) => (
+            <button key={f} type="button" onClick={() => setFilter(f)} className={`badge capitalize ${filter === f ? 'bg-primary-500 text-white' : 'bg-surface-sunken text-text-secondary'}`}>{f}</button>
+          ))}
+        </div>
+        <BranchFilter value={branch} onChange={setBranch} />
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}

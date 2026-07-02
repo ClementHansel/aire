@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface SeriesPoint { period: string; revenue: number; orders: number }
 interface ServiceRow { serviceId: string; name: string; quantity: number; revenue: number }
@@ -42,6 +43,7 @@ export default function TransactionsPage() {
   const [dateTo, setDateTo] = useState(today());
   const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('day');
   const [businessUnit, setBusinessUnit] = useState<'' | 'AIRE' | 'LEAD'>('');
+  const [branch, setBranch] = useState(''); // '' = all branches (owner/admin only; RLS scopes others)
   const [series, setSeries] = useState<SeriesPoint[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [orders, setOrders] = useState<OrderCard[]>([]);
@@ -56,11 +58,12 @@ export default function TransactionsPage() {
   const [editing, setEditing] = useState<OrderCard | null>(null);
 
   const buQs = businessUnit ? `&businessUnit=${businessUnit}` : '';
+  const branchQs = branch ? `&outletId=${branch}` : '';
 
   const loadAnalytics = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${buQs}`;
+      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${buQs}${branchQs}`;
       const [s, sum] = await Promise.all([
         api.get<SeriesPoint[]>(`/reports/revenue-series?${qs}&granularity=${granularity}`),
         api.get<Summary>(`/reports/summary?${qs}`),
@@ -69,16 +72,16 @@ export default function TransactionsPage() {
       computeInsights(s, sum);
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load analytics'); }
     finally { setLoading(false); }
-  }, [dateFrom, dateTo, granularity, buQs]);
+  }, [dateFrom, dateTo, granularity, buQs, branchQs]);
 
   const loadOrders = useCallback(async () => {
     try {
       const df = todayOnly ? today() : dateFrom;
       const dt = todayOnly ? today() : dateTo;
-      const res = await api.get<{ orders: OrderCard[]; total: number }>(`/orders?dateFrom=${df}&dateTo=${dt}&page=${page}&pageSize=${pageSize}`);
+      const res = await api.get<{ orders: OrderCard[]; total: number }>(`/orders?dateFrom=${df}&dateTo=${dt}&page=${page}&pageSize=${pageSize}${branchQs}`);
       setOrders(res.orders); setTotal(res.total);
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load orders'); }
-  }, [dateFrom, dateTo, page, pageSize, todayOnly]);
+  }, [dateFrom, dateTo, page, pageSize, todayOnly, branchQs]);
 
   useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
   useEffect(() => { loadOrders(); }, [loadOrders]);
@@ -176,6 +179,7 @@ export default function TransactionsPage() {
             <select value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
               <option value="">All</option><option value="AIRE">AIRE</option><option value="LEAD">LEAD</option>
             </select></div>
+          <BranchFilter value={branch} onChange={setBranch} label="Branch" />
           <button className="btn-primary" onClick={() => { loadAnalytics(); loadOrders(); }} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</button>
           <button className="btn-secondary" onClick={exportExcel}>Export Excel</button>
           <button className="btn-secondary" onClick={exportPdf}>Executive PDF</button>

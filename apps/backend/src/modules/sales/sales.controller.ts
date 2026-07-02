@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
-import { JWTPayload } from '@aire/shared';
+import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { SalesService, CreateLeadDto, SetTargetDto } from './sales.service';
@@ -10,8 +10,10 @@ export class SalesController {
   constructor(private readonly service: SalesService) {}
 
   @Get('summary')
-  summary(@CurrentUser() user: JWTPayload) {
-    return this.service.summary(user.tenant_id);
+  summary(@CurrentUser() user: JWTPayload, @Query('outletId') outletId?: string) {
+    // Outlet-scoped roles can't narrow to another branch; owners/admins can.
+    const effective = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
+    return this.service.summary(user.tenant_id, effective);
   }
 
   @Get('leads')

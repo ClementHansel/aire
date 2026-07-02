@@ -24,11 +24,14 @@ export class FinanceService {
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
-  async listExpenses(tenantId: string, limit = 50): Promise<unknown[]> {
+  async listExpenses(tenantId: string, limit = 50, outletId?: string): Promise<unknown[]> {
+    const params: unknown[] = [tenantId, Math.min(limit, 200)];
+    let outletFilter = '';
+    if (outletId) { params.push(outletId); outletFilter = ` AND outlet_id = $${params.length}`; }
     const res = await this.pool.query(
       `SELECT id, category, description, amount, expense_date, payment_method
-       FROM expenses WHERE tenant_id = $1 ORDER BY expense_date DESC, created_at DESC LIMIT $2`,
-      [tenantId, Math.min(limit, 200)],
+       FROM expenses WHERE tenant_id = $1${outletFilter} ORDER BY expense_date DESC, created_at DESC LIMIT $2`,
+      params,
     );
     return res.rows.map((r) => ({
       id: r.id, category: r.category, description: r.description,
@@ -56,25 +59,28 @@ export class FinanceService {
     return { id: e.id, category: e.category, amount: parseFloat(e.amount), date: e.expense_date };
   }
 
-  /** Profit/loss summary for a window: revenue (paid orders) - expenses. */
-  async summary(tenantId: string, days = 30): Promise<Record<string, unknown>> {
+  /** Profit/loss summary for a window: revenue (paid orders) - expenses. Optional per-branch. */
+  async summary(tenantId: string, days = 30, outletId?: string): Promise<Record<string, unknown>> {
     const interval = `${days} days`;
+    // $3 = outletId (optional); the filter is a no-op when it's NULL.
+    const outletFilter = ' AND ($3::uuid IS NULL OR outlet_id = $3::uuid)';
+    const p: unknown[] = [tenantId, interval, outletId ?? null];
     const revenue = await this.pool.query<{ revenue: string }>(
       `SELECT COALESCE(SUM(total), 0) AS revenue FROM orders
        WHERE tenant_id = $1 AND status IN ('paid','confirmed','completed')
-         AND created_at > NOW() - $2::interval`,
-      [tenantId, interval],
+         AND created_at > NOW() - $2::interval${outletFilter}`,
+      p,
     );
     const expensesAgg = await this.pool.query<{ total: string }>(
       `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-       WHERE tenant_id = $1 AND expense_date > CURRENT_DATE - $2::interval`,
-      [tenantId, interval],
+       WHERE tenant_id = $1 AND expense_date > CURRENT_DATE - $2::interval${outletFilter}`,
+      p,
     );
     const byCategory = await this.pool.query<{ category: string; total: string }>(
       `SELECT category, SUM(amount) AS total FROM expenses
-       WHERE tenant_id = $1 AND expense_date > CURRENT_DATE - $2::interval
+       WHERE tenant_id = $1 AND expense_date > CURRENT_DATE - $2::interval${outletFilter}
        GROUP BY category ORDER BY total DESC`,
-      [tenantId, interval],
+      p,
     );
     const rev = parseFloat(revenue.rows[0]!.revenue);
     const exp = parseFloat(expensesAgg.rows[0]!.total);

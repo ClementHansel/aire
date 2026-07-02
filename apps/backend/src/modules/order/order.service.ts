@@ -240,6 +240,10 @@ export class OrderService {
       }
     }
 
+    // Resolve the branch this order belongs to (POS follows the HR schedule).
+    // Defaults to the operator's own outlet, so omitting it is a no-op.
+    const operatingOutletId = await this.resolveOperatingOutlet(user, request);
+
     // Step 6: Apply voucher discounts — resolve codes (read-only) and compute
     // the discount. Codes are atomically redeemed inside the transaction below.
     let voucherDiscount = 0;
@@ -251,7 +255,7 @@ export class OrderService {
         0,
       );
       const voucherContext: VoucherEvaluationContext = {
-        outletId: user.outlet_id ?? '',
+        outletId: operatingOutletId ?? '',
         vehicleBrand: request.customer.brand,
         serviceIdsInCart: cartItems.map((ci) => ci.serviceId),
         orderSubtotal: preSubtotal,
@@ -272,11 +276,11 @@ export class OrderService {
     }
 
     // Step 7: Get outlet config for charges
-    const outletConfig = await this.getOutletConfig(user.outlet_id!);
+    const outletConfig = await this.getOutletConfig(operatingOutletId!);
 
     // Step 7b: Resolve active promotions (discount rewards applied to the total).
     const promoSubtotal = Math.max(0, cartItems.reduce((s, ci) => s + ci.quantity * ci.unitPrice - ci.discount, 0) - voucherDiscount);
-    const promo = await this.resolvePromotions(user.tenant_id, user.outlet_id ?? undefined, cartItems, promoSubtotal);
+    const promo = await this.resolvePromotions(user.tenant_id, operatingOutletId ?? undefined, cartItems, promoSubtotal);
     const promoDiscount = promo.discount;
 
     // Step 8: Calculate cart summary
@@ -288,7 +292,7 @@ export class OrderService {
     );
 
     // Step 9: Generate order number
-    const orderNumber = await this.generateOrderNumber(user.outlet_id!);
+    const orderNumber = await this.generateOrderNumber(operatingOutletId!);
 
     // Step 10: Create order and items in a transaction
     const client = await this.pool.connect();
@@ -307,7 +311,7 @@ export class OrderService {
          RETURNING *`,
         [
           user.tenant_id,
-          user.outlet_id,
+          operatingOutletId,
           user.sub,
           orderNumber,
           OrderStatus.Ordered,
@@ -436,7 +440,7 @@ export class OrderService {
         const r = await client.query(
           `UPDATE voucher_tickets SET status = 'redeemed', redeemed_at = NOW(), redeemed_order_id = $1, redeemed_outlet_id = $2
            WHERE tenant_id = $3 AND code = $4 AND status = 'active' RETURNING id`,
-          [order.id, user.outlet_id ?? null, user.tenant_id, code],
+          [order.id, operatingOutletId ?? null, user.tenant_id, code],
         );
         if (r.rowCount === 0) throw new BadRequestException('A voucher is no longer available');
       }
@@ -445,7 +449,7 @@ export class OrderService {
       for (const g of promo.grants) {
         await client.query(
           `INSERT INTO promotion_grants (promotion_id, order_id, outlet_id, amount) VALUES ($1, $2, $3, $4)`,
-          [g.promotionId, order.id, user.outlet_id ?? null, g.amount],
+          [g.promotionId, order.id, operatingOutletId ?? null, g.amount],
         );
         await client.query(
           `UPDATE promotions SET used_quota = used_quota + 1, updated_at = NOW() WHERE id = $1`,
@@ -460,14 +464,14 @@ export class OrderService {
         const usage = await client.query<{ id: string }>(
           `INSERT INTO membership_usages (membership_id, plate_normalized, order_id, outlet_id)
            VALUES ($1, $2, $3, $4) RETURNING id`,
-          [request.membershipId, plateNorm, order.id, user.outlet_id ?? null],
+          [request.membershipId, plateNorm, order.id, operatingOutletId ?? null],
         );
-        if (membershipSettlement.homeOutletId && user.outlet_id &&
-            membershipSettlement.homeOutletId !== user.outlet_id && membershipSettlement.amount > 0) {
+        if (membershipSettlement.homeOutletId && operatingOutletId &&
+            membershipSettlement.homeOutletId !== operatingOutletId && membershipSettlement.amount > 0) {
           await client.query(
             `INSERT INTO settlement_entries (tenant_id, membership_id, usage_id, owing_outlet_id, serving_outlet_id, amount)
              VALUES ($1, $2, $3, $4, $5, $6)`,
-            [user.tenant_id, request.membershipId, usage.rows[0]!.id, membershipSettlement.homeOutletId, user.outlet_id, membershipSettlement.amount],
+            [user.tenant_id, request.membershipId, usage.rows[0]!.id, membershipSettlement.homeOutletId, operatingOutletId, membershipSettlement.amount],
           );
         }
       }
@@ -478,7 +482,7 @@ export class OrderService {
       void this.eventBus?.emit({
         type: DomainEventType.OrderCreated,
         tenantId: user.tenant_id,
-        outletId: user.outlet_id,
+        outletId: operatingOutletId,
         actor: user.sub,
         payload: {
           orderId: order.id,
@@ -823,6 +827,49 @@ export class OrderService {
       homeOutletId: membership.home_outlet_id ?? null,
       settlementAmount: plan.settlement_amount ? parseFloat(plan.settlement_amount) : 0,
     };
+  }
+
+  /**
+   * Determine which branch this order belongs to. POS follows the HR schedule:
+   * the operator may work a branch other than their home outlet. When the POS
+   * omits operatingOutletId (or it equals the operator's own outlet), behavior is
+   * unchanged. An explicit different branch must be a valid tenant outlet; if it
+   * is not the operator's scheduled branch for today, a reason is required and the
+   * override is written to the audit log. operator_id always stays the JWT user.
+   */
+  private async resolveOperatingOutlet(user: JWTPayload, request: CreateOrderRequest): Promise<string | null> {
+    const requested = request.operatingOutletId;
+    if (!requested || requested === user.outlet_id) return user.outlet_id;
+
+    const outlet = await this.pool.query(
+      `SELECT 1 FROM outlets WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+      [requested, user.tenant_id],
+    );
+    if (outlet.rows.length === 0) throw new BadRequestException('Invalid operating branch');
+
+    // Today's scheduled branch for this operator, via their linked employee.
+    const sched = await this.pool.query<{ today: string | null }>(
+      `SELECT es.outlet_id AS today
+       FROM employees e
+       LEFT JOIN employee_schedules es ON es.employee_id = e.id AND es.work_date = CURRENT_DATE
+       WHERE e.tenant_id = $1 AND e.user_id = $2 AND e.status = 'active'
+       LIMIT 1`,
+      [user.tenant_id, user.sub],
+    );
+    const scheduledToday = sched.rows[0]?.today ?? null;
+
+    if (requested !== scheduledToday) {
+      const reason = request.offScheduleReason?.trim();
+      if (!reason) {
+        throw new BadRequestException('You are not scheduled at this branch today — a reason is required to proceed.');
+      }
+      await this.pool.query(
+        `INSERT INTO audit_logs (tenant_id, outlet_id, user_id, operation, entity_type, metadata)
+         VALUES ($1, $2, $3, 'pos.off_schedule_branch', 'order', $4)`,
+        [user.tenant_id, requested, user.sub, JSON.stringify({ reason, scheduledOutletId: scheduledToday })],
+      );
+    }
+    return requested;
   }
 
   /**

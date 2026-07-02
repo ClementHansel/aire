@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface Branch { id: string; name: string }
 interface ServiceLite { id: string; name: string }
@@ -115,7 +116,13 @@ export default function PromotionsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [services, setServices] = useState<ServiceLite[]>([]);
   const [error, setError] = useState('');
+  const [branch, setBranch] = useState('');
   const [modal, setModal] = useState<{ open: boolean; editing: Promotion | null }>({ open: false, editing: null });
+
+  // Config filter: a promo with no outletIds (or empty) applies to every branch.
+  const visiblePromos = promos.filter(
+    (p) => !branch || !p.outletIds || p.outletIds.length === 0 || p.outletIds.includes(branch),
+  );
 
   const load = useCallback(async () => {
     setError('');
@@ -145,7 +152,10 @@ export default function PromotionsPage() {
           <h1 className="text-2xl font-bold text-text-primary">Promotions</h1>
           <p className="mt-1 text-sm text-text-secondary">Discount or bundle rewards on qualifying purchases, per branch, with quota limits.</p>
         </div>
-        <button className="btn-primary" onClick={() => setModal({ open: true, editing: null })}>+ Add Promotion</button>
+        <div className="flex items-center gap-3">
+          <BranchFilter value={branch} onChange={setBranch} />
+          <button className="btn-primary" onClick={() => setModal({ open: true, editing: null })}>+ Add Promotion</button>
+        </div>
       </div>
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
       <div className="card p-0 overflow-hidden">
@@ -159,7 +169,7 @@ export default function PromotionsPage() {
             <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Actions</th>
           </tr></thead>
           <tbody className="divide-y divide-border">
-            {promos.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">No promotions yet.</td></tr> : promos.map((p) => (
+            {visiblePromos.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">{branch ? 'No promotions apply to this branch.' : 'No promotions yet.'}</td></tr> : visiblePromos.map((p) => (
               <tr key={p.id}>
                 <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{p.name}<div className="text-xs text-text-muted">{p.description}</div></td>
                 <td className="px-5 py-3.5 text-sm">{fmtReward(p)}</td>

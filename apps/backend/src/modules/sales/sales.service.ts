@@ -97,18 +97,26 @@ export class SalesService {
     return { id: t.id, period: t.period, targetAmount: parseFloat(t.target_amount) };
   }
 
-  /** Sales summary: this month's actual (paid orders) vs target + lead funnel. */
-  async summary(tenantId: string): Promise<Record<string, unknown>> {
+  /**
+   * Sales summary: this month's actual (paid orders) vs target + lead funnel.
+   * Optional per-branch (outletId) scoping for actual + target; the lead funnel
+   * stays tenant-wide because leads are not branch-scoped.
+   */
+  async summary(tenantId: string, outletId?: string): Promise<Record<string, unknown>> {
     const period = new Date().toISOString().slice(0, 7);
+    // $3 = outletId (optional); no-op when NULL.
+    const p: unknown[] = [tenantId, period, outletId ?? null];
     const actual = await this.pool.query<{ total: string; orders: string }>(
       `SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS orders FROM orders
        WHERE tenant_id = $1 AND status IN ('paid','confirmed','completed')
-         AND to_char(created_at, 'YYYY-MM') = $2`,
-      [tenantId, period],
+         AND to_char(created_at, 'YYYY-MM') = $2
+         AND ($3::uuid IS NULL OR outlet_id = $3::uuid)`,
+      p,
     );
     const target = await this.pool.query<{ target_amount: string }>(
-      `SELECT SUM(target_amount) AS target_amount FROM sales_targets WHERE tenant_id = $1 AND period = $2`,
-      [tenantId, period],
+      `SELECT SUM(target_amount) AS target_amount FROM sales_targets
+       WHERE tenant_id = $1 AND period = $2 AND ($3::uuid IS NULL OR outlet_id = $3::uuid)`,
+      p,
     );
     const funnel = await this.pool.query<{ status: string; count: string }>(
       `SELECT status, COUNT(*) AS count FROM sales_leads WHERE tenant_id = $1 GROUP BY status`,

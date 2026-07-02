@@ -162,6 +162,30 @@ export class ReportService {
   }
 
   /**
+   * Resolve display names for the report scope (tenant + optional single outlet).
+   * Used to brand the PDF header. Returns outletName = null for consolidated
+   * (all-branches) reports.
+   */
+  async getScopeNames(
+    tenantId: string,
+    outletId?: string,
+  ): Promise<{ tenantName: string; outletName: string | null }> {
+    const t = await this.pool.query<{ name: string }>(
+      `SELECT name FROM tenants WHERE id = $1`,
+      [tenantId],
+    );
+    let outletName: string | null = null;
+    if (outletId) {
+      const o = await this.pool.query<{ name: string }>(
+        `SELECT name FROM outlets WHERE id = $1`,
+        [outletId],
+      );
+      outletName = o.rows[0]?.name ?? null;
+    }
+    return { tenantName: t.rows[0]?.name ?? 'AIRE', outletName };
+  }
+
+  /**
    * Generates CSV content for orders in the given date range.
    * Returns CSV string with headers: Order Number, Date, Customer, Phone, Status,
    * Payment Method, Total, Items, Note

@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface OrderItem { serviceName: string; quantity: number; subtotal: number }
 interface Order {
@@ -22,6 +23,7 @@ const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 export default function InvoicesPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [search, setSearch] = useState('');
+  const [branch, setBranch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -30,11 +32,12 @@ export default function InvoicesPage() {
     try {
       const qs = new URLSearchParams({ status: 'paid' });
       if (search.trim()) qs.set('search', search.trim());
+      if (branch) qs.set('outletId', branch);
       const data = await api.get<OrderListResponse>(`/orders?${qs.toString()}`);
       setOrders(data.orders);
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load invoices'); }
     finally { setLoading(false); }
-  }, [search]);
+  }, [search, branch]);
   useEffect(() => { load(); }, [load]);
 
   const print = (o: Order) => {
@@ -74,6 +77,7 @@ export default function InvoicesPage() {
       <div className="flex items-center gap-3 mb-4">
         <input className="input-field max-w-xs" placeholder="Search order # / name / phone…" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         <button className="btn-secondary" onClick={load}>Search</button>
+        <BranchFilter value={branch} onChange={setBranch} />
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}

@@ -14,7 +14,9 @@ export class SettlementController {
   constructor(private readonly service: SettlementService) {}
 
   @Get('summary')
-  summary(@CurrentUser() user: JWTPayload) { return this.service.summary(user.tenant_id); }
+  summary(@CurrentUser() user: JWTPayload, @Query('outletId') outletId?: string) {
+    return this.service.summary(user.tenant_id, outletId);
+  }
 
   @Get('entries')
   entries(@CurrentUser() user: JWTPayload, @Query('owing') owing?: string, @Query('serving') serving?: string, @Query('status') status?: string) {
@@ -22,7 +24,9 @@ export class SettlementController {
   }
 
   @Get('payouts')
-  payouts(@CurrentUser() user: JWTPayload) { return this.service.payouts(user.tenant_id); }
+  payouts(@CurrentUser() user: JWTPayload, @Query('outletId') outletId?: string) {
+    return this.service.payouts(user.tenant_id, outletId);
+  }
 
   @Post('payout')
   @HttpCode(HttpStatus.CREATED)

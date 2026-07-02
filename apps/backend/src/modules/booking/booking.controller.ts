@@ -2,7 +2,7 @@ import {
   Controller, Get, Post, Put, Delete, Param, Body, Query,
   UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
-import { JWTPayload } from '@aire/shared';
+import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { BookingService, CreateBookingDto, UpdateBookingDto } from './booking.service';
@@ -13,8 +13,10 @@ export class BookingController {
   constructor(private readonly service: BookingService) {}
 
   @Get()
-  list(@CurrentUser() user: JWTPayload, @Query('status') status?: string) {
-    return this.service.list(user.tenant_id, status);
+  list(@CurrentUser() user: JWTPayload, @Query('status') status?: string, @Query('outletId') outletId?: string) {
+    // Outlet-scoped roles can't narrow to another branch; owners/admins can.
+    const effective = user.role === Role.Cashier || user.role === Role.OutletAdmin ? undefined : outletId;
+    return this.service.list(user.tenant_id, status, effective);
   }
 
   @Post()

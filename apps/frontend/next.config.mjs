@@ -1,6 +1,16 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // Pin the file-tracing root to this monorepo. Without it, Next walks up and
+  // finds an unrelated package-lock.json in a parent folder, infers the wrong
+  // workspace root, and traces/symlinks a huge tree (which also breaks the
+  // standalone copy on Windows). '../../' → the aire repo root (and /app in Docker).
+  outputFileTracingRoot: path.join(__dirname, '../../'),
   transpilePackages: ['@aire/shared'],
   reactStrictMode: true,
   typescript: {

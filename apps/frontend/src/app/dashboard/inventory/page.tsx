@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface Item { id: string; sku: string | null; name: string; category: string | null; unit: string; quantity: number; reorderLevel: number; unitCost: number; }
 interface Summary { totalItems: number; lowStockItems: number; stockValue: number; }
@@ -13,14 +14,16 @@ export default function InventoryPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ name: '', sku: '', category: '', unit: 'pcs', quantity: '', reorderLevel: '', unitCost: '' });
+  const [branch, setBranch] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [s, i] = await Promise.all([api.get<Summary>('/inventory/summary'), api.get<Item[]>('/inventory/items')]);
+      const bq = branch ? `?outletId=${branch}` : '';
+      const [s, i] = await Promise.all([api.get<Summary>(`/inventory/summary${bq}`), api.get<Item[]>(`/inventory/items${bq}`)]);
       setSummary(s); setItems(i); setError('');
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load'); }
-  }, []);
+  }, [branch]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -45,7 +48,10 @@ export default function InventoryPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <h1 className="text-xl font-semibold text-text-primary">Inventory</h1>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <h1 className="text-xl font-semibold text-text-primary">Inventory</h1>
+        <BranchFilter value={branch} onChange={setBranch} />
+      </div>
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
       <div className="grid grid-cols-3 gap-4">
         <div className="card"><p className="text-xs text-text-muted">Items</p><p className="text-2xl font-semibold">{summary?.totalItems ?? 0}</p></div>

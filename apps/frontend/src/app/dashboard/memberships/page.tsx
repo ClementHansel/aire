@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface MembershipPlan {
   id: string;
@@ -196,6 +197,12 @@ export default function MembershipsPage() {
   const [error, setError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MembershipPlan | null>(null);
+  const [branch, setBranch] = useState('');
+
+  // Config filter: a plan with no outletIds (or empty) is available at every branch.
+  const visiblePlans = plans.filter(
+    (p) => !branch || !p.outletIds || p.outletIds.length === 0 || p.outletIds.includes(branch),
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,18 +245,21 @@ export default function MembershipsPage() {
           <h1 className="text-2xl font-bold text-text-primary" data-testid="memberships-title">Membership Plans</h1>
           <p className="mt-1 text-sm text-text-secondary">Configure plans, quotas, included washes, and branch availability.</p>
         </div>
-        <button className="btn-primary" data-testid="add-plan-btn" onClick={() => { setEditing(null); setModalOpen(true); }}>+ Add Plan</button>
+        <div className="flex items-center gap-3">
+          <BranchFilter value={branch} onChange={setBranch} />
+          <button className="btn-primary" data-testid="add-plan-btn" onClick={() => { setEditing(null); setModalOpen(true); }}>+ Add Plan</button>
+        </div>
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
 
       {loading ? (
         <div className="card text-sm text-text-muted">Loading plans…</div>
-      ) : plans.length === 0 ? (
-        <div className="card text-sm text-text-muted">No plans yet. Click &quot;Add Plan&quot; to create one.</div>
+      ) : visiblePlans.length === 0 ? (
+        <div className="card text-sm text-text-muted">{branch ? 'No plans available at this branch.' : 'No plans yet. Click "Add Plan" to create one.'}</div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {plans.map((plan) => (
+          {visiblePlans.map((plan) => (
             <div key={plan.id} className="card relative" data-testid={`plan-row-${plan.id}`}>
               <h3 className="text-lg font-semibold text-text-primary">{plan.name}</h3>
               <p className="text-2xl font-bold text-primary-600 mt-2">Rp {plan.price.toLocaleString('id-ID')}</p>

@@ -575,18 +575,28 @@ export class CustomerService {
     page = 1,
     pageSize = 50,
     search?: string,
+    outletId?: string,
   ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; totalVisits: number }[]; total: number }> {
     const effectivePageSize = Math.min(Math.max(pageSize, 1), 200);
     const offset = (Math.max(page, 1) - 1) * effectivePageSize;
-    const where = ['tenant_id = $1'];
+    // Columns are qualified with the `c` alias so the same WHERE works for both
+    // the count and the rows query (customers are tenant-wide; branch filtering
+    // means "has at least one non-cancelled order at that branch").
+    const where = ['c.tenant_id = $1'];
     const params: unknown[] = [tenantId];
     if (search && search.trim()) {
-      where.push(`(name ILIKE $${params.length + 1} OR phone ILIKE $${params.length + 1})`);
+      where.push(`(c.name ILIKE $${params.length + 1} OR c.phone ILIKE $${params.length + 1})`);
       params.push(`%${search.trim()}%`);
+    }
+    if (outletId) {
+      where.push(
+        `EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.outlet_id = $${params.length + 1} AND o.status <> 'cancelled')`,
+      );
+      params.push(outletId);
     }
     const whereSql = where.join(' AND ');
     const countRes = await this.pool.query<{ total: number }>(
-      `SELECT COUNT(*)::int AS total FROM customers WHERE ${whereSql}`,
+      `SELECT COUNT(*)::int AS total FROM customers c WHERE ${whereSql}`,
       params,
     );
     const total = countRes.rows[0]?.total ?? 0;

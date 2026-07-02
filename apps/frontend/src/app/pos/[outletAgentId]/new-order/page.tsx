@@ -78,23 +78,31 @@ export default function NewOrderPage() {
   const [qr, setQr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [receipt, setReceipt] = useState<{ orderNumber: string; total: number; change: number } | null>(null);
+  // The branch this POS is operating. POS follows the HR schedule: it's today's
+  // scheduled branch when set, otherwise the operator's home outlet.
+  const [operatingOutletId, setOperatingOutletId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated()) {
       window.location.href = '/';
       return;
     }
-    // Scope services + payment methods to this branch so region/branch-specific
-    // pricing (e.g. Jabodetabek vs Surabaya car wash) shows correctly.
     const u = getUser();
-    const svcUrl = u?.outletId ? `/services?outletId=${u.outletId}` : '/services';
-    api.get<ServiceDTO[]>(svcUrl)
-      .then((data) => setServices(data.filter((s) => s.isActive)))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load services'))
-      .finally(() => setLoading(false));
-    // Load this branch's configured payment methods (with logos/colors).
-    const pmUrl = u?.outletId ? `/payment-methods?active=true&outletId=${u.outletId}` : '/payment-methods?active=true';
-    api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* falls back to default buttons */ });
+    // Resolve the operating branch from the HR schedule, then scope services +
+    // payment methods to it so region/branch-specific pricing shows correctly.
+    api.get<{ todayOutletId: string | null }>('/hr/my/branch-context')
+      .then((ctx) => ctx?.todayOutletId ?? u?.outletId ?? null)
+      .catch(() => u?.outletId ?? null)
+      .then((activeOutletId) => {
+        setOperatingOutletId(activeOutletId);
+        const svcUrl = activeOutletId ? `/services?outletId=${activeOutletId}` : '/services';
+        api.get<ServiceDTO[]>(svcUrl)
+          .then((data) => setServices(data.filter((s) => s.isActive)))
+          .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load services'))
+          .finally(() => setLoading(false));
+        const pmUrl = activeOutletId ? `/payment-methods?active=true&outletId=${activeOutletId}` : '/payment-methods?active=true';
+        api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* falls back to default buttons */ });
+      });
   }, []);
 
   const addToCart = useCallback((s: ServiceDTO) => {
@@ -165,6 +173,7 @@ export default function NewOrderPage() {
         businessUnit,
         salespersonName: salesperson.trim() || undefined,
         voucherCodes: voucherCodes.length ? voucherCodes : undefined,
+        operatingOutletId: operatingOutletId ?? undefined,
       });
       setOrder(created);
       setAmountReceived(String(created.total));

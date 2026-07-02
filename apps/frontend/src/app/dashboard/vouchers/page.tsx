@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface Branch { id: string; name: string }
 interface ServiceLite { id: string; name: string; price?: number }
@@ -211,6 +212,7 @@ export default function VouchersPage() {
   const [tplModal, setTplModal] = useState<{ open: boolean; editing: Template | null }>({ open: false, editing: null });
   const [issued, setIssued] = useState<string[] | null>(null);
   const [tickets, setTickets] = useState<{ bookId: string; rows: Ticket[] } | null>(null);
+  const [branch, setBranch] = useState('');
 
   const load = useCallback(async () => {
     setError('');
@@ -239,6 +241,14 @@ export default function VouchersPage() {
 
   const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? id;
 
+  // Config filter: templates are scoped by outletIds (null/empty = all branches);
+  // issued packs are matched by the branch name they were sold under.
+  const branchName = branches.find((b) => b.id === branch)?.name ?? null;
+  const visibleTemplates = templates.filter(
+    (t) => !branch || !t.outletIds || t.outletIds.length === 0 || t.outletIds.includes(branch),
+  );
+  const visibleBooks = branchName ? books.filter((b) => b.outletName === branchName) : books;
+
   return (
     <div data-testid="vouchers-page">
       <div className="flex items-center justify-between mb-4">
@@ -246,9 +256,12 @@ export default function VouchersPage() {
           <h1 className="text-2xl font-bold text-text-primary">Vouchers</h1>
           <p className="mt-1 text-sm text-text-secondary">Define sellable service packs, and track issued shareable voucher codes (BRANCH-MMYYYY-NNNNNN).</p>
         </div>
-        {tab === 'packs'
-          ? <button className="btn-primary" onClick={() => setTplModal({ open: true, editing: null })}>+ New Pack</button>
-          : <button className="btn-primary" onClick={() => setSellOpen(true)}>+ Sell Pack</button>}
+        <div className="flex items-center gap-3">
+          <BranchFilter value={branch} onChange={setBranch} />
+          {tab === 'packs'
+            ? <button className="btn-primary" onClick={() => setTplModal({ open: true, editing: null })}>+ New Pack</button>
+            : <button className="btn-primary" onClick={() => setSellOpen(true)}>+ Sell Pack</button>}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -260,11 +273,11 @@ export default function VouchersPage() {
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
 
       {tab === 'packs' ? (
-        templates.length === 0 ? (
-          <div className="card text-sm text-text-muted">No service packs yet. Click &quot;New Pack&quot; to create one.</div>
+        visibleTemplates.length === 0 ? (
+          <div className="card text-sm text-text-muted">{branch ? 'No service packs available at this branch.' : 'No service packs yet. Click "New Pack" to create one.'}</div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {templates.map((t) => (
+            {visibleTemplates.map((t) => (
               <div key={t.id} className="card">
                 <div className="flex items-start justify-between">
                   <h3 className="font-semibold text-text-primary">{t.name}</h3>
@@ -296,7 +309,7 @@ export default function VouchersPage() {
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Codes</th>
             </tr></thead>
             <tbody className="divide-y divide-border">
-              {books.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">No voucher packs sold yet.</td></tr> : books.map((b) => (
+              {visibleBooks.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">No voucher packs sold yet.</td></tr> : visibleBooks.map((b) => (
                 <tr key={b.id}>
                   <td className="px-5 py-3.5 text-sm font-medium">{b.buyerName ?? '—'}<div className="text-xs text-text-muted">{b.buyerPhone}</div></td>
                   <td className="px-5 py-3.5 text-sm">{b.outletName}</td>

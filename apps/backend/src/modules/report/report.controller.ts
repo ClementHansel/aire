@@ -11,6 +11,7 @@ import { SummaryResponse, JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
 import { ReportService } from './report.service';
+import { ReportPdfService } from './report-pdf.service';
 
 /**
  * ReportController handles report endpoints.
@@ -24,7 +25,10 @@ import { ReportService } from './report.service';
 @Controller('api/reports')
 @UseGuards(JwtAuthGuard)
 export class ReportController {
-  constructor(private readonly reportService: ReportService) {}
+  constructor(
+    private readonly reportService: ReportService,
+    private readonly reportPdfService: ReportPdfService,
+  ) {}
 
   /**
    * GET /api/reports/summary
@@ -175,15 +179,40 @@ export class ReportController {
       throw new BadRequestException('Invalid dateTo format. Use ISO date string.');
     }
 
-    // Currently only CSV format is supported
-    if (format && format !== 'csv') {
-      throw new BadRequestException('Only csv format is currently supported.');
+    if (format && format !== 'csv' && format !== 'pdf') {
+      throw new BadRequestException('Supported formats: csv, pdf.');
     }
 
     const effectiveOutletId =
       user.role === Role.Cashier || user.role === Role.OutletAdmin
         ? undefined
         : outletId;
+
+    // ── PDF: a polished, branded business report (KPIs, P&L, charts, tables) ───
+    if (format === 'pdf') {
+      const [summary, daily, shifts, names] = await Promise.all([
+        this.reportService.getSummary({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit }),
+        this.reportService.getDailySales({ dateFrom, dateTo, outletId: effectiveOutletId, businessUnit }),
+        this.reportService.getShiftReport({ dateFrom, dateTo, outletId: effectiveOutletId }),
+        this.reportService.getScopeNames(user.tenant_id, effectiveOutletId),
+      ]);
+      const pdf = await this.reportPdfService.build({
+        tenantName: names.tenantName,
+        outletName: names.outletName,
+        businessUnit,
+        dateFrom,
+        dateTo,
+        generatedAt: new Date(),
+        summary,
+        daily,
+        shifts,
+      });
+      reply!
+        .header('Content-Type', 'application/pdf')
+        .header('Content-Disposition', `attachment; filename="AIRE-report-${dateFrom}-to-${dateTo}.pdf"`)
+        .send(pdf);
+      return;
+    }
 
     const exportScope = scope === 'daily' ? 'daily' : 'orders';
     const csvContent =

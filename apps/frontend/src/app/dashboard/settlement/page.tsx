@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface SummaryRow { owingOutletId: string; owingName: string; servingOutletId: string; servingName: string; entries: number; amount: number }
 interface PayoutRow { id: string; amount: number; entryCount: number; note: string | null; owingName: string; servingName: string; createdAt: string }
@@ -11,16 +12,18 @@ const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 export default function SettlementPage() {
   const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [payouts, setPayouts] = useState<PayoutRow[]>([]);
+  const [branch, setBranch] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [s, p] = await Promise.all([api.get<SummaryRow[]>('/settlement/summary'), api.get<PayoutRow[]>('/settlement/payouts')]);
+      const bq = branch ? `?outletId=${branch}` : '';
+      const [s, p] = await Promise.all([api.get<SummaryRow[]>(`/settlement/summary${bq}`), api.get<PayoutRow[]>(`/settlement/payouts${bq}`)]);
       setSummary(s); setPayouts(p);
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
-  }, []);
+  }, [branch]);
   useEffect(() => { load(); }, [load]);
 
   const payout = async (r: SummaryRow) => {
@@ -35,9 +38,12 @@ export default function SettlementPage() {
 
   return (
     <div data-testid="settlement-page">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-text-primary">Inter-Branch Settlement</h1>
-        <p className="mt-1 text-sm text-text-secondary">When a member washes at a branch other than where they bought their membership, the home branch owes the serving branch.</p>
+      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary">Inter-Branch Settlement</h1>
+          <p className="mt-1 text-sm text-text-secondary">When a member washes at a branch other than where they bought their membership, the home branch owes the serving branch.</p>
+        </div>
+        <BranchFilter value={branch} onChange={setBranch} label="Involving branch" />
       </div>
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
 

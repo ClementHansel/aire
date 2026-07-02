@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface Summary { windowDays: number; revenue: number; expenses: number; netProfit: number; expensesByCategory: { category: string; total: number }[]; }
 interface Expense { id: string; category: string; description: string | null; amount: number; date: string; }
@@ -12,15 +13,17 @@ export default function FinancePage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [form, setForm] = useState({ category: '', amount: '', description: '' });
+  const [branch, setBranch] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [s, e] = await Promise.all([api.get<Summary>('/finance/summary'), api.get<Expense[]>('/finance/expenses')]);
+      const bq = branch ? `?outletId=${branch}` : '';
+      const [s, e] = await Promise.all([api.get<Summary>(`/finance/summary${bq}`), api.get<Expense[]>(`/finance/expenses${bq}`)]);
       setSummary(s); setExpenses(e); setError('');
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
-  }, []);
+  }, [branch]);
   useEffect(() => { load(); }, [load]);
 
   const record = async () => {
@@ -35,7 +38,10 @@ export default function FinancePage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <h1 className="text-xl font-semibold text-text-primary">Finance</h1>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <h1 className="text-xl font-semibold text-text-primary">Finance</h1>
+        <BranchFilter value={branch} onChange={setBranch} />
+      </div>
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
       <div className="grid grid-cols-3 gap-4">
         <div className="card"><p className="text-xs text-text-muted">Revenue ({summary?.windowDays ?? 30}d)</p><p className="text-2xl font-semibold text-green-600">{fmt(summary?.revenue ?? 0)}</p></div>

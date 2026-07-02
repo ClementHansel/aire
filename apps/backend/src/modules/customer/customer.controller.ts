@@ -40,12 +40,14 @@ export class CustomerController {
     @Query('search') search?: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
+    @Query('outletId') outletId?: string,
   ) {
     return this.customerService.listCustomers(
       user.tenant_id,
       pageStr ? parseInt(pageStr, 10) : 1,
       pageSizeStr ? parseInt(pageSizeStr, 10) : 50,
       search,
+      outletId,
     );
   }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface Summary { period: string; actual: number; target: number; attainmentPct: number | null; orders: number; leadFunnel: Record<string, number>; }
 interface Lead { id: string; name: string; phone: string | null; source: string | null; status: string; }
@@ -14,14 +15,19 @@ export default function SalesPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [form, setForm] = useState({ name: '', phone: '', source: '' });
   const [target, setTarget] = useState('');
+  const [branch, setBranch] = useState('');
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const [s, l] = await Promise.all([api.get<Summary>('/sales/summary'), api.get<Lead[]>('/sales/leads')]);
+      // Branch scopes actual + target; leads are tenant-wide (not branch-scoped).
+      const [s, l] = await Promise.all([
+        api.get<Summary>(`/sales/summary${branch ? `?outletId=${branch}` : ''}`),
+        api.get<Lead[]>('/sales/leads'),
+      ]);
       setSummary(s); setLeads(l); setError('');
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load'); }
-  }, []);
+  }, [branch]);
   useEffect(() => { load(); }, [load]);
 
   const createLead = async () => {
@@ -41,7 +47,10 @@ export default function SalesPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <h1 className="text-xl font-semibold text-text-primary">Sales</h1>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <h1 className="text-xl font-semibold text-text-primary">Sales</h1>
+        <BranchFilter value={branch} onChange={setBranch} />
+      </div>
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card"><p className="text-xs text-text-muted">Actual ({summary?.period})</p><p className="text-2xl font-semibold text-green-600">{fmt(summary?.actual ?? 0)}</p></div>

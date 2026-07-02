@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface SummaryResponse {
   totalOrders: number;
@@ -27,6 +28,7 @@ export default function ReportsPage() {
   const [dateFrom, setDateFrom] = useState(today());
   const [dateTo, setDateTo] = useState(today());
   const [businessUnit, setBusinessUnit] = useState<'' | 'AIRE' | 'LEAD'>('');
+  const [branch, setBranch] = useState(''); // '' = all branches (owner/admin only; RLS scopes others)
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [daily, setDaily] = useState<DailyRow[]>([]);
   const [shifts, setShifts] = useState<ShiftRow[]>([]);
@@ -37,7 +39,7 @@ export default function ReportsPage() {
     setLoading(true);
     setError('');
     try {
-      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${businessUnit ? `&businessUnit=${businessUnit}` : ''}`;
+      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${businessUnit ? `&businessUnit=${businessUnit}` : ''}${branch ? `&outletId=${branch}` : ''}`;
       const [summary, dailyRows, shiftRows] = await Promise.all([
         api.get<SummaryResponse>(`/reports/summary?${qs}`),
         api.get<DailyRow[]>(`/reports/daily-sales?${qs}`),
@@ -51,12 +53,12 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, businessUnit]);
+  }, [dateFrom, dateTo, businessUnit, branch]);
 
   const exportCsv = (scope: 'orders' | 'daily') => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('aire_access_token') : null;
     const base = process.env.NEXT_PUBLIC_API_URL || '/api';
-    const url = `${base}/reports/export?dateFrom=${dateFrom}&dateTo=${dateTo}&scope=${scope}${businessUnit ? `&businessUnit=${businessUnit}` : ''}`;
+    const url = `${base}/reports/export?dateFrom=${dateFrom}&dateTo=${dateTo}&scope=${scope}${businessUnit ? `&businessUnit=${businessUnit}` : ''}${branch ? `&outletId=${branch}` : ''}`;
     // Fetch with auth then trigger a download (export route requires the bearer token).
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then((r) => r.blob())
@@ -68,6 +70,28 @@ export default function ReportsPage() {
         URL.revokeObjectURL(a.href);
       })
       .catch(() => setError('Export failed'));
+  };
+
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const exportPdf = () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('aire_access_token') : null;
+    const base = process.env.NEXT_PUBLIC_API_URL || '/api';
+    const url = `${base}/reports/export?format=pdf&dateFrom=${dateFrom}&dateTo=${dateTo}${businessUnit ? `&businessUnit=${businessUnit}` : ''}${branch ? `&outletId=${branch}` : ''}`;
+    setExportingPdf(true);
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => {
+        if (!r.ok) throw new Error('PDF export failed');
+        return r.blob();
+      })
+      .then((blob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `AIRE-report-${dateFrom}-to-${dateTo}.pdf`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(() => setError('PDF export failed'))
+      .finally(() => setExportingPdf(false));
   };
 
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
@@ -88,28 +112,32 @@ export default function ReportsPage() {
       <div className="card mb-6">
         <div className="flex flex-wrap items-end gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" />
+            <label htmlFor="report-date-from" className="block text-xs font-medium text-text-secondary mb-1">From</label>
+            <input id="report-date-from" aria-label="From date" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" />
+            <label htmlFor="report-date-to" className="block text-xs font-medium text-text-secondary mb-1">To</label>
+            <input id="report-date-to" aria-label="To date" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">Business unit</label>
-            <select value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
+            <label htmlFor="report-business-unit" className="block text-xs font-medium text-text-secondary mb-1">Business unit</label>
+            <select id="report-business-unit" aria-label="Business unit" value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
               <option value="">All units</option>
               <option value="AIRE">AIRE · Car Wash</option>
               <option value="LEAD">LEAD · Detailing</option>
             </select>
           </div>
+          <BranchFilter value={branch} onChange={setBranch} label="Branch" />
           <button className="btn-primary" onClick={loadReport} disabled={loading}>
             {loading ? 'Loading…' : 'Generate Report'}
           </button>
           {data && (
             <>
-              <button className="btn-secondary" onClick={() => exportCsv('daily')}>Export daily CSV</button>
-              <button className="btn-secondary" onClick={() => exportCsv('orders')}>Export orders CSV</button>
+              <button type="button" className="btn-primary" onClick={exportPdf} disabled={exportingPdf}>
+                {exportingPdf ? 'Preparing PDF…' : '⭳ Export PDF'}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => exportCsv('daily')}>Export daily CSV</button>
+              <button type="button" className="btn-secondary" onClick={() => exportCsv('orders')}>Export orders CSV</button>
             </>
           )}
         </div>

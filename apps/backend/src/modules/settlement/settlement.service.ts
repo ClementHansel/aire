@@ -11,8 +11,12 @@ import { DATABASE_POOL } from '../auth/database.provider';
 export class SettlementService {
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
 
-  /** Top-level summary: net owed between each branch pair (pending only). */
-  async summary(tenantId: string): Promise<Record<string, unknown>[]> {
+  /**
+   * Top-level summary: net owed between each branch pair (pending only).
+   * Optional branch filter shows only pairs where the branch is involved
+   * (as either the owing or the serving side).
+   */
+  async summary(tenantId: string, outletId?: string): Promise<Record<string, unknown>[]> {
     const res = await this.pool.query(
       `SELECT e.owing_outlet_id, oo.name AS owing_name,
               e.serving_outlet_id, so.name AS serving_name,
@@ -22,9 +26,10 @@ export class SettlementService {
        JOIN outlets oo ON oo.id = e.owing_outlet_id
        JOIN outlets so ON so.id = e.serving_outlet_id
        WHERE e.tenant_id = $1 AND e.status = 'pending'
+         AND ($2::uuid IS NULL OR e.owing_outlet_id = $2::uuid OR e.serving_outlet_id = $2::uuid)
        GROUP BY e.owing_outlet_id, oo.name, e.serving_outlet_id, so.name
        ORDER BY amount DESC`,
-      [tenantId],
+      [tenantId, outletId ?? null],
     );
     return res.rows.map((r) => ({
       owingOutletId: r.owing_outlet_id, owingName: r.owing_name,
@@ -54,14 +59,16 @@ export class SettlementService {
     }));
   }
 
-  async payouts(tenantId: string): Promise<Record<string, unknown>[]> {
+  async payouts(tenantId: string, outletId?: string): Promise<Record<string, unknown>[]> {
     const res = await this.pool.query(
       `SELECT p.id, p.amount, p.entry_count, p.note, p.created_at, oo.name AS owing_name, so.name AS serving_name
        FROM settlement_payouts p
        JOIN outlets oo ON oo.id = p.owing_outlet_id
        JOIN outlets so ON so.id = p.serving_outlet_id
-       WHERE p.tenant_id = $1 ORDER BY p.created_at DESC LIMIT 200`,
-      [tenantId],
+       WHERE p.tenant_id = $1
+         AND ($2::uuid IS NULL OR p.owing_outlet_id = $2::uuid OR p.serving_outlet_id = $2::uuid)
+       ORDER BY p.created_at DESC LIMIT 200`,
+      [tenantId, outletId ?? null],
     );
     return res.rows.map((r) => ({
       id: r.id, amount: parseFloat(r.amount), entryCount: r.entry_count, note: r.note,

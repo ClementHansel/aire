@@ -35,6 +35,15 @@ export interface CreateOrderRequest {
   membershipId?: string;
   selectedPlate?: string;
   note?: string;
+  /**
+   * Branch the operator is actually working at. POS follows the HR schedule, so
+   * this may differ from the operator's home outlet. Omitted → the operator's own
+   * outlet is used (unchanged behavior). Must be a branch in the tenant; if it is
+   * not today's scheduled branch, offScheduleReason is required.
+   */
+  operatingOutletId?: string;
+  /** Reason for operating a branch other than today's scheduled one (audit-logged). */
+  offScheduleReason?: string;
 }
 
 /**

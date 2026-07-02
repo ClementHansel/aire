@@ -1,0 +1,32 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "AIRE",
+    "LEAD",
+    "Jabodetabek",
+    "Bintaro",
+    "Kencana",
+    "Kranggan",
+    "Citraland",
+    "Wiyung",
+    "qris",
+    "WAHA",
+    "Kapso",
+    "xendit",
+    "midtrans",
+    "pdfmake",
+    "vfs",
+    "bcryptjs",
+    "tenants",
+    "outlets",
+    "pnpm",
+    "tsx"
+  ],
+  "ignorePaths": [
+    "node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "pnpm-lock.yaml"
+  ]
+}

@@ -22,6 +22,22 @@ export class HrController {
     return this.service.summary(user.tenant_id);
   }
 
+  /**
+   * The current user's branch context (from their linked employee + schedule):
+   * today's scheduled branch, home branch, and the set of branches assigned to
+   * them. Consumed by the POS (which branch to operate) and management scoping.
+   */
+  @Get('my/branch-context')
+  myBranchContext(@CurrentUser() user: JWTPayload) {
+    return this.service.getBranchContext(user.tenant_id, user.sub);
+  }
+
+  /** Link (or unlink, userId=null) an employee to a login account. */
+  @Patch('employees/:id/link-user')
+  linkUser(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { userId: string | null }) {
+    return this.service.linkUser(user.tenant_id, id, body?.userId ?? null);
+  }
+
   @Get('employees')
   employees(@CurrentUser() user: JWTPayload, @Query('outletId') outletId?: string) {
     return this.service.listEmployees(user.tenant_id, this.scope(user, outletId));

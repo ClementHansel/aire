@@ -12,6 +12,20 @@ export interface CreateEmployeeDto {
   salary?: number;
   outletId?: string;
   hiredAt?: string;
+  userId?: string | null;
+}
+
+/**
+ * Which branch(es) a logged-in user operates, derived from their linked HR
+ * employee record and work schedule. Consumed by the POS (today's branch) and
+ * management views (the set of branches they're assigned to).
+ */
+export interface BranchContext {
+  employeeId: string | null;
+  homeOutletId: string | null;   // the employee's base outlet
+  todayOutletId: string | null;  // scheduled branch for CURRENT_DATE, if any
+  todayScheduled: boolean;
+  assignedOutletIds: string[];   // union of every branch they're scheduled at (+ home)
 }
 
 export interface LeaveRequestDto {
@@ -53,8 +67,11 @@ export class HrService {
     let where = 'e.tenant_id = $1';
     if (outletId) { params.push(outletId); where += ` AND e.outlet_id = $${params.length}`; }
     const res = await this.pool.query(
-      `SELECT e.id, e.name, e.role, e.phone, e.email, e.salary, e.status, e.hired_at, e.outlet_id, o.name AS outlet_name
-       FROM employees e LEFT JOIN outlets o ON o.id = e.outlet_id
+      `SELECT e.id, e.name, e.role, e.phone, e.email, e.salary, e.status, e.hired_at, e.outlet_id, o.name AS outlet_name,
+              e.user_id, u.email AS user_email
+       FROM employees e
+       LEFT JOIN outlets o ON o.id = e.outlet_id
+       LEFT JOIN users u ON u.id = e.user_id
        WHERE ${where} ORDER BY e.name ASC`,
       params,
     );
@@ -62,15 +79,67 @@ export class HrService {
       id: r.id, name: r.name, role: r.role, phone: r.phone, email: r.email,
       salary: parseFloat(r.salary), status: r.status, hiredAt: r.hired_at,
       outletId: r.outlet_id, outletName: r.outlet_name ?? null,
+      userId: r.user_id ?? null, userEmail: r.user_email ?? null,
     }));
+  }
+
+  /**
+   * Link (or unlink) an employee to a login account. The user must belong to the
+   * same tenant. Passing userId = null clears the link.
+   */
+  async linkUser(tenantId: string, employeeId: string, userId: string | null): Promise<{ id: string; userId: string | null }> {
+    if (userId) {
+      const u = await this.pool.query(`SELECT id FROM users WHERE id = $1 AND tenant_id = $2`, [userId, tenantId]);
+      if (u.rows.length === 0) throw new BadRequestException('User not found in this tenant');
+    }
+    const res = await this.pool.query<{ id: string; user_id: string | null }>(
+      `UPDATE employees SET user_id = $1 WHERE id = $2 AND tenant_id = $3 RETURNING id, user_id`,
+      [userId, employeeId, tenantId],
+    );
+    if (res.rows.length === 0) throw new NotFoundException('Employee not found');
+    return { id: res.rows[0]!.id, userId: res.rows[0]!.user_id };
+  }
+
+  /**
+   * Resolve a logged-in user's branch context from their linked employee + schedule.
+   * When the user has no linked employee, everything is null/empty and callers
+   * fall back to the user's own JWT outlet_id (backward compatible).
+   */
+  async getBranchContext(tenantId: string, userId: string): Promise<BranchContext> {
+    const empRes = await this.pool.query<{ id: string; outlet_id: string | null }>(
+      `SELECT id, outlet_id FROM employees WHERE tenant_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1`,
+      [tenantId, userId],
+    );
+    if (empRes.rows.length === 0) {
+      return { employeeId: null, homeOutletId: null, todayOutletId: null, todayScheduled: false, assignedOutletIds: [] };
+    }
+    const emp = empRes.rows[0]!;
+    const todayRes = await this.pool.query<{ outlet_id: string | null }>(
+      `SELECT outlet_id FROM employee_schedules WHERE employee_id = $1 AND work_date = CURRENT_DATE LIMIT 1`,
+      [emp.id],
+    );
+    const assignedRes = await this.pool.query<{ outlet_id: string }>(
+      `SELECT DISTINCT outlet_id FROM employee_schedules WHERE employee_id = $1 AND outlet_id IS NOT NULL`,
+      [emp.id],
+    );
+    const assigned = new Set<string>(assignedRes.rows.map((r) => r.outlet_id));
+    if (emp.outlet_id) assigned.add(emp.outlet_id);
+    const today = todayRes.rows[0]?.outlet_id ?? null;
+    return {
+      employeeId: emp.id,
+      homeOutletId: emp.outlet_id,
+      todayOutletId: today,
+      todayScheduled: today != null,
+      assignedOutletIds: [...assigned],
+    };
   }
 
   async createEmployee(tenantId: string, dto: CreateEmployeeDto, actor?: string): Promise<Record<string, unknown>> {
     if (!dto.name?.trim()) throw new BadRequestException('name is required');
     const res = await this.pool.query(
-      `INSERT INTO employees (tenant_id, outlet_id, name, role, phone, email, salary, hired_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [tenantId, dto.outletId ?? null, dto.name.trim(), dto.role ?? null, dto.phone ?? null, dto.email ?? null, dto.salary ?? 0, dto.hiredAt ?? null],
+      `INSERT INTO employees (tenant_id, outlet_id, name, role, phone, email, salary, hired_at, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [tenantId, dto.outletId ?? null, dto.name.trim(), dto.role ?? null, dto.phone ?? null, dto.email ?? null, dto.salary ?? 0, dto.hiredAt ?? null, dto.userId ?? null],
     );
     const e = res.rows[0]!;
     void this.eventBus?.emit({

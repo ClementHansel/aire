@@ -6,7 +6,8 @@ import { api } from '@/lib/api';
 type Tab = 'employees' | 'schedule' | 'leave' | 'holidays';
 
 interface Summary { activeEmployees: number; monthlyPayroll: number; presentToday: number; pendingLeaveRequests: number; }
-interface Employee { id: string; name: string; role: string | null; phone: string | null; salary: number; status: string; outletId: string | null; outletName: string | null; }
+interface Employee { id: string; name: string; role: string | null; phone: string | null; salary: number; status: string; outletId: string | null; outletName: string | null; userId: string | null; userEmail: string | null; }
+interface UserLite { id: string; name: string; email: string }
 interface Leave { id: string; employee: string; startDate: string; endDate: string; type: string; status: string; }
 interface Schedule { id: string; employee: string; workDate: string; startTime: string | null; endTime: string | null; outletName: string | null; }
 interface Holiday { id: string; date: string; name: string; isPaid: boolean; }
@@ -22,6 +23,7 @@ export default function HrPage() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [users, setUsers] = useState<UserLite[]>([]); // login accounts, for linking employees
   const [branchFilter, setBranchFilter] = useState(''); // '' = all branches (global)
   const [error, setError] = useState('');
 
@@ -42,6 +44,8 @@ export default function HrPage() {
         api.get<Branch[]>('/outlets'),
       ]);
       setSummary(s); setEmployees(e); setLeave(l); setSchedules(sch); setHolidays(h); setBranches(b); setError('');
+      // Login accounts for the employee↔user linker (best-effort; needs admin rights).
+      api.get<UserLite[]>('/users').then(setUsers).catch(() => setUsers([]));
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
   }, [branchFilter]);
   useEffect(() => { load(); }, [load]);
@@ -54,6 +58,7 @@ export default function HrPage() {
     await api.post('/hr/employees', { name: empForm.name.trim(), role: empForm.role || undefined, phone: empForm.phone || undefined, salary: Number(empForm.salary) || 0, outletId: empForm.outletId || undefined });
     setEmpForm({ name: '', role: '', phone: '', salary: '', outletId: '' });
   });
+  const linkUser = (id: string, userId: string) => wrap(() => api.patch(`/hr/employees/${id}/link-user`, { userId: userId || null }));
   const clockIn = (id: string) => wrap(() => api.post(`/hr/employees/${id}/clock-in`));
   const clockOut = (id: string) => wrap(() => api.post(`/hr/employees/${id}/clock-out`));
   const setSchedule = () => schedForm.employeeId && schedForm.workDate && wrap(async () => {
@@ -125,7 +130,17 @@ export default function HrPage() {
               {employees.map((e) => (
                 <div key={e.id} className="flex items-center justify-between text-sm border-b border-border py-2">
                   <span className="text-text-primary">{e.name}<span className="text-text-muted">{e.role ? ` · ${e.role}` : ''} · {fmt(e.salary)}{e.outletName ? ` · ${e.outletName}` : ''}</span></span>
-                  <span className="flex gap-1">
+                  <span className="flex items-center gap-1">
+                    <select
+                      aria-label={`Login account for ${e.name}`}
+                      className="input-field py-1 text-xs max-w-[180px]"
+                      value={e.userId ?? ''}
+                      onChange={(ev) => linkUser(e.id, ev.target.value)}
+                      title="Link this employee to a login account so POS + scoping follow their schedule"
+                    >
+                      <option value="">No login linked</option>
+                      {users.map((u) => <option key={u.id} value={u.id}>{u.email || u.name}</option>)}
+                    </select>
                     <button className="btn-ghost text-xs text-green-600" onClick={() => clockIn(e.id)}>Clock in</button>
                     <button className="btn-ghost text-xs text-amber-600" onClick={() => clockOut(e.id)}>Clock out</button>
                   </span>

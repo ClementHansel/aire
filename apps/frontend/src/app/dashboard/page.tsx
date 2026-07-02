@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 import ProposalsWidget from './ProposalsWidget';
 
 function today(): string {
@@ -48,15 +49,7 @@ export default function DashboardHomePage() {
             Manage your outlets, services, memberships, and view reports from here.
           </p>
         </div>
-        <select
-          className="input-field max-w-[220px]"
-          data-testid="branch-filter"
-          value={branch}
-          onChange={(e) => setBranch(e.target.value)}
-        >
-          <option value="">All branches (global)</option>
-          {outletList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select>
+        <BranchFilter value={branch} onChange={setBranch} />
       </div>
 
       {/* Quick Stats */}

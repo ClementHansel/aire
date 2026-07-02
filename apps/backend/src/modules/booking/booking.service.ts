@@ -59,12 +59,16 @@ export class BookingService {
     };
   }
 
-  async list(tenantId: string, status?: string): Promise<BookingRecord[]> {
+  async list(tenantId: string, status?: string, outletId?: string): Promise<BookingRecord[]> {
     const params: unknown[] = [tenantId];
     let where = 'b.tenant_id = $1';
     if (status && STATUSES.includes(status as BookingStatus)) {
       params.push(status);
-      where += ` AND b.status = $2`;
+      where += ` AND b.status = $${params.length}`;
+    }
+    if (outletId) {
+      params.push(outletId);
+      where += ` AND b.outlet_id = $${params.length}`;
     }
     const res = await this.pool.query(
       `SELECT ${COLS} FROM bookings b

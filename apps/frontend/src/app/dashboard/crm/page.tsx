@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getUser } from '@/lib/auth';
+import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface GrowthPoint { period: string; newCustomers: number }
 interface Customer { id: string; name: string; phone: string; createdAt: string; totalVisits: number }
@@ -46,6 +47,7 @@ export default function CrmPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   const [search, setSearch] = useState('');
+  const [branch, setBranch] = useState('');
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Customer | null>(null);
 
@@ -65,10 +67,10 @@ export default function CrmPage() {
 
   const loadCustomers = useCallback(async () => {
     try {
-      const res = await api.get<{ customers: Customer[]; total: number }>(`/customers/list?page=${page}&pageSize=${pageSize}${search ? `&search=${encodeURIComponent(search)}` : ''}`);
+      const res = await api.get<{ customers: Customer[]; total: number }>(`/customers/list?page=${page}&pageSize=${pageSize}${search ? `&search=${encodeURIComponent(search)}` : ''}${branch ? `&outletId=${branch}` : ''}`);
       setCustomers(res.customers); setTotal(res.total);
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed'); }
-  }, [page, pageSize, search]);
+  }, [page, pageSize, search, branch]);
 
   useEffect(() => { loadGrowth(); }, [loadGrowth]);
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
@@ -122,9 +124,12 @@ export default function CrmPage() {
       <div className="card mb-6"><h2 className="section-title mb-3">New customers ({granularity})</h2><Bars data={growth.map((g) => ({ label: g.period, value: g.newCustomers }))} /></div>
 
       <div className="card p-0 overflow-hidden">
-        <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-sm font-semibold text-text-primary">Customers ({total})</h2>
-          <input className="input-field max-w-xs py-1 text-sm" placeholder="Search name or phone…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <div className="flex items-center gap-2">
+            <BranchFilter value={branch} onChange={(v) => { setBranch(v); setPage(1); }} />
+            <input className="input-field max-w-xs py-1 text-sm" placeholder="Search name or phone…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          </div>
         </div>
         <table className="w-full">
           <thead><tr className="border-b border-border bg-surface-sunken/50">
