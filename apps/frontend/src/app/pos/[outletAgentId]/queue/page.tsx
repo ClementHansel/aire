@@ -63,9 +63,9 @@ export default function QueuePage() {
         <div className="card h-fit">
           <h2 className="section-title mb-3">Log Arrival</h2>
           <form onSubmit={add} className="space-y-3">
-            <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5 w-full">
+            <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 w-full">
               {(['AIRE', 'LEAD'] as const).map((bu) => (
-                <button key={bu} type="button" onClick={() => setBusinessUnit(bu)} className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-full ${businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{bu}</button>
+                <button key={bu} type="button" onClick={() => setBusinessUnit(bu)} className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-md ${businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{bu}</button>
               ))}
             </div>
             <input className="input-field uppercase" placeholder="Plate (e.g. D1234ABC) *" value={plate} onChange={(e) => setPlate(e.target.value)} />

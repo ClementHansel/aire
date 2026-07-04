@@ -181,9 +181,9 @@ export default function UsersPage() {
           : <button className="btn-primary" onClick={() => setRoleModal({ open: true, editing: null })}>+ Add Role</button>}
       </div>
 
-      <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5 mb-5">
+      <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-5">
         {(['users', 'roles'] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 text-sm font-semibold rounded-full capitalize ${tab === t ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{t}</button>
+          <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 text-sm font-semibold rounded-md capitalize ${tab === t ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{t}</button>
         ))}
       </div>
 

@@ -94,7 +94,7 @@ export default function QueueBoardPage() {
                 <p className="text-sm text-slate-400">Est. wait</p>
                 <p className="text-2xl font-mono">{Math.ceil((idx / activeBays) * AVG_MINUTES)} min</p>
               </div>
-              {idx === 0 && <span className="text-sm font-semibold bg-white/20 rounded-full px-4 py-1.5">NEXT</span>}
+              {idx === 0 && <span className="text-sm font-semibold bg-white/20 rounded-md px-4 py-1.5">NEXT</span>}
             </div>
           ))}
         </div>

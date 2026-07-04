@@ -317,12 +317,12 @@ export default function NewOrderPage() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="section-title">Services</h2>
             {/* Business unit switch — AIRE car wash vs LEAD detailing */}
-            <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5" role="group" aria-label="Business unit">
+            <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5" role="group" aria-label="Business unit">
               {(['AIRE', 'LEAD'] as const).map((bu) => (
                 <button
                   key={bu}
                   onClick={() => { if (bu !== businessUnit) { setBusinessUnit(bu); setCart([]); } }}
-                  className={`px-4 py-1.5 text-sm font-semibold rounded-full transition-colors ${
+                  className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${
                     businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'
                   }`}
                 >

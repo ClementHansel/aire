@@ -70,9 +70,9 @@ export default function AiAgentPage() {
         {/* Connection */}
         <div className="card">
           <h2 className="section-title mb-3">WhatsApp connection</h2>
-          <div className="inline-flex rounded-full border border-border bg-surface-raised p-0.5 mb-4">
+          <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-4">
             {(['waha', 'kapso'] as const).map((p) => (
-              <button key={p} onClick={() => set('waProvider', p)} className={`px-4 py-1.5 text-sm font-semibold rounded-full ${cfg.waProvider === p ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
+              <button key={p} onClick={() => set('waProvider', p)} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${cfg.waProvider === p ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
                 {p === 'waha' ? 'WAHA (QR scan)' : 'Kapso.com'}
               </button>
             ))}

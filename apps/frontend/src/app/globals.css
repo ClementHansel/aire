@@ -38,12 +38,12 @@
   --color-warning: #eab308;
   --color-error: #dc2626;
 
-  /* Radii — generous */
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.25rem;
-  --radius-2xl: 1.5rem;
+  /* Radii — tight & squared for a professional, straight look */
+  --radius-sm: 0.125rem;  /* 2px */
+  --radius-md: 0.25rem;   /* 4px */
+  --radius-lg: 0.375rem;  /* 6px */
+  --radius-xl: 0.5rem;    /* 8px */
+  --radius-2xl: 0.625rem; /* 10px */
 
   /* Typography */
   --font-sans: var(--font-geist), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -68,27 +68,27 @@ h1 {
 /* ─── Component Utilities ─────────────────────────────────────────── */
 
 @utility card {
-  @apply bg-surface-raised rounded-2xl border border-border p-5 shadow-sm;
+  @apply bg-surface-raised rounded-lg border border-border p-5 shadow-sm;
 }
 
 @utility btn-primary {
-  @apply inline-flex items-center justify-center rounded-full bg-primary-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply inline-flex items-center justify-center rounded-md bg-primary-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 @utility btn-secondary {
-  @apply inline-flex items-center justify-center rounded-full border border-border-strong bg-surface-raised px-5 py-2.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-sunken focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2;
+  @apply inline-flex items-center justify-center rounded-md border border-border-strong bg-surface-raised px-5 py-2.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-sunken focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2;
 }
 
 @utility btn-ghost {
-  @apply inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-semibold text-text-secondary transition-colors hover:bg-surface-sunken focus:outline-none focus:ring-2 focus:ring-primary-300;
+  @apply inline-flex items-center justify-center rounded-md px-5 py-2.5 text-sm font-semibold text-text-secondary transition-colors hover:bg-surface-sunken focus:outline-none focus:ring-2 focus:ring-primary-300;
 }
 
 @utility input-field {
-  @apply w-full rounded-xl border border-border bg-surface-raised px-3.5 py-2.5 text-sm text-text-primary placeholder:text-text-faint transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100;
+  @apply w-full rounded-md border border-border bg-surface-raised px-3.5 py-2.5 text-sm text-text-primary placeholder:text-text-faint transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100;
 }
 
 @utility badge {
-  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center rounded-md px-2.5 py-0.5 text-xs font-medium;
 }
 
 @utility section-title {
