@@ -57,10 +57,8 @@ const arbPlanValues = fc.record({
  * Generates a normalized license plate string.
  */
 const arbPlate = fc
-  .stringOf(fc.constantFrom('A', 'B', 'C', 'D', '1', '2', '3', '4', '5'), {
-    minLength: 3,
-    maxLength: 10,
-  })
+  .string({ unit: fc.constantFrom('A', 'B', 'C', 'D', '1', '2', '3', '4', '5'), minLength: 3,
+    maxLength: 10, })
   .map((s) => s.toUpperCase());
 
 /**

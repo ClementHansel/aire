@@ -1,18 +1,20 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { Check, X } from 'lucide-react';
 import { api } from '@/lib/api';
 
 /**
- * AI Automation section for the Settings page.
- * Provides global AI toggle, LLM provider selection, conditional API key input,
- * and schedule interval configuration.
+ * AI Automation section for the Settings page. Global AI toggle, LLM provider,
+ * conditional API key, schedule interval, and a live connection test.
+ * Controlled by the parent (which persists via PATCH /api/settings/:tenantId).
  * Requirements: 3.1, 3.2, 3.5, 11.3
  */
 
 export interface AIAutomationSectionProps {
   ai_enabled: boolean;
   llm_provider: 'openrouter' | 'hermes_ai';
+  /** Truthy when a key is already stored (never the plaintext secret). */
   llm_api_key_encrypted: string | null;
   schedule_interval: 'hourly' | 'daily' | null;
   onSave?: (settings: {
@@ -59,34 +61,20 @@ export function AIAutomationSection({
     }
   }, []);
 
-  const handleToggleAI = useCallback(() => {
-    setAiEnabled((prev) => !prev);
-  }, []);
-
   const handleProviderChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as 'openrouter' | 'hermes_ai';
     setProvider(value);
-    // Clear error when switching away from openrouter
-    if (value === 'hermes_ai') {
-      setApiKeyError(null);
-    }
+    if (value === 'hermes_ai') setApiKeyError(null);
   }, []);
 
   const handleApiKeyChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setApiKey(e.target.value);
     setApiKeyDirty(true);
-    if (e.target.value.trim()) {
-      setApiKeyError(null);
-    }
-  }, []);
-
-  const handleIntervalChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value;
-    setInterval(value === '' ? null : (value as 'hourly' | 'daily'));
+    if (e.target.value.trim()) setApiKeyError(null);
   }, []);
 
   const handleSave = useCallback(() => {
-    // Validate: OpenRouter requires API key
+    // OpenRouter requires a key — either a freshly typed one or one already stored.
     if (provider === 'openrouter') {
       const effectiveKey = apiKeyDirty ? apiKey.trim() : (llm_api_key_encrypted || '');
       if (!effectiveKey) {
@@ -94,7 +82,6 @@ export function AIAutomationSection({
         return;
       }
     }
-
     setApiKeyError(null);
     onSave?.({
       ai_enabled: aiEnabled,
@@ -105,76 +92,78 @@ export function AIAutomationSection({
   }, [aiEnabled, provider, apiKey, apiKeyDirty, interval, llm_api_key_encrypted, onSave]);
 
   return (
-    <section data-testid="ai-automation-section" className="settings-section">
-      <h2 className="settings-section-title">AI Automation</h2>
-      <p className="settings-section-description">
-        Configure AI-powered automation, LLM provider, and scheduling preferences.
-      </p>
-
-      <div className="settings-field">
-        <label className="settings-toggle-label" htmlFor="ai-global-toggle">
-          <span>Enable AI Automation</span>
+    <section data-testid="ai-automation-section" className="card space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="section-title">AI Automation</h2>
+          <p className="section-description">
+            Configure the AI provider, scheduling, and whether automation runs at all.
+          </p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
           <input
             id="ai-global-toggle"
             data-testid="ai-global-toggle"
             type="checkbox"
+            className="sr-only peer"
             checked={aiEnabled}
-            onChange={handleToggleAI}
+            onChange={() => setAiEnabled((p) => !p)}
             aria-label="Enable AI Automation"
           />
+          <div className="w-11 h-6 bg-border-strong rounded-full peer peer-checked:bg-primary-500 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
         </label>
       </div>
 
       {aiEnabled && (
-        <div data-testid="ai-hidden-when-off" className="settings-ai-details">
-          <div className="settings-field">
-            <label htmlFor="ai-llm-provider-select">LLM Provider</label>
+        <div data-testid="ai-hidden-when-off" className="pt-4 border-t border-border space-y-4">
+          <div>
+            <label htmlFor="ai-llm-provider-select" className="block text-sm font-medium text-text-primary mb-1.5">LLM Provider</label>
             <select
               id="ai-llm-provider-select"
               data-testid="ai-llm-provider-select"
+              className="input-field"
               value={provider}
               onChange={handleProviderChange}
               aria-label="LLM Provider"
             >
-              <option value="openrouter">OpenRouter</option>
-              <option value="hermes_ai">Hermes AI</option>
+              <option value="hermes_ai">Hermes AI (Local)</option>
+              <option value="openrouter">OpenRouter (Cloud)</option>
             </select>
           </div>
 
           {provider === 'openrouter' && (
-            <div className="settings-field">
-              <label htmlFor="ai-api-key-input">API Key</label>
+            <div>
+              <label htmlFor="ai-api-key-input" className="block text-sm font-medium text-text-primary mb-1.5">
+                API Key {llm_api_key_encrypted && <span className="text-xs text-text-muted font-normal">· stored</span>}
+              </label>
               <input
                 id="ai-api-key-input"
                 data-testid="ai-api-key-input"
                 type="password"
+                className="input-field"
                 value={apiKey}
                 onChange={handleApiKeyChange}
-                placeholder="Enter your OpenRouter API key"
+                placeholder="sk-or-..."
                 aria-label="OpenRouter API Key"
                 aria-invalid={!!apiKeyError}
                 aria-describedby={apiKeyError ? 'ai-api-key-error' : undefined}
               />
               {apiKeyError && (
-                <p
-                  id="ai-api-key-error"
-                  data-testid="ai-api-key-error"
-                  className="settings-field-error"
-                  role="alert"
-                >
+                <p id="ai-api-key-error" data-testid="ai-api-key-error" className="mt-1 text-xs text-error" role="alert">
                   {apiKeyError}
                 </p>
               )}
             </div>
           )}
 
-          <div className="settings-field">
-            <label htmlFor="ai-schedule-select">Schedule Interval</label>
+          <div>
+            <label htmlFor="ai-schedule-select" className="block text-sm font-medium text-text-primary mb-1.5">Schedule Interval</label>
             <select
               id="ai-schedule-select"
               data-testid="ai-schedule-select"
+              className="input-field"
               value={interval ?? ''}
-              onChange={handleIntervalChange}
+              onChange={(e) => setInterval(e.target.value === '' ? null : (e.target.value as 'hourly' | 'daily'))}
               aria-label="Schedule Interval"
             >
               <option value="">Disabled</option>
@@ -183,11 +172,11 @@ export function AIAutomationSection({
             </select>
           </div>
 
-          <div className="settings-field">
+          <div>
             <button
               type="button"
               data-testid="ai-test-connection-button"
-              className="settings-save-button"
+              className="btn-secondary"
               onClick={handleTestConnection}
               disabled={testing}
             >
@@ -197,22 +186,17 @@ export function AIAutomationSection({
               <p
                 data-testid="ai-test-connection-result"
                 role="status"
-                style={{ marginTop: 8, fontSize: 13, color: testResult.ok ? '#15803d' : '#b91c1c' }}
+                className={`mt-2 text-sm inline-flex items-center gap-1.5 ${testResult.ok ? 'text-success' : 'text-error'}`}
               >
-                {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+                {testResult.ok ? <Check size={14} /> : <X size={14} />}{testResult.message}
               </p>
             )}
           </div>
         </div>
       )}
 
-      <div className="settings-actions">
-        <button
-          data-testid="ai-save-button"
-          type="button"
-          className="settings-save-button"
-          onClick={handleSave}
-        >
+      <div className="pt-2">
+        <button data-testid="ai-save-button" type="button" className="btn-primary" onClick={handleSave}>
           Save AI Settings
         </button>
       </div>

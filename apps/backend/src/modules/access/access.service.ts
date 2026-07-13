@@ -33,6 +33,16 @@ export const PERMISSION_CATALOG: { group: string; permissions: { key: string; la
     { key: 'reports.read', label: 'View reports & analytics' },
     { key: 'reports.export', label: 'Export reports' },
   ]},
+  { group: 'Finance & Accounting', permissions: [
+    { key: 'finance.read', label: 'View finance, P&L, bookkeeping & settlement' },
+    { key: 'finance.write', label: 'Record expenses, post journal entries, settle, provision & pricing' },
+  ]},
+  { group: 'HR & Payroll', permissions: [
+    { key: 'hr.read', label: 'View employees, schedules & leave' },
+    { key: 'hr.write', label: 'Manage employees, schedules, leave & attendance' },
+    { key: 'payroll.read', label: 'View payroll & payslips' },
+    { key: 'payroll.write', label: 'Run payroll, adjustments & loans' },
+  ]},
   { group: 'AI', permissions: [
     { key: 'ai.read', label: 'View AI conversations' },
     { key: 'ai.write', label: 'Configure AI agent' },

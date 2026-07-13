@@ -19,6 +19,21 @@ export class SalesController {
     return this.service.summary(user.tenant_id, ids);
   }
 
+  @Get('performance')
+  async performance(
+    @CurrentUser() user: JWTPayload,
+    @Query('outletId') outletId?: string,
+    @Query('period') period?: string,
+  ) {
+    const ids = await this.scope.resolveOutletIds(user, outletId);
+    return this.service.performance(user.tenant_id, ids, period);
+  }
+
+  @Get('targets')
+  listTargets(@CurrentUser() user: JWTPayload, @Query('period') period?: string) {
+    return this.service.listTargets(user.tenant_id, period);
+  }
+
   @Get('leads')
   leads(@CurrentUser() user: JWTPayload, @Query('status') status?: string) {
     return this.service.listLeads(user.tenant_id, status);

@@ -304,19 +304,6 @@ CREATE TABLE bays (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE alpr_detections (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  outlet_id UUID NOT NULL REFERENCES outlets(id) ON DELETE CASCADE,
-  camera_id VARCHAR(100) NOT NULL,
-  detected_text VARCHAR(20) NOT NULL,
-  confidence DECIMAL(5,4) NOT NULL,
-  confirmed_plate VARCHAR(20),
-  crop_image_path VARCHAR(500),
-  order_id UUID REFERENCES orders(id),
-  detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- =============================================================================
 -- QUEUE MANAGEMENT
 -- =============================================================================

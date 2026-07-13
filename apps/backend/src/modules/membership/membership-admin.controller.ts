@@ -20,11 +20,16 @@ export class MembershipAdminController {
     return this.service.list(user.tenant_id, status);
   }
 
+  @Get(':id/events')
+  events(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.service.history(user.tenant_id, id);
+  }
+
   @Patch(':id/suspend')
   @Roles(Role.OutletAdmin)
   @HttpCode(HttpStatus.OK)
   async suspend(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { reason?: string }) {
-    await this.service.suspend(user.tenant_id, id, body?.reason);
+    await this.service.suspend(user.tenant_id, id, body?.reason, user.sub);
     return { ok: true };
   }
 
@@ -32,7 +37,7 @@ export class MembershipAdminController {
   @Roles(Role.OutletAdmin)
   @HttpCode(HttpStatus.OK)
   async reactivate(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
-    await this.service.reactivate(user.tenant_id, id);
+    await this.service.reactivate(user.tenant_id, id, user.sub);
     return { ok: true };
   }
 }

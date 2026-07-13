@@ -19,7 +19,7 @@ describe('TenantService', () => {
         slug: 'aire-car-wash',
         plan: 'premium',
         status: 'active',
-        settings: { featureFlags: { alpr: true }, paymentConfig: { provider: 'xendit' } },
+        settings: { featureFlags: { whatsapp: true }, paymentConfig: { provider: 'xendit' } },
       };
 
       mockPool.query.mockResolvedValueOnce({
@@ -30,7 +30,7 @@ describe('TenantService', () => {
             slug: 'aire-car-wash',
             plan: 'premium',
             status: 'active',
-            settings: { featureFlags: { alpr: true }, paymentConfig: { provider: 'xendit' } },
+            settings: { featureFlags: { whatsapp: true }, paymentConfig: { provider: 'xendit' } },
             created_at: new Date('2024-06-15T10:00:00.000Z'),
             updated_at: new Date('2024-06-15T10:00:00.000Z'),
           },
@@ -47,7 +47,7 @@ describe('TenantService', () => {
       expect(params[2]).toBe('premium');
       expect(params[3]).toBe('active');
       expect(JSON.parse(params[4])).toEqual({
-        featureFlags: { alpr: true },
+        featureFlags: { whatsapp: true },
         paymentConfig: { provider: 'xendit' },
       });
 
@@ -106,7 +106,7 @@ describe('TenantService', () => {
             slug: 'tenant-a',
             plan: 'premium',
             status: 'suspended',
-            settings: { featureFlags: { alpr: false } },
+            settings: { featureFlags: { whatsapp: false } },
             created_at: new Date('2024-06-15T10:00:00.000Z'),
             updated_at: new Date('2024-06-15T10:00:00.000Z'),
           },
@@ -135,7 +135,7 @@ describe('TenantService', () => {
             slug: 'aire',
             plan: 'premium',
             status: 'active',
-            settings: { featureFlags: { alpr: true } },
+            settings: { featureFlags: { whatsapp: true } },
             created_at: new Date('2024-06-15T10:00:00.000Z'),
             updated_at: new Date('2024-06-15T10:00:00.000Z'),
           },
@@ -146,7 +146,7 @@ describe('TenantService', () => {
 
       expect(result.id).toBe('tenant-001');
       expect(result.name).toBe('AIRE');
-      expect(result.settings).toEqual({ featureFlags: { alpr: true } });
+      expect(result.settings).toEqual({ featureFlags: { whatsapp: true } });
     });
 
     it('should throw NotFoundException when tenant not found', async () => {
@@ -191,7 +191,7 @@ describe('TenantService', () => {
 
     it('should update settings as JSON', async () => {
       const dto: UpdateTenantDto = {
-        settings: { featureFlags: { alpr: false, kiosk: true } },
+        settings: { featureFlags: { whatsapp: false, kiosk: true } },
       };
 
       mockPool.query.mockResolvedValueOnce({
@@ -202,7 +202,7 @@ describe('TenantService', () => {
             slug: 'aire',
             plan: 'premium',
             status: 'active',
-            settings: { featureFlags: { alpr: false, kiosk: true } },
+            settings: { featureFlags: { whatsapp: false, kiosk: true } },
             created_at: new Date('2024-06-15T10:00:00.000Z'),
             updated_at: new Date('2024-06-16T10:00:00.000Z'),
           },
@@ -211,9 +211,9 @@ describe('TenantService', () => {
 
       const result = await service.update('tenant-001', dto);
 
-      expect(result.settings).toEqual({ featureFlags: { alpr: false, kiosk: true } });
+      expect(result.settings).toEqual({ featureFlags: { whatsapp: false, kiosk: true } });
       const [, params] = mockPool.query.mock.calls[0];
-      expect(JSON.parse(params[0])).toEqual({ featureFlags: { alpr: false, kiosk: true } });
+      expect(JSON.parse(params[0])).toEqual({ featureFlags: { whatsapp: false, kiosk: true } });
     });
 
     it('should return existing tenant if no fields to update', async () => {

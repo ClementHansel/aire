@@ -17,20 +17,16 @@ import { MIN_PHONE_LENGTH } from '../constants';
 const phoneDigitSuffix = fc
   .integer({ min: 6, max: 13 })
   .chain((len) =>
-    fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), {
-      minLength: len,
-      maxLength: len,
-    }),
+    fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: len,
+      maxLength: len, }),
   );
 
 /**
  * Arbitrary generator for formatting characters (spaces, dashes, parentheses)
  * that can be interspersed in a phone number string.
  */
-const formattingChars = fc.stringOf(fc.constantFrom(' ', '-', '(', ')', '.'), {
-  minLength: 0,
-  maxLength: 3,
-});
+const formattingChars = fc.string({ unit: fc.constantFrom(' ', '-', '(', ')', '.'), minLength: 0,
+  maxLength: 3, });
 
 /**
  * Inserts random formatting characters between digits of a phone string.

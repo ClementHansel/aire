@@ -33,6 +33,14 @@ export class PaymentMethodController {
     return this.service.create(user.tenant_id, dto);
   }
 
+  /** One-click onboarding: seed a starter set if the tenant has none yet. */
+  @Post('seed-defaults')
+  @UseGuards(RolesGuard)
+  @Roles(Role.OutletAdmin)
+  async seedDefaults(@CurrentUser() user: JWTPayload) {
+    return this.service.seedDefaults(user.tenant_id);
+  }
+
   @Put(':id')
   @UseGuards(RolesGuard)
   @Roles(Role.OutletAdmin)

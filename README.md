@@ -1,6 +1,6 @@
 # AIRE Operations Platform
 
-Multi-tenant POS and operations management platform for car wash and automotive service businesses. AIRE provides end-to-end operational tools: point-of-sale, queue management, membership programs, automated license plate recognition, IoT device integration, AI-powered automation, and consolidated reporting — all behind a single-tenant-isolated architecture.
+Multi-tenant POS and operations management platform for car wash and automotive service businesses. AIRE provides end-to-end operational tools: point-of-sale, queue management, membership programs, IoT device integration, AI-powered automation, and consolidated reporting — all behind a single-tenant-isolated architecture.
 
 ## Architecture
 
@@ -11,8 +11,8 @@ Multi-tenant POS and operations management platform for car wash and automotive 
 │   Frontend (Next.js 15)    │     Backend (NestJS + Fastify)     │
 │   React 19 / Zustand       │     REST + WebSocket APIs          │
 ├────────────────────────────┴────────────────────────────────────┤
-│   ALPR Service   │  IoT Gateway  │  AI Service  │  Worker      │
-│   (Python/Flask) │  (MQTT Bridge)│  (LLM Agent) │  (BullMQ)    │
+│   IoT Gateway    │  AI Service   │  Worker      │              │
+│   (MQTT Bridge)  │  (LLM Agent)  │  (BullMQ)    │              │
 ├─────────────────────────────────────────────────────────────────┤
 │   PostgreSQL  │  Redis  │  MinIO (S3)  │  Mosquitto (MQTT)      │
 └─────────────────────────────────────────────────────────────────┘
@@ -28,7 +28,6 @@ Multi-tenant POS and operations management platform for car wash and automotive 
 | Cache/Queue | Redis 7, BullMQ |
 | Object Storage | MinIO (S3-compatible) |
 | IoT | Eclipse Mosquitto (MQTT), Custom Gateway |
-| ALPR | Python, Flask, OpenCV |
 | AI/LLM | OpenRouter / Ollama (Hermes AI) |
 | Infra | Docker Compose, NGINX |
 | Testing | Vitest, fast-check (property-based), Testing Library |
@@ -40,7 +39,6 @@ aire/
 ├── apps/
 │   ├── backend/        # NestJS API server (port 4000)
 │   ├── frontend/       # Next.js web app (port 3000)
-│   ├── alpr/           # License plate recognition service (port 5000)
 │   ├── iot-gateway/    # MQTT → WebSocket bridge (port 4002)
 │   └── ai-service/     # AI/LLM orchestration service (port 4003)
 ├── packages/
@@ -56,7 +54,6 @@ aire/
 - **Node.js** >= 20.0.0
 - **pnpm** >= 9.x (`npm install -g pnpm`)
 - **Docker** & **Docker Compose** (for infrastructure services)
-- **Python 3.11+** (for ALPR service, optional)
 
 ## Getting Started
 
@@ -180,11 +177,6 @@ The test suite includes:
 - Real-time queue board with bay assignments
 - Customer self-service kiosk (queue status)
 - Estimated wait time calculations
-
-### CCTV & ALPR
-- Automatic license plate recognition from CCTV feeds
-- Confidence-based plate matching
-- RTSP stream integration
 
 ### IoT Integration
 - MQTT-based device communication

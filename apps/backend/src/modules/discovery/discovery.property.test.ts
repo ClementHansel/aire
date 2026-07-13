@@ -48,12 +48,12 @@ const discoveredDeviceArb: fc.Arbitrary<DiscoveredDevice> = fc.record({
   assigned_outlet_id: fc.oneof(fc.constant(null), fc.uuid()),
   connection_params: fc.constant({}),
   discovered_at: fc
-    .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+    .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
     .map((d) => d.toISOString()),
   confirmed_at: fc.oneof(
     fc.constant(null),
     fc
-      .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+      .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
       .map((d) => d.toISOString()),
   ),
 });
@@ -192,7 +192,7 @@ describe('Feature: smart-automation, Property 20: Device Status Offline When Unr
       fc.property(
         discoveredDeviceArb,
         fc
-          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
           .map((d) => d.toISOString()),
         (device, checkedAt) => {
           // Force the device to be confirmed (health checks apply to confirmed devices)
@@ -220,7 +220,7 @@ describe('Feature: smart-automation, Property 20: Device Status Offline When Unr
         discoveredDeviceArb,
         fc.integer({ min: 1, max: 5000 }),
         fc
-          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
           .map((d) => d.toISOString()),
         (device, latencyMs, checkedAt) => {
           const confirmedDevice: DiscoveredDevice = { ...device, confirmed: true };
@@ -247,7 +247,7 @@ describe('Feature: smart-automation, Property 20: Device Status Offline When Unr
         discoveredDeviceArb,
         fc.constantFrom('online' as const, 'offline' as const, 'unconfigured' as const),
         fc
-          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
           .map((d) => d.toISOString()),
         (device, initialStatus, checkedAt) => {
           const confirmedDevice: DiscoveredDevice = {
@@ -280,7 +280,7 @@ describe('Feature: smart-automation, Property 20: Device Status Offline When Unr
         fc.boolean(),
         fc.oneof(fc.constant(null), fc.integer({ min: 1, max: 5000 })),
         fc
-          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+          .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
           .map((d) => d.toISOString()),
         (device, reachable, latencyMs, checkedAt) => {
           const confirmedDevice: DiscoveredDevice = { ...device, confirmed: true };

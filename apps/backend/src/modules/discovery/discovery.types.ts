@@ -51,3 +51,18 @@ export interface DeviceHealthCheck {
   latency_ms: number | null;
   checked_at: string;
 }
+
+/**
+ * In-memory buffer for a single in-flight scan. The agent streams `device`
+ * events (appended to `devices`) and finishes with `scan:done` (flips
+ * `status` to 'done' and persists into tenant settings). Polled by the wizard
+ * via GET /api/discovery/:tenantId/scan/:scanId.
+ */
+export interface ScanSession {
+  scanId: string;
+  tenantId: string;
+  outletId: string;
+  status: 'scanning' | 'done';
+  devices: DiscoveredDevice[];
+  errors: ScanError[];
+}

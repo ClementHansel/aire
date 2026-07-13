@@ -11,6 +11,12 @@ import {
   VoucherInfo,
   MembershipStatus,
 } from '@aire/shared';
+import { MembershipLifecycleService } from './membership-lifecycle.service';
+
+/** Display order for memberships in a lookup — most actionable first. */
+const STATUS_PRIORITY: Record<string, number> = {
+  active: 0, grace: 1, revoked: 2, expired: 3, suspended: 4, pending: 5, cancelled: 6,
+};
 
 /**
  * Raw customer row from the database.
@@ -19,6 +25,7 @@ interface CustomerRow {
   id: string;
   name: string;
   phone: string;
+  membership_number?: string | null;
 }
 
 /**
@@ -135,15 +142,18 @@ export class MemberLookupService {
       return null;
     }
 
-    // Find the customer via: membership_plates → memberships → customers
+    // Find the customer via: membership_plates → memberships → customers.
+    // Any status — a grace/revoked member must still resolve so POS can advise
+    // (renew / buy new). Prefer the most-actionable membership's customer.
     const result = await this.pool.query<{ customer_id: string }>(
-      `SELECT DISTINCT c.id AS customer_id
+      `SELECT c.id AS customer_id
        FROM membership_plates mp
        JOIN memberships m ON mp.membership_id = m.id
        JOIN customers c ON m.customer_id = c.id
        WHERE mp.plate_normalized = $1
          AND m.tenant_id = $2
-         AND m.status = 'active'
+       ORDER BY CASE m.status WHEN 'active' THEN 0 WHEN 'grace' THEN 1 ELSE 2 END,
+                m.end_date DESC
        LIMIT 1`,
       [normalized, tenantId],
     );
@@ -154,6 +164,23 @@ export class MemberLookupService {
 
     const customerId = result.rows[0]!.customer_id;
     return this.buildMemberResponse(customerId, tenantId);
+  }
+
+  /**
+   * Lookup a member by their 12-char membership number (scanned barcode/QR or typed).
+   */
+  async lookupByMembershipNumber(
+    tenantId: string,
+    membershipNumber: string,
+  ): Promise<MemberLookupResponse | null> {
+    const n = (membershipNumber ?? '').trim().toUpperCase();
+    if (!n) return null;
+    const result = await this.pool.query<{ id: string }>(
+      `SELECT id FROM customers WHERE tenant_id = $1 AND membership_number = $2 LIMIT 1`,
+      [tenantId, n],
+    );
+    if (result.rows.length === 0) return null;
+    return this.buildMemberResponse(result.rows[0]!.id, tenantId);
   }
 
   /**
@@ -170,12 +197,15 @@ export class MemberLookupService {
   ): Promise<MemberLookupResponse> {
     // 1. Get customer info
     const customerResult = await this.pool.query<CustomerRow>(
-      `SELECT id, name, phone FROM customers WHERE id = $1 AND tenant_id = $2`,
+      `SELECT id, name, phone, membership_number FROM customers WHERE id = $1 AND tenant_id = $2`,
       [customerId, tenantId],
     );
     const customer = customerResult.rows[0]!;
 
-    // 2. Get all active memberships with plan details
+    // 2. Get ALL memberships with plan details (not just active) so POS/kiosk can
+    //    surface grace/revoked/suspended/cancelled and advise renew vs buy-new.
+    //    The canonical status is derived per-row (a stale 'active' past its end date
+    //    reads as grace/revoked); benefits remain guarded active-only in order.service.
     const membershipsResult = await this.pool.query<MembershipJoinRow>(
       `SELECT m.id, mp.name AS plan_name, m.status,
               m.start_date::text, m.end_date::text,
@@ -183,7 +213,7 @@ export class MemberLookupService {
               mp.free_service_ids, mp.discounted_services
        FROM memberships m
        JOIN membership_plans mp ON m.plan_id = mp.id
-       WHERE m.customer_id = $1 AND m.tenant_id = $2 AND m.status = 'active'
+       WHERE m.customer_id = $1 AND m.tenant_id = $2
        ORDER BY m.start_date DESC`,
       [customerId, tenantId],
     );
@@ -234,10 +264,15 @@ export class MemberLookupService {
           dailyUsageToday[u.plate_normalized] = parseInt(u.usage_count, 10);
         });
 
+      // Canonical status: manual states (pending/cancelled/suspended) pass through;
+      // active/grace/revoked/expired are recomputed from the end date so a stale row
+      // never mislabels an expired membership as active.
+      const derived = MembershipLifecycleService.derive(row.status, row.end_date);
+
       return {
         id: row.id,
         planName: row.plan_name,
-        status: row.status as MembershipStatus,
+        status: derived as MembershipStatus,
         startDate: row.start_date,
         endDate: row.end_date,
         usesCount: row.uses_count,
@@ -249,6 +284,12 @@ export class MemberLookupService {
         dailyUsageToday,
       };
     });
+
+    // Most-actionable first (active → grace → revoked → …) so consumers can take
+    // memberships[0] as the one to advise on.
+    memberships.sort(
+      (a, b) => (STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9),
+    );
 
     // 6. Get all unique plates across all memberships for the customer-level plates field
     const customerPlates: PlateInfo[] = [];
@@ -295,6 +336,7 @@ export class MemberLookupService {
         id: customer.id,
         name: customer.name,
         phone: customer.phone,
+        membershipNumber: customer.membership_number ?? undefined,
         plates: customerPlates,
       },
       memberships,

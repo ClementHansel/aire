@@ -28,9 +28,9 @@ describe('Feature: smart-automation, Property 2: Encryption Round-Trip', () => {
     );
   });
 
-  it('encrypt then decrypt returns the original string for any fc.unicode() input', () => {
+  it('encrypt then decrypt returns the original string for any unicode string input', () => {
     fc.assert(
-      fc.property(fc.unicode(), (plaintext) => {
+      fc.property(fc.string({ unit: 'grapheme' }), (plaintext) => {
         const ciphertext = encrypt(plaintext);
         const decrypted = decrypt(ciphertext);
         expect(decrypted).toBe(plaintext);
@@ -39,9 +39,9 @@ describe('Feature: smart-automation, Property 2: Encryption Round-Trip', () => {
     );
   });
 
-  it('encrypt then decrypt returns the original string for any fc.fullUnicode() input', () => {
+  it('encrypt then decrypt returns the original string for any unicode string input', () => {
     fc.assert(
-      fc.property(fc.fullUnicode(), (plaintext) => {
+      fc.property(fc.string({ unit: 'grapheme' }), (plaintext) => {
         const ciphertext = encrypt(plaintext);
         const decrypted = decrypt(ciphertext);
         expect(decrypted).toBe(plaintext);
@@ -66,7 +66,7 @@ describe('Feature: smart-automation, Property 2: Encryption Round-Trip', () => {
   it('encrypted output is never equal to the plaintext for non-empty unicode strings', () => {
     fc.assert(
       fc.property(
-        fc.unicode({ minLength: 1 }),
+        fc.string({ unit: 'grapheme', minLength: 1 }),
         (plaintext) => {
           const ciphertext = encrypt(plaintext);
           expect(ciphertext).not.toBe(plaintext);
@@ -79,7 +79,7 @@ describe('Feature: smart-automation, Property 2: Encryption Round-Trip', () => {
   it('encrypted output is never equal to the plaintext for non-empty fullUnicode strings', () => {
     fc.assert(
       fc.property(
-        fc.fullUnicode({ minLength: 1 }),
+        fc.string({ unit: 'grapheme', minLength: 1 }),
         (plaintext) => {
           const ciphertext = encrypt(plaintext);
           expect(ciphertext).not.toBe(plaintext);
@@ -169,7 +169,7 @@ const scheduleIntervalArb: fc.Arbitrary<'hourly' | 'daily' | null> = fc.constant
 
 /** Constrained date arbitrary that produces valid RFC 3339 date-time strings (years 1970-2099) */
 const dateTimeArb: fc.Arbitrary<string> = fc
-  .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z') })
+  .date({ min: new Date('1970-01-01T00:00:00.000Z'), max: new Date('2099-12-31T23:59:59.999Z'), noInvalidDate: true })
   .map((d) => d.toISOString());
 
 /** Generate a valid discovered device object */
@@ -379,11 +379,12 @@ describe('Feature: smart-automation, Property 3: JSON Schema Validation Correctn
  *
  * Validates: Requirements 1.2, 4.2
  *
- * New tenant settings have ai_enabled=false and all toggles=false.
+ * New tenant settings have ai_enabled=true (brain on, graceful fallback) while
+ * all ACTION automation toggles remain false (nothing acts autonomously).
  */
 describe('Feature: smart-automation, Property 4: Default Initialization — All Toggles OFF', () => {
-  it('DEFAULT_AUTOMATION_SETTINGS has ai_enabled set to false', () => {
-    expect(DEFAULT_AUTOMATION_SETTINGS.ai_enabled).toBe(false);
+  it('DEFAULT_AUTOMATION_SETTINGS has ai_enabled set to true (brain on by default)', () => {
+    expect(DEFAULT_AUTOMATION_SETTINGS.ai_enabled).toBe(true);
   });
 
   it('DEFAULT_AUTOMATION_SETTINGS has all automation toggles set to false', () => {
@@ -402,7 +403,7 @@ describe('Feature: smart-automation, Property 4: Default Initialization — All 
     fc.assert(
       fc.property(fc.constantFrom(...TOGGLE_KEYS), (key) => {
         expect(DEFAULT_AUTOMATION_SETTINGS.automation_toggles[key]).toBe(false);
-        expect(DEFAULT_AUTOMATION_SETTINGS.ai_enabled).toBe(false);
+        expect(DEFAULT_AUTOMATION_SETTINGS.ai_enabled).toBe(true);
       }),
       { numRuns: 100 },
     );
@@ -549,7 +550,7 @@ describe('Feature: smart-automation, Property 17: Default Values for Omitted Opt
     }
   });
 
-  it('non-boolean ai_enabled falls back to default (false)', () => {
+  it('non-boolean ai_enabled falls back to the default', () => {
     fc.assert(
       fc.property(
         fc.oneof(fc.string(), fc.integer(), fc.constant(null), fc.constant(undefined)),
@@ -560,7 +561,7 @@ describe('Feature: smart-automation, Property 17: Default Values for Omitted Opt
             approval_modes: DEFAULT_AUTOMATION_SETTINGS.approval_modes,
           } as Record<string, unknown>);
 
-          expect(result.ai_enabled).toBe(false);
+          expect(result.ai_enabled).toBe(DEFAULT_AUTOMATION_SETTINGS.ai_enabled);
         },
       ),
       { numRuns: 100 },
@@ -697,7 +698,7 @@ describe('Feature: smart-automation, Property 6: E.164 Phone Number Validation',
   /** Arbitrary that generates strings NOT matching E.164 format */
   const invalidPhoneArb: fc.Arbitrary<string> = fc.oneof(
     // Missing + prefix
-    fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), { minLength: 1, maxLength: 15 }),
+    fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: 1, maxLength: 15 }),
     // Starts with +0
     fc.array(fc.integer({ min: 0, max: 9 }), { minLength: 1, maxLength: 14 })
       .map((digits) => `+0${digits.join('')}`),

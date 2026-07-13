@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Geist, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import { LanguageProvider } from '@/lib/i18n';
+import PovBanner from '@/components/PovBanner';
 
 const geist = Geist({
   subsets: ['latin'],
@@ -17,7 +19,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'AIRE Operations Platform',
+  title: 'Airin',
   description: 'Multi-tenant POS and operations management for car wash businesses',
 };
 
@@ -25,7 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${geist.variable} ${jetbrainsMono.variable}`}>
       <body>
-        {children}
+        <LanguageProvider>
+          {children}
+          <PovBanner />
+        </LanguageProvider>
       </body>
     </html>
   );

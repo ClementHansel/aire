@@ -1,0 +1,152 @@
+# =============================================================================
+# AIRE — PRODUCTION nginx server block (TLS + /flows/ subpath for n8n)
+# =============================================================================
+# nginx (mounted straight into conf.d) does NOT expand ${VARS}, so the domain
+# and cert paths are LITERAL below. Edit `app.useairin.id` to your domain.
+#
+# Enable on the VPS:
+#   1) Get a cert:   certbot certonly --webroot -w /var/www/certbot -d app.useairin.id
+#      (or however certs already land in /etc/letsencrypt/live/<domain>/)
+#   2) In this repo's checkout on the VPS:
+#        mv infrastructure/nginx/conf.d/default.conf infrastructure/nginx/conf.d/default.conf.dev-off
+#        cp infrastructure/nginx/conf.d/ssl.conf.example infrastructure/nginx/conf.d/ssl.conf
+#      (nginx only loads *.conf, so the renamed dev file is ignored, and only ONE
+#       server owns :80 — no "conflicting server name" warning.)
+#   3) Ensure the prod overlay mounts certs + opens 80/443 (it does), then:
+#        docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d nginx
+#        docker compose ... exec nginx nginx -t && docker compose ... exec nginx nginx -s reload
+# =============================================================================
+
+# --- HTTP :80 — ACME challenge + redirect everything else to HTTPS ----------
+server {
+    listen 80;
+    server_name app.useairin.id;
+
+    # nginx's own healthcheck (docker healthcheck hits http://127.0.0.1/health).
+    location /health {
+        access_log off;
+        return 200 'OK';
+        add_header Content-Type text/plain;
+    }
+
+    # Let's Encrypt renewals (webroot).
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+
+    location / { return 301 https://$host$request_uri; }
+}
+
+# --- HTTPS :443 — the real app ----------------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name app.useairin.id;
+
+    ssl_certificate     /etc/letsencrypt/live/app.useairin.id/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/app.useairin.id/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
+    location /health {
+        access_log off;
+        return 200 'OK';
+        add_header Content-Type text/plain;
+    }
+
+    # --- n8n agent builder on a subpath (WebSocket editor + long executions) --
+    # MUST come before `location /` so it wins. n8n runs with N8N_PATH=/flows/.
+    location /flows/ {
+        proxy_pass http://n8n:5678;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+        client_max_body_size 32m;
+    }
+
+    # Content-hashed static assets — safe to cache forever (immutable).
+    location /_next/static/ {
+        proxy_pass http://frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    # API routes
+    location /api/ {
+        limit_req zone=api burst=50 nodelay;
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # Auth routes — stricter rate limiting
+    location /api/auth/ {
+        limit_req zone=auth burst=10 nodelay;
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket (Socket.IO) — live queue, monitoring, branch-bridge CCTV.
+    location /socket.io/ {
+        proxy_pass http://websocket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 7d;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+    }
+
+    # IoT Gateway
+    location /api/iot/ {
+        proxy_pass http://iot_gateway/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Frontend catch-all (dashboards, kiosk, menu, /portal/*, /confirm-booking/*).
+    location / {
+        proxy_pass http://frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Don't let browsers/proxies serve a stale HTML document after a deploy
+        # (static chunks under /_next/static are content-hashed and cached above).
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+}

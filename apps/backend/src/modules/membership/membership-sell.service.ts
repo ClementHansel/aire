@@ -20,6 +20,7 @@ import {
 } from '@aire/shared';
 import { SellMembershipDto, ActivateMembershipDto } from './dto';
 import { Membership, MembershipRow, MembershipPlate, MembershipPlateRow } from './interfaces';
+import { MembershipIdentityService } from './membership-identity.service';
 
 /**
  * Service handling membership sales (Sell Pack flow) and activation.
@@ -35,6 +36,7 @@ import { Membership, MembershipRow, MembershipPlate, MembershipPlateRow } from '
 @Injectable()
 export class MembershipSellService {
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly identity: MembershipIdentityService,
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
@@ -92,7 +94,14 @@ export class MembershipSellService {
       ],
     );
 
-    return this.mapRowToEntity(result.rows[0]!);
+    const sold = this.mapRowToEntity(result.rows[0]!);
+    void this.eventBus?.emit({
+      type: DomainEventType.MembershipSold,
+      tenantId: dto.tenantId,
+      actor: 'pos',
+      payload: { membershipId: sold.id, planId: dto.planId, customerId: dto.customerId, orderId: dto.orderId },
+    });
+    return sold;
   }
 
   /**
@@ -155,6 +164,18 @@ export class MembershipSellService {
     if (dto.plates.length > 0) {
       await this.registerPlates(membershipId, dto.plates);
     }
+
+    // 6b. Issue the customer's membership number (registration branch = the
+    // outlet the pack was sold at). Idempotent; non-fatal if it can't allocate.
+    try {
+      const orderOutlet = await this.pool.query<{ outlet_id: string }>(
+        `SELECT outlet_id FROM orders WHERE id = $1`, [membership.order_id],
+      );
+      const regOutlet = orderOutlet.rows[0]?.outlet_id;
+      if (regOutlet) {
+        await this.identity.ensureMembershipNumber(membership.tenant_id, membership.customer_id, regOutlet);
+      }
+    } catch { /* membership number issuance is best-effort */ }
 
     // 7. Schedule expiry reminders (H-30, H-7, H-day)
     await this.scheduleExpiryReminders(membershipId, endDate);

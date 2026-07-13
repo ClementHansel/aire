@@ -3,12 +3,12 @@ import {
 } from '@nestjs/common';
 import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser, Roles } from '../../common/decorators';
-import { RolesGuard } from '../../common/guards';
+import { CurrentUser, Roles, RequirePermission } from '../../common/decorators';
+import { RolesGuard, PermissionsGuard } from '../../common/guards';
 import { PromotionService, UpsertPromotionDto } from './promotion.service';
 
 @Controller('api/promotions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class PromotionController {
   constructor(private readonly service: PromotionService) {}
 
@@ -18,6 +18,7 @@ export class PromotionController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(Role.OutletAdmin)
+  @RequirePermission('promotions.write')
   @HttpCode(HttpStatus.CREATED)
   create(@CurrentUser() user: JWTPayload, @Body() dto: UpsertPromotionDto) {
     return this.service.create(user.tenant_id, dto);
@@ -26,6 +27,7 @@ export class PromotionController {
   @Put(':id')
   @UseGuards(RolesGuard)
   @Roles(Role.OutletAdmin)
+  @RequirePermission('promotions.write')
   update(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() dto: Partial<UpsertPromotionDto>) {
     return this.service.update(user.tenant_id, id, dto);
   }
@@ -33,6 +35,7 @@ export class PromotionController {
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles(Role.OutletAdmin)
+  @RequirePermission('promotions.write')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
     await this.service.remove(user.tenant_id, id);

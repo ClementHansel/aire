@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { isAuthenticated, getUser, logout } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
+import { PageHeader, StatCard, Panel, ErrorBanner, fmtIDR, fmtDateTime } from '@/components/dashboard/ui';
+import { BarChart } from '@/components/admin/charts';
 
 interface Overview {
   tenants: { total: number; active: number; suspended: number; cancelled: number; new30d: number };
@@ -14,31 +17,8 @@ interface Overview {
 interface Activity { at: string; operation: string; entityType: string; tenantName: string | null }
 interface Timeseries { revenue: { day: string; revenue: number; orders: number }[]; tenants: { day: string; n: number }[] }
 
-const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
-
-function Bars({ data, valueKey, color, fmtVal }: { data: any[]; valueKey: string; color: string; fmtVal?: (n: number) => string }) {
-  const max = Math.max(1, ...data.map((d) => Number(d[valueKey])));
-  return (
-    <div className="flex items-end gap-1 h-28">
-      {data.length === 0 ? <p className="text-sm text-text-muted">No data.</p> : data.map((d, i) => (
-        <div key={i} className="flex-1 flex flex-col justify-end" title={`${d.day}: ${fmtVal ? fmtVal(Number(d[valueKey])) : d[valueKey]}`}>
-          <div style={{ height: `${(Number(d[valueKey]) / max) * 100}%`, background: color }} className="w-full rounded-t" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  return (
-    <div className="bg-white rounded-xl border border-border p-4">
-      <p className="text-xs text-text-secondary uppercase tracking-wide">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${accent ?? 'text-text-primary'}`}>{value}</p>
-    </div>
-  );
-}
-
 export default function AdminOverviewPage() {
+  const { t } = useI18n();
   const [ov, setOv] = useState<Overview | null>(null);
   const [activity, setActivity] = useState<Activity[]>([]);
   const [ts, setTs] = useState<Timeseries | null>(null);
@@ -49,100 +29,92 @@ export default function AdminOverviewPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [o, a, t] = await Promise.all([
+      const [o, a, series] = await Promise.all([
         api.get<Overview>('/admin/overview'),
         api.get<Activity[]>('/admin/activity?limit=15'),
         api.get<Timeseries>('/admin/timeseries?days=30'),
       ]);
-      setOv(o); setActivity(a); setTs(t);
+      setOv(o); setActivity(a); setTs(series);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load';
+      const msg = err instanceof Error ? err.message : t('admin.home.failedToLoad', 'Failed to load');
       if (msg.includes('403') || msg.toLowerCase().includes('forbidden')) setForbidden(true);
       else setError(msg);
     } finally { setLoading(false); }
-  }, []);
+  }, [t]);
 
   useEffect(() => { if (!isAuthenticated()) { window.location.href = '/'; return; } load(); }, [load]);
 
   if (forbidden) {
     return (
       <div className="max-w-md">
-        <h1 className="text-xl font-bold text-text-primary mb-2">Access Denied</h1>
-        <p className="text-sm text-text-secondary">This area requires a Platform Super Admin account. You are signed in as <span className="font-medium">{getUser()?.role?.replace(/_/g, ' ')}</span>.</p>
-        <button onClick={logout} className="btn-secondary mt-4">Sign in as different user</button>
+        <h1 className="text-xl font-bold text-text-primary mb-2">{t('admin.home.accessDenied', 'Access Denied')}</h1>
+        <p className="text-sm text-text-secondary">{t('admin.home.accessDeniedDesc', 'This area requires a Platform Super Admin account. You are signed in as ')}<span className="font-medium">{getUser()?.role?.replace(/_/g, ' ')}</span>.</p>
+        <button onClick={logout} className="btn-secondary mt-4">{t('admin.home.signInDifferent', 'Sign in as different user')}</button>
       </div>
     );
   }
 
   return (
-    <div data-testid="admin-overview">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-text-primary">Platform Overview</h1>
-        <Link href="/admin/tenants" className="btn-primary">Manage Tenants →</Link>
-      </div>
+    <div className="space-y-6" data-testid="admin-overview">
+      <PageHeader
+        title={t('admin.home.title', 'Platform Overview')}
+        subtitle={t('admin.home.subtitle', 'Health of the whole platform — tenants, revenue, and activity at a glance.')}
+        actions={<Link href="/admin/tenants" className="btn-primary">{t('admin.home.manageTenants', 'Manage Tenants')} →</Link>}
+      />
 
-      {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
-      {loading || !ov ? (
-        <p className="text-text-muted">Loading…</p>
-      ) : (
-        <>
-          <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <Stat label="Tenants" value={String(ov.tenants.total)} />
-            <Stat label="Active / Suspended" value={`${ov.tenants.active} / ${ov.tenants.suspended}`} />
-            <Stat label="Outlets" value={String(ov.outlets)} />
-            <Stat label="Users" value={String(ov.users)} />
-            <Stat label="Customers" value={String(ov.customers)} />
-            <Stat label="Orders Today" value={String(ov.ordersToday)} />
-            <Stat label="Revenue Today" value={fmt(ov.revenueToday)} accent="text-primary-600" />
-            <Stat label="Revenue 30d (GMV)" value={fmt(ov.revenue30d)} accent="text-primary-600" />
-            <Stat label="Active Memberships" value={String(ov.activeMemberships)} />
-            <Stat label="Estimated MRR" value={fmt(ov.estimatedMrr)} accent="text-green-600" />
-            <Stat label="AI Calls (30d)" value={ov.aiCalls30d.toLocaleString('id-ID')} />
-            <Stat label="New Tenants (30d)" value={String(ov.tenants.new30d)} />
-          </section>
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
 
-          {ts && (
-            <div className="grid lg:grid-cols-2 gap-4 mb-4">
-              <div className="bg-white rounded-xl border border-border p-5">
-                <h2 className="text-sm font-semibold text-text-primary mb-3">Platform revenue / day (30d)</h2>
-                <Bars data={ts.revenue} valueKey="revenue" color="#1652F0" fmtVal={fmt} />
-              </div>
-              <div className="bg-white rounded-xl border border-border p-5">
-                <h2 className="text-sm font-semibold text-text-primary mb-3">New tenants / day (30d)</h2>
-                <Bars data={ts.tenants} valueKey="n" color="#10b981" />
-              </div>
-            </div>
-          )}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label={t('admin.home.statTenants', 'Tenants')} value={ov ? String(ov.tenants.total) : '—'} loading={loading} hint={ov ? t('admin.home.newTenantsHint', '{n} new in 30d').replace('{n}', String(ov.tenants.new30d)) : undefined} />
+        <StatCard label={t('admin.home.statActiveSuspended', 'Active / Suspended')} value={ov ? `${ov.tenants.active} / ${ov.tenants.suspended}` : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statOutlets', 'Outlets')} value={ov ? String(ov.outlets) : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statUsers', 'Users')} value={ov ? String(ov.users) : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statCustomers', 'Customers')} value={ov ? ov.customers.toLocaleString('id-ID') : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statOrdersToday', 'Orders Today')} value={ov ? String(ov.ordersToday) : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statRevenueToday', 'Revenue Today')} value={ov ? fmtIDR(ov.revenueToday) : '—'} tone="primary" loading={loading} />
+        <StatCard label={t('admin.home.statRevenue30d', 'Revenue 30d (GMV)')} value={ov ? fmtIDR(ov.revenue30d) : '—'} tone="primary" loading={loading} />
+        <StatCard label={t('admin.home.statActiveMemberships', 'Active Memberships')} value={ov ? String(ov.activeMemberships) : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statEstimatedMrr', 'Estimated MRR')} value={ov ? fmtIDR(ov.estimatedMrr) : '—'} tone="positive" loading={loading} />
+        <StatCard label={t('admin.home.statAiCalls', 'AI Calls (30d)')} value={ov ? ov.aiCalls30d.toLocaleString('id-ID') : '—'} loading={loading} />
+        <StatCard label={t('admin.home.statNewTenants', 'New Tenants (30d)')} value={ov ? String(ov.tenants.new30d) : '—'} loading={loading} />
+      </section>
 
-          <div className="grid lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 bg-white rounded-xl border border-border p-5">
-              <h2 className="text-sm font-semibold text-text-primary mb-3">Recent platform activity</h2>
-              {activity.length === 0 ? (
-                <p className="text-sm text-text-muted">No recent activity.</p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {activity.map((a, i) => (
-                    <li key={i} className="py-2 flex items-center justify-between text-sm">
-                      <span className="text-text-primary">{a.operation.replace(/_/g, ' ')} · <span className="text-text-muted">{a.entityType}</span></span>
-                      <span className="text-xs text-text-muted">{a.tenantName ?? '—'} · {new Date(a.at).toLocaleString('id-ID')}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div className="bg-white rounded-xl border border-border p-5">
-              <h2 className="text-sm font-semibold text-text-primary mb-3">Quick links</h2>
-              <div className="space-y-2 text-sm">
-                <Link href="/admin/tenants" className="block text-primary-600 hover:underline">→ Tenants & rollups</Link>
-                <Link href="/admin/monitoring" className="block text-primary-600 hover:underline">→ Operational monitoring</Link>
-                <Link href="/admin/ai-usage" className="block text-primary-600 hover:underline">→ AI usage</Link>
-                <Link href="/admin/billing" className="block text-primary-600 hover:underline">→ Billing & MRR</Link>
-                <Link href="/admin/config" className="block text-primary-600 hover:underline">→ Platform config</Link>
-              </div>
-            </div>
-          </div>
-        </>
+      {ts && (
+        <div className="grid lg:grid-cols-2 gap-4">
+          <Panel title={t('admin.home.revenuePerDay', 'Platform revenue / day (30d)')}>
+            <BarChart data={ts.revenue.map((d) => ({ label: d.day, value: d.revenue, tooltip: `${d.day}: ${fmtIDR(d.revenue)}` }))} empty={t('admin.home.noData', 'No data.')} />
+          </Panel>
+          <Panel title={t('admin.home.newTenantsPerDay', 'New tenants / day (30d)')}>
+            <BarChart data={ts.tenants.map((d) => ({ label: d.day, value: d.n }))} color="var(--color-green-500, #10b981)" empty={t('admin.home.noData', 'No data.')} />
+          </Panel>
+        </div>
       )}
+
+      <div className="grid lg:grid-cols-3 gap-4">
+        <Panel title={t('admin.home.recentActivity', 'Recent platform activity')} className="lg:col-span-2">
+          {activity.length === 0 ? (
+            <p className="text-sm text-text-muted">{t('admin.home.noRecentActivity', 'No recent activity.')}</p>
+          ) : (
+            <ul className="divide-y divide-border -my-2">
+              {activity.map((a, i) => (
+                <li key={i} className="py-2 flex items-center justify-between text-sm gap-3">
+                  <span className="text-text-primary capitalize truncate">{a.operation.replace(/_/g, ' ')} · <span className="text-text-muted">{a.entityType}</span></span>
+                  <span className="text-xs text-text-muted whitespace-nowrap">{a.tenantName ?? '—'} · {fmtDateTime(a.at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+        <Panel title={t('admin.home.quickLinks', 'Quick links')}>
+          <div className="space-y-2 text-sm">
+            <Link href="/admin/tenants" className="block text-primary-600 hover:underline">→ {t('admin.home.linkTenants', 'Tenants & rollups')}</Link>
+            <Link href="/admin/monitoring" className="block text-primary-600 hover:underline">→ {t('admin.home.linkMonitoring', 'Operational monitoring')}</Link>
+            <Link href="/admin/ai-usage" className="block text-primary-600 hover:underline">→ {t('admin.home.linkAiUsage', 'AI usage')}</Link>
+            <Link href="/admin/billing" className="block text-primary-600 hover:underline">→ {t('admin.home.linkBilling', 'Billing & MRR')}</Link>
+            <Link href="/admin/config" className="block text-primary-600 hover:underline">→ {t('admin.home.linkConfig', 'Platform config')}</Link>
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }

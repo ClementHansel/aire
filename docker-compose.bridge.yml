@@ -1,0 +1,41 @@
+# Branch Bridge Agent — LOCAL DEV / SIMULATE ONLY.
+#
+# The branch-bridge agent is normally installed at a tenant's PHYSICAL BRANCH
+# (on the POS PC / a Raspberry Pi / a mini-PC), NOT on the cloud VPS — it is the
+# component that scans the branch LAN and relays camera video. This compose file
+# exists only to run the agent locally in SIMULATE mode (ffmpeg test source, fake
+# devices) so the full pipeline can be exercised without hardware.
+#
+# Usage (local):
+#   1) Provision a bridge in the UI (Settings -> Branch Bridges) or via
+#      POST /api/bridges to get a pairing token.
+#   2) AIRE_BRIDGE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.bridge.yml up -d branch-bridge
+#
+# PRODUCTION install at a branch (per tenant) is a single `docker run` — see the
+# install command shown on bridge creation, or apps/branch-bridge/README.md.
+
+services:
+  branch-bridge:
+    build:
+      # The agent is a standalone app with its own lockfile; its Dockerfile is
+      # context-local, so the build context is the app dir (not the repo root).
+      context: ./apps/branch-bridge
+    container_name: aire-branch-bridge
+    restart: unless-stopped
+    environment:
+      AIRE_CLOUD_URL: http://backend:4000
+      AIRE_BRIDGE_TOKEN: ${AIRE_BRIDGE_TOKEN:-}
+      AIRE_SIMULATE: ${AIRE_SIMULATE:-true}
+      AIRE_MQTT_URL: mqtt://mosquitto:1883
+      BRIDGE_HEALTH_PORT: 4010
+    ports:
+      - "127.0.0.1:4010:4010"
+    depends_on:
+      - backend
+    networks:
+      - aire-network
+
+networks:
+  aire-network:
+    external: true
+    name: aire_aire-network

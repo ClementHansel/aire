@@ -6,13 +6,17 @@ import {
   BadRequestException,
   UseGuards,
 } from '@nestjs/common';
-import { FastifyReply } from 'fastify';
+import type { Response } from 'express';
 import { SummaryResponse, JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, RequirePermission } from '../../common/decorators';
+import { PermissionsGuard } from '../../common/guards';
 import { ScopeService } from '../../common/scope/scope.service';
 import { ReportService } from './report.service';
 import { ReportPdfService } from './report-pdf.service';
+import { DocTemplateService } from '../doc-template/doc-template.service';
+import { BrandingService } from '../branding/branding.service';
+import type { StoredObject } from '../storage';
 
 /**
  * ReportController handles report endpoints.
@@ -24,13 +28,25 @@ import { ReportPdfService } from './report-pdf.service';
  * Requirements: 23.1, 23.2, 23.3, 23.4, 23.5, 23.6
  */
 @Controller('api/reports')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermission('reports.read')
 export class ReportController {
   constructor(
     private readonly reportService: ReportService,
     private readonly reportPdfService: ReportPdfService,
     private readonly scope: ScopeService,
+    private readonly docTemplate: DocTemplateService,
+    private readonly branding: BrandingService,
   ) {}
+
+  /** Read a stored image object into a base64 data URL (for pdfmake), or null. */
+  private async toDataUrl(obj: StoredObject | null): Promise<string | undefined> {
+    if (!obj) return undefined;
+    const chunks: Buffer[] = [];
+    for await (const chunk of obj.body) chunks.push(chunk as Buffer);
+    const b64 = Buffer.concat(chunks).toString('base64');
+    return `data:${obj.contentType};base64,${b64}`;
+  }
 
   /**
    * GET /api/reports/summary
@@ -154,6 +170,7 @@ export class ReportController {
    * Requirement: 23.5
    */
   @Get('export')
+  @RequirePermission('reports.export')
   async exportReport(
     @CurrentUser() user: JWTPayload,
     @Query('dateFrom') dateFrom?: string,
@@ -162,7 +179,7 @@ export class ReportController {
     @Query('format') format?: string,
     @Query('scope') scope?: string,
     @Query('businessUnit') businessUnit?: string,
-    @Res() reply?: FastifyReply,
+    @Res() res?: Response,
   ): Promise<void> {
     // Validate required parameters
     if (!dateFrom || !dateTo) {
@@ -188,12 +205,17 @@ export class ReportController {
 
     // ── PDF: a polished, branded business report (KPIs, P&L, charts, tables) ───
     if (format === 'pdf') {
-      const [summary, daily, shifts, names] = await Promise.all([
+      const [summary, daily, shifts, names, tpl] = await Promise.all([
         this.reportService.getSummary({ dateFrom, dateTo, outletIds, businessUnit }),
         this.reportService.getDailySales({ dateFrom, dateTo, outletIds, businessUnit }),
         this.reportService.getShiftReport({ dateFrom, dateTo, outletIds }),
         this.reportService.getScopeNames(user.tenant_id, headerOutletId),
+        this.docTemplate.get(user.tenant_id, 'report'),
       ]);
+      // Embed the tenant logo in the masthead only when the report layout keeps a logo element.
+      const wantsLogo = tpl.elements.some((el) => el.type === 'logo' || el.type === 'image');
+      const logoDataUrl = wantsLogo ? await this.toDataUrl(await this.branding.getLogo(user.tenant_id)) : undefined;
+
       const pdf = await this.reportPdfService.build({
         tenantName: names.tenantName,
         outletName: names.outletName,
@@ -204,10 +226,12 @@ export class ReportController {
         summary,
         daily,
         shifts,
+        sections: tpl.reportSections,
+        logoDataUrl,
       });
-      reply!
-        .header('Content-Type', 'application/pdf')
-        .header('Content-Disposition', `attachment; filename="AIRE-report-${dateFrom}-to-${dateTo}.pdf"`)
+      res!
+        .set('Content-Type', 'application/pdf')
+        .set('Content-Disposition', `attachment; filename="AIRE-report-${dateFrom}-to-${dateTo}.pdf"`)
         .send(pdf);
       return;
     }
@@ -223,9 +247,9 @@ export class ReportController {
         ? `daily-sales-${dateFrom}-to-${dateTo}.csv`
         : `orders-${dateFrom}-to-${dateTo}.csv`;
 
-    reply!
-      .header('Content-Type', 'text/csv')
-      .header('Content-Disposition', `attachment; filename="${filename}"`)
+    res!
+      .set('Content-Type', 'text/csv')
+      .set('Content-Disposition', `attachment; filename="${filename}"`)
       .send(csvContent);
   }
 }

@@ -7,6 +7,8 @@ import { JWTPayload, OrderListResponse, OrderStatus, Role } from '@aire/shared';
 describe('OrderController', () => {
   let controller: OrderController;
   let mockOrderListService: { listOrders: ReturnType<typeof vi.fn> };
+  let mockOrderService: Record<string, ReturnType<typeof vi.fn>>;
+  let mockScope: { resolveOutletIds: ReturnType<typeof vi.fn> };
 
   const mockCashierUser: JWTPayload = {
     sub: 'user-001',
@@ -37,49 +39,44 @@ describe('OrderController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockOrderListService = { listOrders: vi.fn().mockResolvedValue(mockResponse) };
-    controller = new OrderController(mockOrderListService as any);
+    mockOrderService = {};
+    // By default resolve to a single branch; individual tests override as needed.
+    mockScope = { resolveOutletIds: vi.fn().mockResolvedValue(['outlet-001']) };
+    controller = new OrderController(
+      mockOrderListService as any,
+      mockOrderService as any,
+      mockScope as any,
+    );
   });
 
   describe('listOrders', () => {
-    it('should call service with parsed params', async () => {
+    it('should always scope the query to the caller tenant', async () => {
       await controller.listOrders(mockCashierUser, 'paid', undefined, undefined, undefined, undefined, undefined, undefined);
 
-      expect(mockOrderListService.listOrders).toHaveBeenCalledWith({
-        status: 'paid',
-        search: undefined,
-        dateFrom: undefined,
-        dateTo: undefined,
-        outletId: undefined, // Cashier cannot use outletId filter
-        page: undefined,
-        pageSize: undefined,
-      });
-    });
-
-    it('should allow Tenant_Owner to filter by outletId', async () => {
-      await controller.listOrders(mockTenantOwnerUser, undefined, undefined, undefined, undefined, 'outlet-002', undefined, undefined);
-
       expect(mockOrderListService.listOrders).toHaveBeenCalledWith(
-        expect.objectContaining({ outletId: 'outlet-002' }),
+        expect.objectContaining({ tenantId: 'tenant-001', status: 'paid' }),
       );
     });
 
-    it('should ignore outletId filter for Cashier role', async () => {
+    it('should delegate branch scoping to ScopeService and forward the resolved set', async () => {
+      mockScope.resolveOutletIds.mockResolvedValueOnce(['outlet-007']);
       await controller.listOrders(mockCashierUser, undefined, undefined, undefined, undefined, 'outlet-002', undefined, undefined);
 
+      // The controller passes the raw outletId to the scope resolver...
+      expect(mockScope.resolveOutletIds).toHaveBeenCalledWith(mockCashierUser, 'outlet-002');
+      // ...and forwards ONLY the role-resolved set as outletIds (never the raw outletId).
       expect(mockOrderListService.listOrders).toHaveBeenCalledWith(
-        expect.objectContaining({ outletId: undefined }),
+        expect.objectContaining({ outletIds: ['outlet-007'] }),
       );
     });
 
-    it('should ignore outletId filter for Outlet_Admin role', async () => {
-      const outletAdmin: JWTPayload = {
-        ...mockCashierUser,
-        role: 'outlet_admin',
-      };
-      await controller.listOrders(outletAdmin, undefined, undefined, undefined, undefined, 'outlet-002', undefined, undefined);
+    it('should let Tenant_Owner span all branches when scope resolves to null', async () => {
+      mockScope.resolveOutletIds.mockResolvedValueOnce(null);
+      await controller.listOrders(mockTenantOwnerUser, undefined, undefined, undefined, undefined, undefined, undefined, undefined);
 
+      expect(mockScope.resolveOutletIds).toHaveBeenCalledWith(mockTenantOwnerUser, undefined);
       expect(mockOrderListService.listOrders).toHaveBeenCalledWith(
-        expect.objectContaining({ outletId: undefined }),
+        expect.objectContaining({ tenantId: 'tenant-001', outletIds: null }),
       );
     });
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import BranchFilter from '@/components/dashboard/BranchFilter';
+import { useI18n } from '@/lib/i18n';
 
 interface Booking {
   id: string;
@@ -31,6 +32,7 @@ const FILTERS = ['all', 'booked', 'confirmed', 'done', 'cancelled'];
 function BookingModal({ initial, branches, services, onClose, onSaved }: {
   initial: Booking | null; branches: Branch[]; services: ServiceLite[]; onClose: () => void; onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [form, setForm] = useState({
     outletId: initial?.outletId ?? (branches[0]?.id ?? ''),
     customerName: initial?.customerName ?? '',
@@ -60,48 +62,48 @@ function BookingModal({ initial, branches, services, onClose, onSaved }: {
       if (initial) await api.put(`/bookings/${initial.id}`, payload);
       else await api.post('/bookings', payload);
       onSaved();
-    } catch (err) { setError(err instanceof Error ? err.message : 'Save failed'); }
+    } catch (err) { setError(err instanceof Error ? err.message : t('dash.bookings.saveFailed', 'Save failed')); }
     finally { setSaving(false); }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="card w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="section-title mb-4">{initial ? 'Edit Booking' : 'New Booking'}</h3>
+        <h3 className="section-title mb-4">{initial ? t('dash.bookings.editTitle', 'Edit Booking') : t('dash.bookings.newTitle', 'New Booking')}</h3>
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Customer name</label><input aria-label="Customer Name" className="input-field" value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Phone</label><input aria-label="Customer Phone" className="input-field" value={form.customerPhone} onChange={(e) => setForm({ ...form, customerPhone: e.target.value })} placeholder="08123…" /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.bookings.customerName', 'Customer name')}</label><input aria-label={t('dash.bookings.ariaCustomerName', 'Customer Name')} className="input-field" value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.bookings.phone', 'Phone')}</label><input aria-label={t('dash.bookings.ariaCustomerPhone', 'Customer Phone')} className="input-field" value={form.customerPhone} onChange={(e) => setForm({ ...form, customerPhone: e.target.value })} placeholder="08123…" /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">License plate</label><input aria-label="License Plate" className="input-field uppercase" value={form.licensePlate} onChange={(e) => setForm({ ...form, licensePlate: e.target.value.toUpperCase() })} placeholder="D1234ABC" /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.bookings.licensePlate', 'License plate')}</label><input aria-label={t('dash.bookings.ariaLicensePlate', 'License Plate')} className="input-field uppercase" value={form.licensePlate} onChange={(e) => setForm({ ...form, licensePlate: e.target.value.toUpperCase() })} placeholder="D1234ABC" /></div>
             <div>
-              <label className="block text-sm font-medium mb-1.5">Branch</label>
-              <select aria-label="Outlet Id" className="input-field" value={form.outletId} onChange={(e) => setForm({ ...form, outletId: e.target.value })}>
+              <label className="block text-sm font-medium mb-1.5">{t('dash.bookings.branch', 'Branch')}</label>
+              <select aria-label={t('dash.bookings.ariaOutletId', 'Outlet Id')} className="input-field" value={form.outletId} onChange={(e) => setForm({ ...form, outletId: e.target.value })}>
                 <option value="">—</option>
                 {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1.5">Service</label>
-            <select aria-label="Service Id" className="input-field" value={form.serviceId} onChange={(e) => setForm({ ...form, serviceId: e.target.value })}>
-              <option value="">— select —</option>
+            <label className="block text-sm font-medium mb-1.5">{t('dash.bookings.service', 'Service')}</label>
+            <select aria-label={t('dash.bookings.ariaServiceId', 'Service Id')} className="input-field" value={form.serviceId} onChange={(e) => setForm({ ...form, serviceId: e.target.value })}>
+              <option value="">{t('dash.bookings.selectOption', '— select —')}</option>
               {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1.5">Scheduled date &amp; time</label>
-            <input aria-label="Scheduled At" type="datetime-local" className="input-field" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} required />
+            <label className="block text-sm font-medium mb-1.5">{t('dash.bookings.scheduledLabel', 'Scheduled date & time')}</label>
+            <input aria-label={t('dash.bookings.ariaScheduledAt', 'Scheduled At')} type="datetime-local" className="input-field" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} required />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1.5">Notes</label>
-            <input aria-label="Notes" className="input-field" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+            <label className="block text-sm font-medium mb-1.5">{t('dash.bookings.notes', 'Notes')}</label>
+            <input aria-label={t('dash.bookings.ariaNotes', 'Notes')} className="input-field" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </div>
           <div className="flex gap-2 justify-end pt-2">
-            <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : initial ? 'Update' : 'Create'}</button>
+            <button type="button" className="btn-secondary" onClick={onClose}>{t('dash.bookings.cancel', 'Cancel')}</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? t('dash.bookings.saving', 'Saving…') : initial ? t('dash.bookings.update', 'Update') : t('dash.bookings.create', 'Create')}</button>
           </div>
         </form>
       </div>
@@ -110,6 +112,7 @@ function BookingModal({ initial, branches, services, onClose, onSaved }: {
 }
 
 export default function BookingsPage() {
+  const { t } = useI18n();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [services, setServices] = useState<ServiceLite[]>([]);
@@ -132,29 +135,29 @@ export default function BookingsPage() {
         api.get<ServiceLite[]>('/services'),
       ]);
       setBookings(bk); setBranches(br); setServices(sv);
-    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
+    } catch (err) { setError(err instanceof Error ? err.message : t('dash.bookings.errLoad', 'Failed to load')); }
     finally { setLoading(false); }
-  }, [filter, branch]);
+  }, [filter, branch, t]);
   useEffect(() => { load(); }, [load]);
 
   const setStatus = async (b: Booking, status: Booking['status']) => {
     try { await api.put(`/bookings/${b.id}`, { status }); await load(); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Failed'); }
+    catch (err) { setError(err instanceof Error ? err.message : t('dash.bookings.errGeneric', 'Failed')); }
   };
   const remove = async (id: string) => {
-    if (!confirm('Delete this booking?')) return;
+    if (!confirm(t('dash.bookings.confirmDelete', 'Delete this booking?'))) return;
     try { await api.delete(`/bookings/${id}`); await load(); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Delete failed'); }
+    catch (err) { setError(err instanceof Error ? err.message : t('dash.bookings.deleteFailed', 'Delete failed')); }
   };
 
   return (
     <div data-testid="bookings-page">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Bookings</h1>
-          <p className="mt-1 text-sm text-text-secondary">Scheduled appointments — customers reserve a service slot ahead of arrival.</p>
+          <h1 className="text-2xl font-bold text-text-primary">{t('dash.bookings.title', 'Bookings')}</h1>
+          <p className="mt-1 text-sm text-text-secondary">{t('dash.bookings.intro', 'Scheduled appointments — customers reserve a service slot ahead of arrival.')}</p>
         </div>
-        <button className="btn-primary" onClick={() => setModal({ open: true, editing: null })}>+ New Booking</button>
+        <button className="btn-primary" onClick={() => setModal({ open: true, editing: null })}>{t('dash.bookings.newBooking', '+ New Booking')}</button>
       </div>
 
       <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
@@ -169,19 +172,19 @@ export default function BookingsPage() {
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
 
       {loading ? (
-        <div className="card text-sm text-text-muted">Loading…</div>
+        <div className="card text-sm text-text-muted">{t('dash.bookings.loading', 'Loading…')}</div>
       ) : bookings.length === 0 ? (
-        <div className="card text-sm text-text-muted">No bookings.</div>
+        <div className="card text-sm text-text-muted">{t('dash.bookings.empty', 'No bookings.')}</div>
       ) : (
         <div className="card p-0 overflow-hidden">
           <table className="w-full">
             <thead><tr className="border-b border-border bg-surface-sunken/50">
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">When</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Customer</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Service</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Branch</th>
-              <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">Status</th>
-              <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Actions</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.bookings.colWhen', 'When')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.bookings.colCustomer', 'Customer')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.bookings.colService', 'Service')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.bookings.colBranch', 'Branch')}</th>
+              <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.bookings.colStatus', 'Status')}</th>
+              <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.bookings.colActions', 'Actions')}</th>
             </tr></thead>
             <tbody className="divide-y divide-border">
               {bookings.map((b) => (
@@ -192,10 +195,10 @@ export default function BookingsPage() {
                   <td className="px-5 py-3 text-sm text-text-secondary">{b.outletName ?? '—'}</td>
                   <td className="px-5 py-3 text-center"><span className={`badge capitalize ${STATUS_BADGE[b.status]}`}>{b.status}</span></td>
                   <td className="px-5 py-3 text-right whitespace-nowrap">
-                    {b.status === 'booked' && <button className="btn-ghost text-xs text-blue-600" onClick={() => setStatus(b, 'confirmed')}>Confirm</button>}
-                    {(b.status === 'booked' || b.status === 'confirmed') && <button className="btn-ghost text-xs text-green-600" onClick={() => setStatus(b, 'done')}>Done</button>}
-                    <button className="btn-ghost text-xs" onClick={() => setModal({ open: true, editing: b })}>Edit</button>
-                    <button className="btn-ghost text-xs text-red-600" onClick={() => remove(b.id)}>Delete</button>
+                    {b.status === 'booked' && <button className="btn-ghost text-xs text-blue-600" onClick={() => setStatus(b, 'confirmed')}>{t('dash.bookings.confirm', 'Confirm')}</button>}
+                    {(b.status === 'booked' || b.status === 'confirmed') && <button className="btn-ghost text-xs text-green-600" onClick={() => setStatus(b, 'done')}>{t('dash.bookings.done', 'Done')}</button>}
+                    <button className="btn-ghost text-xs" onClick={() => setModal({ open: true, editing: b })}>{t('dash.bookings.edit', 'Edit')}</button>
+                    <button className="btn-ghost text-xs text-red-600" onClick={() => remove(b.id)}>{t('dash.bookings.delete', 'Delete')}</button>
                   </td>
                 </tr>
               ))}

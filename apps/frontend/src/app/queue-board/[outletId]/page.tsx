@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { isAuthenticated } from '@/lib/auth';
+import { isAuthenticated, getUser } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
+import { usePublicBranding } from '@/lib/publicBranding';
 
 interface OrderCard {
   id: string;
@@ -18,6 +20,8 @@ interface BayDTO { id: string; name: string; status: string }
 const AVG_MINUTES = 15;
 
 export default function QueueBoardPage() {
+  const { t } = useI18n();
+  const tenantBrand = usePublicBranding(getUser()?.tenantId);
   const [queue, setQueue] = useState<OrderCard[]>([]);
   const [bays, setBays] = useState<BayDTO[]>([]);
   const [now, setNow] = useState(() => new Date());
@@ -57,8 +61,16 @@ export default function QueueBoardPage() {
     <div className="min-h-screen bg-slate-900 text-white p-8">
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary-500 rounded-xl flex items-center justify-center"><span className="font-bold text-white">A</span></div>
-          <h1 className="text-3xl font-bold">Service Queue</h1>
+          <div className="w-10 h-10 bg-primary-500 rounded-xl flex items-center justify-center overflow-hidden">
+            {tenantBrand.logoUrl
+              // eslint-disable-next-line @next/next/no-img-element
+              ? <img src={tenantBrand.logoUrl} alt="" className="w-full h-full object-contain" />
+              : <span className="font-bold text-white">{(tenantBrand.companyName || 'A').charAt(0)}</span>}
+          </div>
+          <div>
+            {tenantBrand.companyName && <p className="text-sm text-slate-400 leading-tight">{tenantBrand.companyName}</p>}
+            <h1 className="text-3xl font-bold leading-tight">{t('cust.queueBoard.title', 'Service Queue')}</h1>
+          </div>
         </div>
         <div className="text-right">
           <p className="text-3xl font-mono">{now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</p>
@@ -80,7 +92,7 @@ export default function QueueBoardPage() {
 
       {/* Queue */}
       {queue.length === 0 ? (
-        <div className="flex items-center justify-center h-64 text-2xl text-slate-500">No vehicles in queue</div>
+        <div className="flex items-center justify-center h-64 text-2xl text-slate-500">{t('cust.queueBoard.empty', 'No vehicles in queue')}</div>
       ) : (
         <div className="grid gap-3">
           {queue.map((o, idx) => (
@@ -91,10 +103,10 @@ export default function QueueBoardPage() {
                 <p className="text-slate-300">{o.customerName}{o.licensePlate ? ` · ${o.licensePlate}` : ''}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-slate-400">Est. wait</p>
-                <p className="text-2xl font-mono">{Math.ceil((idx / activeBays) * AVG_MINUTES)} min</p>
+                <p className="text-sm text-slate-400">{t('cust.queueBoard.estWait', 'Est. wait')}</p>
+                <p className="text-2xl font-mono">{Math.ceil((idx / activeBays) * AVG_MINUTES)} {t('cust.queueBoard.min', 'min')}</p>
               </div>
-              {idx === 0 && <span className="text-sm font-semibold bg-white/20 rounded-md px-4 py-1.5">NEXT</span>}
+              {idx === 0 && <span className="text-sm font-semibold bg-white/20 rounded-md px-4 py-1.5">{t('cust.queueBoard.next', 'NEXT')}</span>}
             </div>
           ))}
         </div>

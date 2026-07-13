@@ -30,7 +30,14 @@ export class SettlementController {
 
   @Post('payout')
   @HttpCode(HttpStatus.CREATED)
-  payout(@CurrentUser() user: JWTPayload, @Body() body: { owingOutletId: string; servingOutletId: string; note?: string }) {
-    return this.service.payout(user.tenant_id, body.owingOutletId, body.servingOutletId, user.sub, body.note);
+  payout(@CurrentUser() user: JWTPayload, @Body() body: { owingOutletId: string; servingOutletId: string; note?: string; entryIds?: string[] }) {
+    return this.service.payout(user.tenant_id, body.owingOutletId, body.servingOutletId, user.sub, body.note, body.entryIds);
+  }
+
+  /** Net-off two branches that owe each other; settles both directions in one batch. */
+  @Post('net-settle')
+  @HttpCode(HttpStatus.CREATED)
+  netSettle(@CurrentUser() user: JWTPayload, @Body() body: { outletAId: string; outletBId: string; note?: string }) {
+    return this.service.netSettle(user.tenant_id, body.outletAId, body.outletBId, user.sub, body.note);
   }
 }

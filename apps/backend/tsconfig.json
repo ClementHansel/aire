@@ -4,12 +4,15 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "module": "CommonJS",
-    "moduleResolution": "node",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "declaration": false,
     "declarationMap": false,
     "incremental": true,
+    // TS7's native resolver doesn't auto-include @types from the pnpm layout, so
+    // ambient-global providers must be listed explicitly (node globals + the
+    // Express/Multer namespace augmentations used as Express.Multer.File).
+    "types": ["node", "express", "multer"],
     "paths": {
       "@aire/shared": ["../../packages/shared/dist"],
       "@aire/shared/*": ["../../packages/shared/dist/*"]

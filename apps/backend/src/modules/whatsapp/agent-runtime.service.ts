@@ -2,7 +2,9 @@ import { Injectable, Inject, Logger, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { SettingsService } from '../settings/settings.service';
-import { LLMRouterService, ChatMessage, LLMErrorResponse } from '../agent/llm-router.service';
+import { ChatMessage } from '../agent/llm-router.service';
+import type { AgentRole } from '../agent-registry/agent-registry.service';
+import { CustomerAgentService } from './customer-agent.service';
 import {
   CustomerContextService, ResolvedCustomer, CustomerScopedContext, PublicInfo,
 } from './customer-context.service';
@@ -11,7 +13,14 @@ export type Intent = 'human' | 'status' | 'membership' | 'price' | 'booking' | '
 
 interface AgentRow { name: string; role: string; prompt: string | null }
 
-export interface ReplyResult { text: string; escalate: boolean; mode: 'rigid' | 'fluid'; agentName: string }
+export interface ReplyResult {
+  text: string;
+  escalate: boolean;
+  mode: 'rigid' | 'fluid';
+  agentName: string;
+  /** True when the agent just proposed a booking (caller may offer YA/BATAL buttons). */
+  proposedBooking?: boolean;
+}
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
@@ -33,7 +42,7 @@ export class AgentRuntimeService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly context: CustomerContextService,
     private readonly settings: SettingsService,
-    @Optional() private readonly llm?: LLMRouterService,
+    @Optional() private readonly customerAgent?: CustomerAgentService,
   ) {}
 
   detectIntent(text: string): Intent {
@@ -67,7 +76,7 @@ export class AgentRuntimeService {
   private async fluidEnabled(tenantId: string): Promise<boolean> {
     try {
       const s = await this.settings.getSettings(tenantId);
-      if (!s.ai_enabled || !this.llm) return false;
+      if (!s.ai_enabled || !this.customerAgent) return false;
       if (s.llm_provider === 'openrouter') {
         return !!(s.llm_api_key_encrypted && s.llm_api_key_encrypted.trim() !== '');
       }
@@ -100,82 +109,32 @@ export class AgentRuntimeService {
       this.context.getPublicInfo(params.tenantId, params.outletId),
     ]);
 
-    if (await this.fluidEnabled(params.tenantId)) {
-      const fluid = await this.fluidReply({ ...params, intent, agent, customer, ctx, pub });
-      if (fluid) return { text: fluid, escalate: false, mode: 'fluid', agentName };
+    // FLUID: hand off to the shared customer brain (tool-calling loop, scoped to
+    // this customer, with the persona's allowed tools). Falls back to rigid on
+    // any LLM error so a reply always goes out.
+    if (this.customerAgent && (await this.fluidEnabled(params.tenantId))) {
+      const persona = agent ? { name: agent.name, role: agent.role as AgentRole, prompt: agent.prompt } : null;
+      const fluid = await this.customerAgent.reply({
+        tenantId: params.tenantId,
+        fromPhone: params.fromPhone,
+        outletId: params.outletId ?? null,
+        text: params.text,
+        basePrompt: params.basePrompt,
+        knowledge: params.knowledge,
+        history: params.history,
+        persona,
+        customer,
+        pub,
+      });
+      if (fluid) {
+        const proposedBooking = fluid.toolsUsed.some((t) => t.tool === 'create_booking' && t.ok);
+        return { text: fluid.text, escalate: fluid.escalate, mode: 'fluid', agentName, proposedBooking };
+      }
       this.logger.warn(`Fluid reply failed for tenant ${params.tenantId}; falling back to rigid`);
     }
 
     const rigid = this.rigidReply(intent, customer, ctx, pub, params.basePrompt);
     return { text: rigid.text, escalate: rigid.escalate, mode: 'rigid', agentName };
-  }
-
-  // ── FLUID (LLM) ───────────────────────────────────────────────────────────
-  private async fluidReply(p: {
-    tenantId: string; text: string; basePrompt: string | null; knowledge: string | null;
-    history: ChatMessage[]; intent: Intent; agent: AgentRow | null;
-    customer: ResolvedCustomer | null; ctx: CustomerScopedContext | null; pub: PublicInfo;
-  }): Promise<string | null> {
-    if (!this.llm) return null;
-    const system = this.buildSystemPrompt(p);
-    const messages: ChatMessage[] = [
-      { role: 'system', content: system },
-      ...p.history.slice(-8),
-      { role: 'user', content: p.text },
-    ];
-    const res = await this.llm.chat(p.tenantId, messages, { temperature: 0.4, max_tokens: 500 });
-    if ('error' in res && (res as LLMErrorResponse).error === true) return null;
-    const content = res.content?.trim();
-    return content && content.length > 0 ? content : null;
-  }
-
-  private buildSystemPrompt(p: {
-    basePrompt: string | null; knowledge: string | null; agent: AgentRow | null;
-    customer: ResolvedCustomer | null; ctx: CustomerScopedContext | null; pub: PublicInfo;
-  }): string {
-    const lines: string[] = [];
-    const persona = p.agent ? `${p.agent.name}, a ${p.agent.role.replace(/_/g, ' ')}` : 'a helpful assistant';
-    lines.push(`You are ${persona} for an Indonesian car wash & detailing business (brands: AIRE car wash, LEAD detailing).`);
-    if (p.agent?.prompt) lines.push(p.agent.prompt);
-    if (p.basePrompt) lines.push(p.basePrompt);
-    lines.push('Reply in the customer\'s language (Bahasa Indonesia by default). Be concise, warm, and helpful. Use WhatsApp-friendly short messages.');
-    lines.push(
-      'STRICT RULES: Only discuss THIS customer\'s own data and public service/price info. ' +
-      'Never reveal or infer other customers\' data, internal revenue/finance, staff, or company secrets. ' +
-      'If asked for anything outside your knowledge or another person\'s data, politely decline and offer to connect a human agent. ' +
-      'Never invent prices, order numbers, or membership details — use only the data provided below.',
-    );
-
-    if (p.knowledge?.trim()) lines.push(`\nBUSINESS KNOWLEDGE:\n${p.knowledge.trim()}`);
-
-    if (p.pub.services.length) {
-      const svc = p.pub.services.slice(0, 40).map((s) => `- [${s.unit}] ${s.name}: ${fmt(s.price)}`).join('\n');
-      lines.push(`\nSERVICES & PRICES:\n${svc}`);
-    }
-    if (p.pub.plans.length) {
-      lines.push(`\nMEMBERSHIP PLANS:\n${p.pub.plans.map((m) => `- ${m.name}: ${fmt(m.price)} (${m.durationMonths} mo)`).join('\n')}`);
-    }
-    if (p.pub.promotions.length) lines.push(`\nACTIVE PROMOTIONS: ${p.pub.promotions.join('; ')}`);
-
-    if (p.customer && p.ctx) {
-      lines.push(`\nCUSTOMER (the person you are chatting with): ${p.customer.name}.`);
-      if (p.ctx.memberships.length) {
-        lines.push('Their memberships: ' + p.ctx.memberships.map((m) => `${m.plan} (${m.status}, ends ${m.endDate}, ${m.usesLeft ?? '—'} uses left${m.plates.length ? `, plates: ${m.plates.join('/')}` : ''})`).join('; '));
-      }
-      if (p.ctx.activeQueue) lines.push(`Current queue: order ${p.ctx.activeQueue.orderNumber}, position ${p.ctx.activeQueue.position}, status ${p.ctx.activeQueue.status}.`);
-      if (p.ctx.recentOrders.length) {
-        lines.push('Recent orders: ' + p.ctx.recentOrders.map((o) => `${o.orderNumber} (${o.status}, ${fmt(o.total)})`).join('; '));
-      }
-      if (p.ctx.bookings.length) {
-        lines.push('Upcoming bookings: ' + p.ctx.bookings.map((b) => `${b.service ?? 'service'} @ ${b.scheduledAt} (${b.status})`).join('; '));
-      }
-      if (p.ctx.voucherPacks.length) {
-        lines.push('Voucher packs: ' + p.ctx.voucherPacks.map((v) => `${v.benefit} x${v.quantity} (${v.redeemed} used)`).join('; '));
-      }
-    } else {
-      lines.push('\nThe sender is not a registered customer yet — only share public info and invite them to visit or register.');
-    }
-    return lines.join('\n');
   }
 
   // ── RIGID (deterministic templates) ───────────────────────────────────────

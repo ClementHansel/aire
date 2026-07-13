@@ -23,6 +23,8 @@ export interface ServiceDTO {
   isActive: boolean;
   isMainService: boolean;
   sortOrder: number;
+  /** Optional scan-to-cart barcode (unique per tenant). Null when unset. */
+  barcode?: string | null;
 }
 
 /**
@@ -40,6 +42,8 @@ export interface CreateServiceRequest {
   isActive?: boolean;
   isMainService?: boolean;
   sortOrder?: number;
+  /** Optional barcode. Empty string / null clears it. */
+  barcode?: string | null;
 }
 
 /**

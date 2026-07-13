@@ -1,7 +1,9 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Optional } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 import { JWTPayload, normalizePhone } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export interface PackOrderResult {
   id: string;
@@ -21,7 +23,10 @@ export interface PackOrderResult {
  */
 @Injectable()
 export class PosCheckoutService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    @Optional() private readonly eventBus?: EventBusService,
+  ) {}
 
   /**
    * Find or create a customer by normalized phone within the tenant.
@@ -31,19 +36,32 @@ export class PosCheckoutService {
     tenantId: string,
     name: string,
     phone: string,
+    email?: string,
   ): Promise<string> {
     const { normalized } = normalizePhone(phone);
     const phoneNormalized = normalized || phone.replace(/\D/g, '');
+    const cleanEmail = email?.trim() || null;
 
-    const res = await client.query<{ id: string }>(
-      `INSERT INTO customers (tenant_id, name, phone, phone_normalized)
-       VALUES ($1, $2, $3, $4)
+    // COALESCE keeps an existing email when a later sale omits it.
+    // `xmax = 0` is true only for a freshly INSERTed row, letting us emit
+    // CustomerCreated on genuine creation and stay silent on repeat sales.
+    const res = await client.query<{ id: string; inserted: boolean }>(
+      `INSERT INTO customers (tenant_id, name, phone, phone_normalized, email)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (tenant_id, phone_normalized)
-       DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
-       RETURNING id`,
-      [tenantId, name, phone, phoneNormalized],
+       DO UPDATE SET name = EXCLUDED.name, email = COALESCE(EXCLUDED.email, customers.email), updated_at = NOW()
+       RETURNING id, (xmax = 0) AS inserted`,
+      [tenantId, name, phone, phoneNormalized, cleanEmail],
     );
-    return res.rows[0]!.id;
+    const row = res.rows[0]!;
+    if (row.inserted) {
+      void this.eventBus?.emit({
+        type: DomainEventType.CustomerCreated,
+        tenantId, actor: 'pos',
+        payload: { customerId: row.id, name, phone: phoneNormalized },
+      });
+    }
+    return row.id;
   }
 
   /**

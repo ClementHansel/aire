@@ -7,4 +7,5 @@ export type {
   DeviceConfirmation,
   DeviceHealthCheck,
   DiscoveryProtocol,
+  ScanSession,
 } from './discovery.types';

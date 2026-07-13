@@ -4,6 +4,7 @@ import {
   Patch,
   Param,
   Body,
+  Ip,
   UseGuards,
 } from '@nestjs/common';
 import { Role, JWTPayload } from '@aire/shared';
@@ -11,7 +12,7 @@ import { Roles, CurrentUser } from '../../common/decorators';
 import { RolesGuard, RlsContextGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { SettingsService } from './settings.service';
-import type { TenantAutomationSettings } from './settings.interfaces';
+import type { TenantAutomationSettings, PublicTenantSettings } from './settings.interfaces';
 
 /**
  * Settings Controller.
@@ -39,8 +40,9 @@ export class SettingsController {
   @Get(':tenantId')
   async getSettings(
     @Param('tenantId') tenantId: string,
-  ): Promise<TenantAutomationSettings> {
-    return this.settingsService.getSettings(tenantId);
+  ): Promise<PublicTenantSettings> {
+    // Never return decrypted secrets to the client — only set/not-set flags.
+    return this.settingsService.getPublicSettings(tenantId);
   }
 
   /**
@@ -60,8 +62,9 @@ export class SettingsController {
     @Param('tenantId') tenantId: string,
     @CurrentUser() user: JWTPayload,
     @Body() body: Partial<TenantAutomationSettings>,
+    @Ip() ip: string,
   ): Promise<TenantAutomationSettings> {
     await this.settingsService.enforceOwnerRole(tenantId, user.sub);
-    return this.settingsService.updateSettings(tenantId, user.sub, body);
+    return this.settingsService.updateSettings(tenantId, user.sub, body, ip);
   }
 }

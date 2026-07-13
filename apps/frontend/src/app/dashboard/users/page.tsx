@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 
 interface Branch { id: string; name: string }
 interface UserRow { id: string; name: string; email: string; role: string; isActive: boolean; outletIds: string[]; customRoleId: string | null }
@@ -11,6 +12,7 @@ interface PermGroup { group: string; permissions: { key: string; label: string }
 const BASE_ROLES = ['tenant_owner', 'outlet_admin', 'cashier'];
 
 function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: UserRow | null; branches: Branch[]; roles: RoleRow[]; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n();
   const [name, setName] = useState(initial?.name ?? '');
   const [email, setEmail] = useState(initial?.email ?? '');
   const [password, setPassword] = useState('');
@@ -32,41 +34,41 @@ function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: Us
         await api.post('/users', { name, email, password, role, customRoleId: customRoleId || null, outletIds });
       }
       onSaved();
-    } catch (err) { setError(err instanceof Error ? err.message : 'Save failed'); }
+    } catch (err) { setError(err instanceof Error ? err.message : t('dash.users.saveFailed', 'Save failed')); }
     finally { setSaving(false); }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="card w-full max-w-lg max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="section-title mb-4">{initial ? 'Edit User' : 'Add User'}</h3>
+        <h3 className="section-title mb-4">{initial ? t('dash.users.editUser', 'Edit User') : t('dash.users.addUser', 'Add User')}</h3>
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Name</label><input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
-            <div><label className="block text-sm font-medium mb-1.5">Email</label><input aria-label="Email" className="input-field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!initial} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.users.name', 'Name')}</label><input aria-label={t('dash.users.name', 'Name')} className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.users.email', 'Email')}</label><input aria-label={t('dash.users.email', 'Email')} className="input-field" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={!!initial} required /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1.5">Base role</label>
-              <select aria-label="Role" className="input-field" value={role} onChange={(e) => setRole(e.target.value)}>
+              <label className="block text-sm font-medium mb-1.5">{t('dash.users.baseRole', 'Base role')}</label>
+              <select aria-label={t('dash.users.role', 'Role')} className="input-field" value={role} onChange={(e) => setRole(e.target.value)}>
                 {BASE_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1.5">Custom role (optional)</label>
-              <select aria-label="Custom Role Id" className="input-field" value={customRoleId} onChange={(e) => setCustomRoleId(e.target.value)}>
-                <option value="">— none —</option>
+              <label className="block text-sm font-medium mb-1.5">{t('dash.users.customRole', 'Custom role (optional)')}</label>
+              <select aria-label={t('dash.users.customRoleId', 'Custom Role Id')} className="input-field" value={customRoleId} onChange={(e) => setCustomRoleId(e.target.value)}>
+                <option value="">{t('dash.users.none', '— none —')}</option>
                 {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1.5">{initial ? 'New password (leave blank to keep)' : 'Password'}</label>
-            <input aria-label="Password" className="input-field" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required={!initial} placeholder="••••••••" />
+            <label className="block text-sm font-medium mb-1.5">{initial ? t('dash.users.newPassword', 'New password (leave blank to keep)') : t('dash.users.password', 'Password')}</label>
+            <input aria-label={t('dash.users.password', 'Password')} className="input-field" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required={!initial} placeholder="••••••••" />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1.5">Branch placement (multi-select)</label>
+            <label className="block text-sm font-medium mb-1.5">{t('dash.users.branchPlacement', 'Branch placement (multi-select)')}</label>
             <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-auto border border-border rounded-lg p-2">
               {branches.map((b) => (
                 <label key={b.id} className="flex items-center gap-2 text-sm text-text-secondary">
@@ -76,8 +78,8 @@ function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: Us
             </div>
           </div>
           <div className="flex gap-2 justify-end pt-2">
-            <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : initial ? 'Update' : 'Create'}</button>
+            <button type="button" className="btn-secondary" onClick={onClose}>{t('dash.users.cancel', 'Cancel')}</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? t('dash.users.saving', 'Saving…') : initial ? t('dash.users.update', 'Update') : t('dash.users.create', 'Create')}</button>
           </div>
         </form>
       </div>
@@ -86,6 +88,7 @@ function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: Us
 }
 
 function RoleModal({ initial, perms, onClose, onSaved }: { initial: RoleRow | null; perms: PermGroup[]; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n();
   const [name, setName] = useState(initial?.name ?? '');
   const [baseRole, setBaseRole] = useState(initial?.baseRole ?? 'cashier');
   const [selected, setSelected] = useState<string[]>(initial?.permissions ?? []);
@@ -100,27 +103,27 @@ function RoleModal({ initial, perms, onClose, onSaved }: { initial: RoleRow | nu
       if (initial) await api.put(`/roles/${initial.id}`, { name, baseRole, permissions: selected });
       else await api.post('/roles', { name, baseRole, permissions: selected });
       onSaved();
-    } catch (err) { setError(err instanceof Error ? err.message : 'Save failed'); }
+    } catch (err) { setError(err instanceof Error ? err.message : t('dash.users.saveFailed', 'Save failed')); }
     finally { setSaving(false); }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="card w-full max-w-lg max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-        <h3 className="section-title mb-4">{initial ? 'Edit Role' : 'Add Role'}</h3>
+        <h3 className="section-title mb-4">{initial ? t('dash.users.editRole', 'Edit Role') : t('dash.users.addRole', 'Add Role')}</h3>
         <form onSubmit={submit} className="space-y-4">
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="block text-sm font-medium mb-1.5">Role name</label><input aria-label="Name" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.users.roleName', 'Role name')}</label><input aria-label={t('dash.users.name', 'Name')} className="input-field" value={name} onChange={(e) => setName(e.target.value)} required /></div>
             <div>
-              <label className="block text-sm font-medium mb-1.5">Base role (hierarchy)</label>
-              <select aria-label="Base Role" className="input-field" value={baseRole} onChange={(e) => setBaseRole(e.target.value)}>
+              <label className="block text-sm font-medium mb-1.5">{t('dash.users.baseRoleHierarchy', 'Base role (hierarchy)')}</label>
+              <select aria-label={t('dash.users.baseRoleAria', 'Base Role')} className="input-field" value={baseRole} onChange={(e) => setBaseRole(e.target.value)}>
                 {BASE_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-2">Permissions</label>
+            <label className="block text-sm font-medium mb-2">{t('dash.users.permissions', 'Permissions')}</label>
             <div className="space-y-3 max-h-72 overflow-auto border border-border rounded-lg p-3">
               {perms.map((g) => (
                 <div key={g.group}>
@@ -137,8 +140,8 @@ function RoleModal({ initial, perms, onClose, onSaved }: { initial: RoleRow | nu
             </div>
           </div>
           <div className="flex gap-2 justify-end pt-2">
-            <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : initial ? 'Update' : 'Create'}</button>
+            <button type="button" className="btn-secondary" onClick={onClose}>{t('dash.users.cancel', 'Cancel')}</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? t('dash.users.saving', 'Saving…') : initial ? t('dash.users.update', 'Update') : t('dash.users.create', 'Create')}</button>
           </div>
         </form>
       </div>
@@ -147,6 +150,7 @@ function RoleModal({ initial, perms, onClose, onSaved }: { initial: RoleRow | nu
 }
 
 export default function UsersPage() {
+  const { t } = useI18n();
   const [tab, setTab] = useState<'users' | 'roles'>('users');
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
@@ -163,8 +167,8 @@ export default function UsersPage() {
         api.get<UserRow[]>('/users'), api.get<RoleRow[]>('/roles'), api.get<Branch[]>('/outlets'), api.get<PermGroup[]>('/permissions'),
       ]);
       setUsers(u); setRoles(r); setBranches(b); setPerms(p);
-    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
-  }, []);
+    } catch (err) { setError(err instanceof Error ? err.message : t('dash.users.loadFailed', 'Failed to load')); }
+  }, [t]);
   useEffect(() => { load(); }, [load]);
 
   const branchNames = (ids: string[]) => ids.map((id) => branches.find((b) => b.id === id)?.name).filter(Boolean).join(', ') || '—';
@@ -173,17 +177,17 @@ export default function UsersPage() {
     <div data-testid="users-page">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Users & Roles</h1>
-          <p className="mt-1 text-sm text-text-secondary">Manage staff, multi-branch placement, and dynamic role permissions.</p>
+          <h1 className="text-2xl font-bold text-text-primary">{t('dash.users.title', 'Users & Roles')}</h1>
+          <p className="mt-1 text-sm text-text-secondary">{t('dash.users.subtitle', 'Manage staff, multi-branch placement, and dynamic role permissions.')}</p>
         </div>
         {tab === 'users'
-          ? <button className="btn-primary" onClick={() => setUserModal({ open: true, editing: null })}>+ Add User</button>
-          : <button className="btn-primary" onClick={() => setRoleModal({ open: true, editing: null })}>+ Add Role</button>}
+          ? <button className="btn-primary" onClick={() => setUserModal({ open: true, editing: null })}>+ {t('dash.users.addUser', 'Add User')}</button>
+          : <button className="btn-primary" onClick={() => setRoleModal({ open: true, editing: null })}>+ {t('dash.users.addRole', 'Add Role')}</button>}
       </div>
 
       <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-5">
-        {(['users', 'roles'] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 text-sm font-semibold rounded-md capitalize ${tab === t ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{t}</button>
+        {(['users', 'roles'] as const).map((tk) => (
+          <button key={tk} onClick={() => setTab(tk)} className={`px-4 py-1.5 text-sm font-semibold rounded-md capitalize ${tab === tk ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{tk === 'users' ? t('dash.users.tabUsers', 'users') : t('dash.users.tabRoles', 'roles')}</button>
         ))}
       </div>
 
@@ -193,11 +197,11 @@ export default function UsersPage() {
         <div className="card p-0 overflow-hidden">
           <table className="w-full">
             <thead><tr className="border-b border-border bg-surface-sunken/50">
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Name</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Role</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Branches</th>
-              <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">Status</th>
-              <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Actions</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.name', 'Name')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.role', 'Role')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.branches', 'Branches')}</th>
+              <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.status', 'Status')}</th>
+              <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.actions', 'Actions')}</th>
             </tr></thead>
             <tbody className="divide-y divide-border">
               {users.map((u) => (
@@ -205,8 +209,8 @@ export default function UsersPage() {
                   <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{u.name}<div className="text-xs text-text-muted">{u.email}</div></td>
                   <td className="px-5 py-3.5 text-sm capitalize">{u.role.replace(/_/g, ' ')}</td>
                   <td className="px-5 py-3.5 text-sm text-text-secondary">{branchNames(u.outletIds)}</td>
-                  <td className="px-5 py-3.5 text-center"><span className={`badge ${u.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{u.isActive ? 'Active' : 'Inactive'}</span></td>
-                  <td className="px-5 py-3.5 text-right"><button className="btn-ghost text-xs" onClick={() => setUserModal({ open: true, editing: u })}>Edit</button></td>
+                  <td className="px-5 py-3.5 text-center"><span className={`badge ${u.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{u.isActive ? t('dash.users.active', 'Active') : t('dash.users.inactive', 'Inactive')}</span></td>
+                  <td className="px-5 py-3.5 text-right"><button className="btn-ghost text-xs" onClick={() => setUserModal({ open: true, editing: u })}>{t('dash.users.edit', 'Edit')}</button></td>
                 </tr>
               ))}
             </tbody>
@@ -216,18 +220,18 @@ export default function UsersPage() {
         <div className="card p-0 overflow-hidden">
           <table className="w-full">
             <thead><tr className="border-b border-border bg-surface-sunken/50">
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Role</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Base</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">Permissions</th>
-              <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">Actions</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.role', 'Role')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.base', 'Base')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.permissions', 'Permissions')}</th>
+              <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.users.actions', 'Actions')}</th>
             </tr></thead>
             <tbody className="divide-y divide-border">
-              {roles.length === 0 ? <tr><td colSpan={4} className="px-5 py-6 text-sm text-text-muted text-center">No custom roles yet.</td></tr> : roles.map((r) => (
+              {roles.length === 0 ? <tr><td colSpan={4} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.users.noRoles', 'No custom roles yet.')}</td></tr> : roles.map((r) => (
                 <tr key={r.id}>
                   <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{r.name}</td>
                   <td className="px-5 py-3.5 text-sm capitalize">{r.baseRole.replace(/_/g, ' ')}</td>
-                  <td className="px-5 py-3.5 text-xs text-text-muted">{r.permissions.length} permission(s)</td>
-                  <td className="px-5 py-3.5 text-right"><button className="btn-ghost text-xs" onClick={() => setRoleModal({ open: true, editing: r })}>Edit</button></td>
+                  <td className="px-5 py-3.5 text-xs text-text-muted">{r.permissions.length} {t('dash.users.permissionsCount', 'permission(s)')}</td>
+                  <td className="px-5 py-3.5 text-right"><button className="btn-ghost text-xs" onClick={() => setRoleModal({ open: true, editing: r })}>{t('dash.users.edit', 'Edit')}</button></td>
                 </tr>
               ))}
             </tbody>

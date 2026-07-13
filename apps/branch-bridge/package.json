@@ -1,0 +1,30 @@
+{
+  "name": "@aire/branch-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-prem Branch Bridge Agent: LAN camera/IoT discovery, RTSP->HLS relay, and MQTT bridge for the AIRE car-wash SaaS.",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "package": "node packaging/build-package.mjs",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.4.3",
+    "mqtt": "^5.15.2",
+    "node-ssdp": "^4.0.1",
+    "onvif": "^0.8.1",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/node-ssdp": "^4.0.5",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  }
+}

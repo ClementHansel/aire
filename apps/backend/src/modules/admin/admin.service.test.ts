@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 
 /**
  * Mock pool for database queries.
@@ -14,11 +15,15 @@ function createMockPool() {
 describe('AdminService', () => {
   let service: AdminService;
   let mockPool: ReturnType<typeof createMockPool>;
+  let mockLegal: { create: ReturnType<typeof vi.fn> };
+  let mockOutlets: { create: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockPool = createMockPool();
-    service = new AdminService(mockPool as any);
+    mockLegal = { create: vi.fn() };
+    mockOutlets = { create: vi.fn() };
+    service = new AdminService(mockPool as any, mockLegal as any, mockOutlets as any);
   });
 
   describe('listTenants', () => {
@@ -85,9 +90,11 @@ describe('AdminService', () => {
       expect(result.name).toBe('New Wash');
       expect(result.slug).toBe('new-wash');
       expect(result.plan).toBe('standard');
+      // New tenants are seeded with the default automation settings (same as
+      // self-service register), not an empty object.
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO tenants'),
-        ['New Wash', 'new-wash', 'standard', '{}'],
+        ['New Wash', 'new-wash', 'standard', JSON.stringify(DEFAULT_AUTOMATION_SETTINGS)],
       );
     });
 
@@ -115,9 +122,10 @@ describe('AdminService', () => {
       });
 
       expect(result.plan).toBe('premium');
+      // Caller settings are merged over the defaults.
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO tenants'),
-        ['Premium Wash', 'premium-wash', 'premium', '{"maxOutlets":10}'],
+        ['Premium Wash', 'premium-wash', 'premium', JSON.stringify({ ...DEFAULT_AUTOMATION_SETTINGS, maxOutlets: 10 })],
       );
     });
 

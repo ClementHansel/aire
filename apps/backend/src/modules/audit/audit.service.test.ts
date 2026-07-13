@@ -312,7 +312,7 @@ describe('AuditService', () => {
       await service.listLogs({ tenantId: 'tenant-001' });
 
       const dataCall = mockPool.query.mock.calls[1];
-      expect(dataCall[0]).toContain('ORDER BY created_at DESC');
+      expect(dataCall[0]).toContain('ORDER BY a.created_at DESC');
     });
 
     it('should map database rows to AuditLogRecord format', async () => {

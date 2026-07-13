@@ -25,9 +25,9 @@ const maxPlatesArbitrary = fc.integer({ min: 1, max: 10 });
 /** Generate a valid plate string (alphanumeric with optional spaces) */
 const plateArbitrary = fc
   .tuple(
-    fc.stringOf(fc.constantFrom('A', 'B', 'C', 'D', 'E', 'F'), { minLength: 1, maxLength: 2 }),
-    fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), { minLength: 1, maxLength: 4 }),
-    fc.stringOf(fc.constantFrom('A', 'B', 'C', 'X', 'Y', 'Z'), { minLength: 1, maxLength: 3 }),
+    fc.string({ unit: fc.constantFrom('A', 'B', 'C', 'D', 'E', 'F'), minLength: 1, maxLength: 2 }),
+    fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: 1, maxLength: 4 }),
+    fc.string({ unit: fc.constantFrom('A', 'B', 'C', 'X', 'Y', 'Z'), minLength: 1, maxLength: 3 }),
   )
   .map(([prefix, num, suffix]) => `${prefix} ${num} ${suffix}`);
 

@@ -1163,7 +1163,7 @@ describe('Feature: smart-automation, Property 21: Tenant Context Always Passed t
       fc.asyncProperty(
         fc.constantFrom(...DEFAULT_TOOLS),
         idArb,
-        fc.stringOf(fc.constantFrom(' ', '\t', '\n'), { minLength: 1, maxLength: 5 }),
+        fc.string({ unit: fc.constantFrom(' ', '\t', '\n'), minLength: 1, maxLength: 5 }),
         async (tool, outletId, whitespace) => {
           clearToolRegistry();
           const toggleOverrides: Partial<AutomationToggles> = { [tool.automationKey]: true };
@@ -1192,7 +1192,7 @@ describe('Feature: smart-automation, Property 21: Tenant Context Always Passed t
       fc.asyncProperty(
         fc.constantFrom(...DEFAULT_TOOLS),
         idArb,
-        fc.stringOf(fc.constantFrom(' ', '\t', '\n'), { minLength: 1, maxLength: 5 }),
+        fc.string({ unit: fc.constantFrom(' ', '\t', '\n'), minLength: 1, maxLength: 5 }),
         async (tool, tenantId, whitespace) => {
           clearToolRegistry();
           const toggleOverrides: Partial<AutomationToggles> = { [tool.automationKey]: true };

@@ -62,14 +62,18 @@ describe('RlsContextGuard', () => {
 
     expect(result).toBe(true);
     expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
+    // Values are bound as parameters (set_config), never interpolated into SQL.
     expect(mockClient.query).toHaveBeenCalledWith(
-      "SET LOCAL app.tenant_id = 'tenant-abc'",
+      "SELECT set_config('app.tenant_id', $1, true)",
+      ['tenant-abc'],
     );
     expect(mockClient.query).toHaveBeenCalledWith(
-      "SET LOCAL app.outlet_id = 'outlet-xyz'",
+      "SELECT set_config('app.outlet_id', $1, true)",
+      ['outlet-xyz'],
     );
     expect(mockClient.query).toHaveBeenCalledWith(
-      "SET LOCAL app.role = 'cashier'",
+      "SELECT set_config('app.role', $1, true)",
+      ['cashier'],
     );
     expect(request.dbClient).toBe(mockClient);
   });
@@ -86,7 +90,8 @@ describe('RlsContextGuard', () => {
 
     expect(result).toBe(true);
     expect(mockClient.query).toHaveBeenCalledWith(
-      "SET LOCAL app.outlet_id = ''",
+      "SELECT set_config('app.outlet_id', $1, true)",
+      [''],
     );
   });
 
@@ -102,10 +107,12 @@ describe('RlsContextGuard', () => {
 
     expect(result).toBe(true);
     expect(mockClient.query).toHaveBeenCalledWith(
-      "SET LOCAL app.tenant_id = 'tenant-platform'",
+      "SELECT set_config('app.tenant_id', $1, true)",
+      ['tenant-platform'],
     );
     expect(mockClient.query).toHaveBeenCalledWith(
-      "SET LOCAL app.role = 'platform_super_admin'",
+      "SELECT set_config('app.role', $1, true)",
+      ['platform_super_admin'],
     );
   });
 

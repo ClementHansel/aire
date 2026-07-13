@@ -41,12 +41,18 @@ export interface MenuItem {
   businessUnit: string;
   price: number;
   isMainService: boolean;
+  /** False when the product's recipe can't be fulfilled from current stock
+   *  (customer/kiosk channels block these; the POS is not gated). */
+  available: boolean;
 }
 
 /** Public eMenu payload. */
 export interface PublicMenu {
   tenantName: string;
+  /** Wash/detail/add-on services (everything except retail products). */
   services: MenuItem[];
+  /** Retail products (category='product') — sold from their own kiosk tab. */
+  products: MenuItem[];
   plans: { name: string; durationMonths: number; price: number }[];
 }
 
@@ -97,22 +103,48 @@ export class KioskService {
       [tenantId],
     );
 
+    const outOfStock = await this.getOutOfStockServiceIds(tenantId);
+
+    const items: MenuItem[] = services.rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      category: r.category,
+      businessUnit: r.business_unit,
+      price: parseFloat(r.price),
+      isMainService: r.is_main_service,
+      available: !outOfStock.has(r.id),
+    }));
+
     return {
       tenantName: tenant.rows[0]?.name ?? 'AIRE',
-      services: services.rows.map((r: any) => ({
-        id: r.id,
-        name: r.name,
-        category: r.category,
-        businessUnit: r.business_unit,
-        price: parseFloat(r.price),
-        isMainService: r.is_main_service,
-      })),
+      // Split so the kiosk can sell products from a dedicated tab, like the POS.
+      services: items.filter((i) => i.category !== 'product'),
+      products: items.filter((i) => i.category === 'product'),
       plans: plans.rows.map((r: any) => ({
         name: r.name,
         durationMonths: r.duration_months,
         price: parseFloat(r.price),
       })),
     };
+  }
+
+  /**
+   * Service ids whose recipe can't be fulfilled from current stock (need for one
+   * unit exceeds available stock, unit-converted). Used to block ordering on the
+   * customer/kiosk channels. Services with no recipe are always available.
+   */
+  async getOutOfStockServiceIds(tenantId: string): Promise<Set<string>> {
+    const r = await this.pool.query<{ service_id: string }>(
+      `SELECT DISTINCT rc.service_id
+       FROM service_recipe_components rc
+       JOIN inventory_items ii ON ii.id = rc.inventory_item_id
+       LEFT JOIN uom_conversions uc
+         ON uc.inventory_item_id = ii.id AND uc.from_unit = rc.unit AND uc.to_unit = ii.unit
+       WHERE rc.tenant_id = $1
+         AND (rc.quantity * COALESCE(CASE WHEN rc.unit = ii.unit THEN 1 ELSE uc.factor END, 1)) > ii.quantity`,
+      [tenantId],
+    );
+    return new Set(r.rows.map((x) => x.service_id));
   }
 
   /**

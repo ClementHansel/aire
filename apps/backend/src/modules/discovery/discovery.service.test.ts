@@ -3,6 +3,8 @@ import { NotFoundException } from '@nestjs/common';
 import { DiscoveryService } from './discovery.service';
 import { SettingsService } from '../settings/settings.service';
 import { AuditService } from '../audit/audit.service';
+import { BridgeDispatchService } from '../bridge/bridge-dispatch.service';
+import { BridgeEvents } from '../bridge/bridge.events';
 import { DiscoveredDevice, TenantAutomationSettings, DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 import { DeviceConfirmation } from './discovery.types';
 
@@ -101,7 +103,7 @@ describe('DiscoveryService - confirmDevice', () => {
 
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         tenantId,
-        'system',
+        null,
         expect.objectContaining({
           discovered_devices: expect.arrayContaining([
             expect.objectContaining({
@@ -421,7 +423,7 @@ describe('DiscoveryService - healthCheck', () => {
 
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         tenantId,
-        'system',
+        null,
         expect.objectContaining({
           discovered_devices: expect.arrayContaining([
             expect.objectContaining({
@@ -454,7 +456,7 @@ describe('DiscoveryService - healthCheck', () => {
 
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         tenantId,
-        'system',
+        null,
         expect.objectContaining({
           discovered_devices: expect.arrayContaining([
             expect.objectContaining({
@@ -500,181 +502,6 @@ describe('DiscoveryService - healthCheck', () => {
   });
 });
 
-// ─── IP Change Detection Tests ────────────────────────────────────────────────
-
-describe('DiscoveryService - detectIPChanges', () => {
-  let service: DiscoveryService;
-  let mockSettingsService: SettingsService;
-  const tenantId = 'tenant-123';
-
-  describe('when a device IP has changed', () => {
-    const confirmedDevice = createMockDevice({
-      device_id: 'cam-010',
-      device_type: 'camera',
-      ip_address: '192.168.1.100',
-      manufacturer: 'Hikvision',
-      model: 'DS-2CD2143G0-I',
-      confirmed: true,
-      status: 'online',
-    });
-
-    beforeEach(() => {
-      const settings = createMockSettings([confirmedDevice]);
-      mockSettingsService = createMockSettingsService(settings);
-      service = new DiscoveryService(mockSettingsService);
-      // Mock scanNetwork to return the same device with a new IP
-      vi.spyOn(service, 'scanNetwork').mockResolvedValue({
-        devices: [
-          createMockDevice({
-            device_id: 'cam-010',
-            ip_address: '192.168.1.200', // IP changed
-            manufacturer: 'Hikvision',
-            model: 'DS-2CD2143G0-I',
-          }),
-        ],
-        scan_duration_ms: 100,
-        errors: [],
-      });
-    });
-
-    it('should detect and return the IP change', async () => {
-      const changes = await service.detectIPChanges(tenantId);
-
-      expect(changes).toHaveLength(1);
-      expect(changes[0]).toEqual({
-        deviceId: 'cam-010',
-        oldIp: '192.168.1.100',
-        newIp: '192.168.1.200',
-      });
-    });
-
-    it('should persist updated IP via SettingsService', async () => {
-      await service.detectIPChanges(tenantId);
-
-      expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
-        tenantId,
-        'system',
-        expect.objectContaining({
-          discovered_devices: expect.arrayContaining([
-            expect.objectContaining({
-              device_id: 'cam-010',
-              ip_address: '192.168.1.200',
-            }),
-          ]),
-        }),
-      );
-    });
-  });
-
-  describe('when matching by manufacturer+model', () => {
-    const confirmedDevice = createMockDevice({
-      device_id: 'cam-020',
-      device_type: 'camera',
-      ip_address: '10.0.0.50',
-      manufacturer: 'Dahua',
-      model: 'IPC-HDW5442TM',
-      confirmed: true,
-      status: 'online',
-    });
-
-    beforeEach(() => {
-      const settings = createMockSettings([confirmedDevice]);
-      mockSettingsService = createMockSettingsService(settings);
-      service = new DiscoveryService(mockSettingsService);
-      // Return a different device_id but same manufacturer+model with new IP
-      vi.spyOn(service, 'scanNetwork').mockResolvedValue({
-        devices: [
-          createMockDevice({
-            device_id: 'new-scan-id',
-            ip_address: '10.0.0.99', // IP changed
-            manufacturer: 'Dahua',
-            model: 'IPC-HDW5442TM',
-          }),
-        ],
-        scan_duration_ms: 80,
-        errors: [],
-      });
-    });
-
-    it('should match device by manufacturer+model and detect IP change', async () => {
-      const changes = await service.detectIPChanges(tenantId);
-
-      expect(changes).toHaveLength(1);
-      expect(changes[0]).toEqual({
-        deviceId: 'cam-020',
-        oldIp: '10.0.0.50',
-        newIp: '10.0.0.99',
-      });
-    });
-  });
-
-  describe('when no IP changes detected', () => {
-    const confirmedDevice = createMockDevice({
-      device_id: 'cam-030',
-      ip_address: '192.168.1.50',
-      confirmed: true,
-      status: 'online',
-    });
-
-    beforeEach(() => {
-      const settings = createMockSettings([confirmedDevice]);
-      mockSettingsService = createMockSettingsService(settings);
-      service = new DiscoveryService(mockSettingsService);
-      // Same IP returned from scan
-      vi.spyOn(service, 'scanNetwork').mockResolvedValue({
-        devices: [
-          createMockDevice({
-            device_id: 'cam-030',
-            ip_address: '192.168.1.50', // Same IP
-          }),
-        ],
-        scan_duration_ms: 50,
-        errors: [],
-      });
-    });
-
-    it('should return empty changes array', async () => {
-      const changes = await service.detectIPChanges(tenantId);
-
-      expect(changes).toHaveLength(0);
-    });
-
-    it('should not call updateSettings when no changes', async () => {
-      await service.detectIPChanges(tenantId);
-
-      expect(mockSettingsService.updateSettings).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('when no confirmed devices exist', () => {
-    beforeEach(() => {
-      const settings = createMockSettings([
-        createMockDevice({ confirmed: false, status: 'unconfigured' }),
-      ]);
-      mockSettingsService = createMockSettingsService(settings);
-      service = new DiscoveryService(mockSettingsService);
-    });
-
-    it('should return empty array without scanning', async () => {
-      const scanSpy = vi.spyOn(service, 'scanNetwork');
-      const changes = await service.detectIPChanges(tenantId);
-
-      expect(changes).toHaveLength(0);
-      expect(scanSpy).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('when SettingsService is not available', () => {
-    it('should throw error if SettingsService is not injected', async () => {
-      const serviceWithoutSettings = new DiscoveryService();
-
-      await expect(serviceWithoutSettings.detectIPChanges(tenantId)).rejects.toThrow(
-        'SettingsService is required for IP change detection',
-      );
-    });
-  });
-});
-
 // ─── Audit Logging Tests ──────────────────────────────────────────────────────
 
 describe('DiscoveryService - Audit Logging', () => {
@@ -684,25 +511,63 @@ describe('DiscoveryService - Audit Logging', () => {
   const tenantId = 'tenant-audit-123';
 
   describe('scanNetwork audit logging', () => {
+    let bridgeEvents: BridgeEvents;
+    let mockDispatch: BridgeDispatchService;
+
     beforeEach(() => {
       mockSettingsService = createMockSettingsService(createMockSettings());
       mockAuditService = createMockAuditService();
-      service = new DiscoveryService(mockSettingsService, mockAuditService);
+      bridgeEvents = new BridgeEvents();
+      mockDispatch = {
+        dispatchScan: vi.fn().mockReturnValue('scan-audit-1'),
+      } as unknown as BridgeDispatchService;
+      service = new DiscoveryService(
+        mockSettingsService,
+        mockAuditService,
+        mockDispatch,
+        bridgeEvents,
+      );
+      service.onModuleInit();
     });
 
-    it('should audit-log scan completion with device count and duration', async () => {
-      const result = await service.scanNetwork(tenantId);
+    it('should audit-log scan start on dispatch', async () => {
+      const { scanId } = await service.scanNetwork(tenantId, 'outlet-1');
+
+      expect(scanId).toBe('scan-audit-1');
+      expect(mockDispatch.dispatchScan).toHaveBeenCalledWith('outlet-1');
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          userId: null,
+          operation: 'device_scan_started',
+          entityType: 'network_scan',
+          entityId: 'scan-audit-1',
+        }),
+      );
+    });
+
+    it('should audit-log scan completion when scan:done arrives', async () => {
+      const { scanId } = await service.scanNetwork(tenantId, 'outlet-1');
+
+      bridgeEvents.emit('scan:done', {
+        bridgeId: 'b1',
+        tenantId,
+        outletId: 'outlet-1',
+        scanId,
+        count: 0,
+        errors: [],
+      });
+      // allow the async finalise() microtasks to settle
+      await new Promise((r) => setTimeout(r, 0));
 
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId,
-          userId: 'system',
+          userId: null,
           operation: 'device_scan_completed',
           entityType: 'network_scan',
-          afterValue: expect.objectContaining({
-            devices_found: 0,
-            scan_duration_ms: expect.any(Number),
-          }),
+          entityId: scanId,
+          afterValue: expect.objectContaining({ devices_found: 0 }),
         }),
       );
     });
@@ -730,7 +595,7 @@ describe('DiscoveryService - Audit Logging', () => {
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId,
-          userId: 'system',
+          userId: null,
           operation: 'device_confirmed',
           entityType: 'discovered_device',
           entityId: 'device-001',
@@ -781,49 +646,6 @@ describe('DiscoveryService - Audit Logging', () => {
     });
   });
 
-  describe('detectIPChanges audit logging', () => {
-    const confirmedDevice = createMockDevice({
-      device_id: 'cam-ip-test',
-      ip_address: '192.168.1.100',
-      confirmed: true,
-      status: 'online',
-    });
-
-    beforeEach(() => {
-      const settings = createMockSettings([confirmedDevice]);
-      mockSettingsService = createMockSettingsService(settings);
-      mockAuditService = createMockAuditService();
-      service = new DiscoveryService(mockSettingsService, mockAuditService);
-      // Mock scanNetwork to return device with new IP
-      vi.spyOn(service, 'scanNetwork').mockResolvedValue({
-        devices: [
-          createMockDevice({
-            device_id: 'cam-ip-test',
-            ip_address: '192.168.1.200',
-          }),
-        ],
-        scan_duration_ms: 50,
-        errors: [],
-      });
-    });
-
-    it('should audit-log IP change with before and after values', async () => {
-      await service.detectIPChanges(tenantId);
-
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tenantId,
-          userId: 'system',
-          operation: 'device_ip_changed',
-          entityType: 'discovered_device',
-          entityId: 'cam-ip-test',
-          beforeValue: { ip_address: '192.168.1.100' },
-          afterValue: { ip_address: '192.168.1.200' },
-        }),
-      );
-    });
-  });
-
   describe('no audit logging when AuditService is not injected', () => {
     it('should not throw when AuditService is not available', async () => {
       const settings = createMockSettings([createMockDevice()]);
@@ -838,5 +660,114 @@ describe('DiscoveryService - Audit Logging', () => {
       // Should not throw — audit logging is optional
       await expect(service.confirmDevice(tenantId, confirmation)).resolves.toBeDefined();
     });
+  });
+});
+
+// ─── Bridge Scan Buffering Tests ──────────────────────────────────────────────
+
+describe('DiscoveryService - scanNetwork (bridge model)', () => {
+  let service: DiscoveryService;
+  let mockSettingsService: SettingsService;
+  let bridgeEvents: BridgeEvents;
+  let mockDispatch: BridgeDispatchService;
+  const tenantId = 'tenant-scan-1';
+  const outletId = 'outlet-scan-1';
+
+  beforeEach(() => {
+    mockSettingsService = createMockSettingsService(createMockSettings());
+    bridgeEvents = new BridgeEvents();
+    mockDispatch = {
+      dispatchScan: vi.fn().mockReturnValue('scan-1'),
+    } as unknown as BridgeDispatchService;
+    service = new DiscoveryService(
+      mockSettingsService,
+      undefined,
+      mockDispatch,
+      bridgeEvents,
+    );
+    service.onModuleInit();
+  });
+
+  it('should dispatch a scan and return the scanId', async () => {
+    const result = await service.scanNetwork(tenantId, outletId);
+    expect(result).toEqual({ scanId: 'scan-1' });
+    expect(mockDispatch.dispatchScan).toHaveBeenCalledWith(outletId);
+  });
+
+  it('should throw when no bridge dispatch is wired', async () => {
+    const bare = new DiscoveryService(mockSettingsService);
+    await expect(bare.scanNetwork(tenantId, outletId)).rejects.toThrow(
+      'BridgeDispatchService is required to start a scan',
+    );
+  });
+
+  it('should buffer streamed device events and expose them via getScan', async () => {
+    const { scanId } = await service.scanNetwork(tenantId, outletId);
+
+    bridgeEvents.emit('device', {
+      bridgeId: 'b1',
+      tenantId,
+      outletId,
+      scanId,
+      device: {
+        ip_address: '192.168.1.77',
+        device_type: 'camera',
+        manufacturer: 'Hikvision',
+        model: 'DS-1',
+      },
+    });
+
+    const session = service.getScan(scanId);
+    expect(session).not.toBeNull();
+    expect(session!.status).toBe('scanning');
+    expect(session!.devices).toHaveLength(1);
+    expect(session!.devices[0]!.ip_address).toBe('192.168.1.77');
+    expect(session!.devices[0]!.suggested_label).toContain('Hikvision');
+  });
+
+  it('should mark done and persist devices on scan:done, keeping confirmed ones', async () => {
+    const confirmed = createMockDevice({
+      device_id: 'confirmed-1',
+      ip_address: '10.0.0.1',
+      confirmed: true,
+    });
+    mockSettingsService = createMockSettingsService(createMockSettings([confirmed]));
+    service = new DiscoveryService(mockSettingsService, undefined, mockDispatch, bridgeEvents);
+    service.onModuleInit();
+
+    const { scanId } = await service.scanNetwork(tenantId, outletId);
+    bridgeEvents.emit('device', {
+      bridgeId: 'b1',
+      tenantId,
+      outletId,
+      scanId,
+      device: {
+        ip_address: '192.168.1.88',
+        device_type: 'router',
+        manufacturer: 'TP-Link',
+        model: null,
+      },
+    });
+    bridgeEvents.emit('scan:done', {
+      bridgeId: 'b1',
+      tenantId,
+      outletId,
+      scanId,
+      count: 1,
+      errors: [],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(service.getScan(scanId)!.status).toBe('done');
+    expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
+      tenantId,
+      null,
+      expect.objectContaining({
+        discovered_devices: expect.arrayContaining([
+          expect.objectContaining({ device_id: 'confirmed-1', confirmed: true }),
+          expect.objectContaining({ ip_address: '192.168.1.88' }),
+        ]),
+      }),
+    );
   });
 });

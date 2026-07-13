@@ -1,6 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { estimateCostUsd } from '../monitoring/llm-cost.util';
 
 /** Order statuses that count as realized revenue. */
 const PAID = `('paid','confirmed','completed')`;
@@ -29,7 +30,8 @@ export class AdminMetricsService {
     return v == null ? 0 : Number(v);
   }
 
-  async getOverview(): Promise<PlatformOverview> {
+  async getOverview(tenantId?: string): Promise<PlatformOverview> {
+    if (tenantId) return this.getTenantScopedOverview(tenantId);
     const [tenants, outlets, users, customers, ordersToday, rev, mems, ai, cfg] = await Promise.all([
       this.pool.query(
         `SELECT
@@ -58,9 +60,19 @@ export class AdminMetricsService {
       this.pool.query(`SELECT config FROM platform_config WHERE id='default' LIMIT 1`).catch(() => ({ rows: [] as { config: any }[] })),
     ]);
 
-    // MRR = sum of plan price per active tenant, using platform_config pricing tiers.
+    // MRR = sum of monthly-equivalent plan price per active tenant. Prefer the
+    // platform_plans subscription catalog; fall back to legacy config pricingTiers.
+    const priceByPlan = new Map<string, number>();
+    const plansRes = await this.pool
+      .query<{ code: string; price: string; billing_cycle: string }>(
+        `SELECT code, price, billing_cycle FROM platform_plans WHERE is_active = true`,
+      )
+      .catch(() => ({ rows: [] as { code: string; price: string; billing_cycle: string }[] }));
+    for (const p of plansRes.rows) {
+      priceByPlan.set(p.code, p.billing_cycle === 'annual' ? Number(p.price) / 12 : Number(p.price));
+    }
     const tiers: { plan: string; price: number }[] = cfg.rows[0]?.config?.pricingTiers ?? [];
-    const priceByPlan = new Map(tiers.map((t) => [t.plan, Number(t.price) || 0]));
+    for (const t of tiers) if (!priceByPlan.has(t.plan)) priceByPlan.set(t.plan, Number(t.price) || 0);
     const planCounts = await this.pool.query<{ plan: string; n: string }>(
       `SELECT plan, COUNT(*) AS n FROM tenants WHERE status='active' GROUP BY plan`,
     );
@@ -82,8 +94,57 @@ export class AdminMetricsService {
     };
   }
 
-  /** Per-tenant rollups for the tenants table. */
-  async getTenantsEnriched() {
+  /** KPIs scoped to a single tenant (tenant-owner admin overview). */
+  private async getTenantScopedOverview(tenantId: string): Promise<PlatformOverview> {
+    const [tenant, outlets, users, customers, ordersToday, rev, mems, ai, cfg] = await Promise.all([
+      this.pool.query(`SELECT status, plan FROM tenants WHERE id=$1`, [tenantId]),
+      this.pool.query(`SELECT COUNT(*)::int AS n FROM outlets WHERE tenant_id=$1`, [tenantId]),
+      this.pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE tenant_id=$1`, [tenantId]),
+      this.pool.query(`SELECT COUNT(*)::int AS n FROM customers WHERE tenant_id=$1`, [tenantId]),
+      this.pool.query(
+        `SELECT COUNT(*)::int AS n, COALESCE(SUM(total) FILTER (WHERE status IN ${PAID}),0) AS rev
+         FROM orders WHERE tenant_id=$1 AND created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+        [tenantId],
+      ),
+      this.pool.query(
+        `SELECT COALESCE(SUM(total) FILTER (WHERE created_at > NOW()-INTERVAL '7 days'),0) AS r7,
+                COALESCE(SUM(total) FILTER (WHERE created_at > NOW()-INTERVAL '30 days'),0) AS r30
+         FROM orders WHERE tenant_id=$1 AND status IN ${PAID}`,
+        [tenantId],
+      ),
+      this.pool.query(`SELECT COUNT(*)::int AS n FROM memberships WHERE tenant_id=$1 AND status='active'`, [tenantId]),
+      this.pool.query(`SELECT COUNT(*)::int AS n FROM agent_invocations WHERE tenant_id=$1 AND created_at > NOW()-INTERVAL '30 days'`, [tenantId]).catch(() => ({ rows: [{ n: 0 }] })),
+      this.pool.query(`SELECT config FROM platform_config WHERE id='default' LIMIT 1`).catch(() => ({ rows: [] as { config: any }[] })),
+    ]);
+    const status = tenant.rows[0]?.status as string | undefined;
+    const plan = tenant.rows[0]?.plan as string | undefined;
+    const tiers: { plan: string; price: number }[] = cfg.rows[0]?.config?.pricingTiers ?? [];
+    const price = Number(tiers.find((t) => t.plan === plan)?.price) || 0;
+    return {
+      tenants: {
+        total: status ? 1 : 0,
+        active: status === 'active' ? 1 : 0,
+        suspended: status === 'suspended' ? 1 : 0,
+        cancelled: status === 'cancelled' ? 1 : 0,
+        new30d: 0,
+      },
+      outlets: outlets.rows[0].n,
+      users: users.rows[0].n,
+      customers: customers.rows[0].n,
+      ordersToday: ordersToday.rows[0].n,
+      revenueToday: this.num(ordersToday.rows[0].rev),
+      revenue7d: this.num(rev.rows[0].r7),
+      revenue30d: this.num(rev.rows[0].r30),
+      activeMemberships: mems.rows[0].n,
+      estimatedMrr: status === 'active' ? price : 0,
+      aiCalls30d: ai.rows[0].n,
+    };
+  }
+
+  /** Per-tenant rollups for the tenants table. Optional tenantId scopes to one tenant. */
+  async getTenantsEnriched(tenantId?: string) {
+    const where = tenantId ? `WHERE t.id = $1` : '';
+    const params = tenantId ? [tenantId] : [];
     const r = await this.pool.query(
       `SELECT t.id, t.name, t.slug, t.plan, t.status, t.created_at,
          (SELECT COUNT(*) FROM outlets o WHERE o.tenant_id=t.id)::int AS outlets,
@@ -91,7 +152,8 @@ export class AdminMetricsService {
          (SELECT COUNT(*) FROM orders od WHERE od.tenant_id=t.id AND od.created_at > NOW()-INTERVAL '30 days')::int AS orders30d,
          (SELECT COALESCE(SUM(total),0) FROM orders od WHERE od.tenant_id=t.id AND od.status IN ${PAID} AND od.created_at > NOW()-INTERVAL '30 days') AS revenue30d,
          (SELECT MAX(created_at) FROM orders od WHERE od.tenant_id=t.id) AS last_order
-       FROM tenants t ORDER BY t.created_at DESC`,
+       FROM tenants t ${where} ORDER BY t.created_at DESC`,
+      params,
     );
     return r.rows.map((x: any) => ({
       id: x.id, name: x.name, slug: x.slug, plan: x.plan, status: x.status,
@@ -103,7 +165,7 @@ export class AdminMetricsService {
 
   async getTenantDetail(tenantId: string) {
     const [tenant, outlets, users, stats] = await Promise.all([
-      this.pool.query(`SELECT id, name, slug, plan, status, created_at FROM tenants WHERE id=$1`, [tenantId]),
+      this.pool.query(`SELECT id, name, slug, plan, status, tenant_code, created_at FROM tenants WHERE id=$1`, [tenantId]),
       this.pool.query(`SELECT id, name, code, is_active, phone FROM outlets WHERE tenant_id=$1 ORDER BY created_at`, [tenantId]),
       this.pool.query(`SELECT id, name, email, role FROM users WHERE tenant_id=$1 ORDER BY role, name`, [tenantId]),
       this.pool.query(
@@ -125,14 +187,17 @@ export class AdminMetricsService {
     };
   }
 
-  /** Recent platform-wide activity from the audit log. */
-  async getActivity(limit = 50) {
+  /** Recent audit activity. Optional tenantId scopes to one tenant. */
+  async getActivity(limit = 50, tenantId?: string) {
     try {
+      const where = tenantId ? `WHERE a.tenant_id = $2` : '';
+      const params = tenantId ? [limit, tenantId] : [limit];
       const r = await this.pool.query(
         `SELECT a.created_at, a.operation, a.entity_type, a.tenant_id, t.name AS tenant_name
          FROM audit_logs a LEFT JOIN tenants t ON t.id = a.tenant_id
+         ${where}
          ORDER BY a.created_at DESC LIMIT $1`,
-        [limit],
+        params,
       );
       return r.rows.map((x: any) => ({
         at: x.created_at, operation: x.operation, entityType: x.entity_type,
@@ -171,6 +236,19 @@ export class AdminMetricsService {
       params,
     ).catch(() => ({ rows: [] }));
 
+    // Estimated LLM spend over the window (per-model rates), scope-filtered.
+    const byModel = await this.pool.query(
+      `SELECT name, COALESCE(SUM(prompt_tokens),0)::int AS prompt_tokens, COALESCE(SUM(completion_tokens),0)::int AS completion_tokens
+       FROM agent_invocations WHERE ${where} AND kind = 'llm' GROUP BY name`,
+      params,
+    ).catch(() => ({ rows: [] as { name: string; prompt_tokens: number; completion_tokens: number }[] }));
+    const estimatedCostUsd = Math.round(
+      (byModel.rows as { name: string; prompt_tokens: number; completion_tokens: number }[]).reduce(
+        (sum, m) => sum + estimateCostUsd(m.name, m.prompt_tokens, m.completion_tokens),
+        0,
+      ) * 10000,
+    ) / 10000;
+
     // For global scope, also break down by tenant.
     let byTenant: { tenantId: string; name: string; calls: number }[] = [];
     if (opts.scope === 'global') {
@@ -184,7 +262,7 @@ export class AdminMetricsService {
       byTenant = r.rows.map((x: any) => ({ tenantId: x.tenant_id, name: x.name ?? '—', calls: x.calls }));
     }
 
-    return { totals: totals.rows[0], byKind: byKind.rows, series: series.rows, byTenant };
+    return { totals: { ...totals.rows[0], estimated_cost_usd: estimatedCostUsd }, byKind: byKind.rows, series: series.rows, byTenant };
   }
 
   // ── Operational monitoring (orders/revenue) at any scope ────────────────────
@@ -222,42 +300,55 @@ export class AdminMetricsService {
     return r.rows;
   }
 
-  /** Platform time series for the overview charts (global). */
-  async getTimeseries(days = 30) {
+  /** Time series for the overview charts. Optional tenantId scopes revenue to one tenant. */
+  async getTimeseries(days = 30, tenantId?: string) {
     const win = `${days} days`;
-    const [revenue, tenants] = await Promise.all([
-      this.pool.query(
-        `SELECT to_char(date_trunc('day', created_at),'YYYY-MM-DD') AS day,
-                COALESCE(SUM(total) FILTER (WHERE status IN ${PAID}),0) AS revenue,
-                COUNT(*)::int AS orders
-         FROM orders WHERE created_at > NOW()-$1::interval GROUP BY 1 ORDER BY 1`,
-        [win],
-      ),
-      this.pool.query(
-        `SELECT to_char(date_trunc('day', created_at),'YYYY-MM-DD') AS day, COUNT(*)::int AS n
-         FROM tenants WHERE created_at > NOW()-$1::interval GROUP BY 1 ORDER BY 1`,
-        [win],
-      ),
-    ]);
+    const revWhere = tenantId ? `created_at > NOW()-$1::interval AND tenant_id = $2` : `created_at > NOW()-$1::interval`;
+    const revParams = tenantId ? [win, tenantId] : [win];
+    const revenue = await this.pool.query(
+      `SELECT to_char(date_trunc('day', created_at),'YYYY-MM-DD') AS day,
+              COALESCE(SUM(total) FILTER (WHERE status IN ${PAID}),0) AS revenue,
+              COUNT(*)::int AS orders
+       FROM orders WHERE ${revWhere} GROUP BY 1 ORDER BY 1`,
+      revParams,
+    );
+    // Tenant-growth is a platform metric; empty when scoped to a single tenant.
+    const tenants = tenantId
+      ? { rows: [] as { day: string; n: number }[] }
+      : await this.pool.query(
+          `SELECT to_char(date_trunc('day', created_at),'YYYY-MM-DD') AS day, COUNT(*)::int AS n
+           FROM tenants WHERE created_at > NOW()-$1::interval GROUP BY 1 ORDER BY 1`,
+          [win],
+        );
     return {
       revenue: revenue.rows.map((x: any) => ({ day: x.day, revenue: this.num(x.revenue), orders: x.orders })),
       tenants: tenants.rows.map((x: any) => ({ day: x.day, n: x.n })),
     };
   }
 
-  /** System health: DB latency, WAHA reachability, and key counts. */
-  async getHealth() {
+  /** System health: DB latency, WAHA reachability, and key counts.
+   *  Infra checks are global; counts are scoped to one tenant when tenantId is given. */
+  async getHealth(tenantId?: string) {
     const start = Date.now();
     let dbOk = false;
     let counts = { tenants: 0, outlets: 0, orders: 0, agents: 0 };
     try {
-      const r = await this.pool.query(
-        `SELECT
-           (SELECT COUNT(*) FROM tenants)::int AS tenants,
-           (SELECT COUNT(*) FROM outlets)::int AS outlets,
-           (SELECT COUNT(*) FROM orders)::int AS orders,
-           (SELECT COUNT(*) FROM agents)::int AS agents`,
-      );
+      const r = tenantId
+        ? await this.pool.query(
+            `SELECT
+               1::int AS tenants,
+               (SELECT COUNT(*) FROM outlets WHERE tenant_id=$1)::int AS outlets,
+               (SELECT COUNT(*) FROM orders WHERE tenant_id=$1)::int AS orders,
+               (SELECT COUNT(*) FROM agents WHERE tenant_id=$1)::int AS agents`,
+            [tenantId],
+          )
+        : await this.pool.query(
+            `SELECT
+               (SELECT COUNT(*) FROM tenants)::int AS tenants,
+               (SELECT COUNT(*) FROM outlets)::int AS outlets,
+               (SELECT COUNT(*) FROM orders)::int AS orders,
+               (SELECT COUNT(*) FROM agents)::int AS agents`,
+          );
       dbOk = true;
       counts = r.rows[0];
     } catch { dbOk = false; }
@@ -265,10 +356,14 @@ export class AdminMetricsService {
 
     let waha = { ok: false, status: 'unreachable' };
     const wahaUrl = process.env.WAHA_URL || 'http://waha:3000';
+    const wahaApiKey = process.env.WAHA_API_KEY || '';
     try {
       const controller = new AbortController();
       const tid = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(`${wahaUrl}/api/sessions`, { signal: controller.signal });
+      const res = await fetch(`${wahaUrl}/api/sessions`, {
+        signal: controller.signal,
+        headers: wahaApiKey ? { 'X-Api-Key': wahaApiKey } : {},
+      });
       clearTimeout(tid);
       // A 401 means WAHA is up but requires an API key — still "reachable".
       const reachable = res.ok || res.status === 401 || res.status === 403;
@@ -280,6 +375,126 @@ export class AdminMetricsService {
       waha,
       counts,
       checkedAt: new Date().toISOString(),
+    };
+  }
+
+  // ── Audit log (platform-wide viewer) ────────────────────────────────────────
+
+  /**
+   * Cross-tenant audit-log query for the platform admin. Unlike the tenant-scoped
+   * AuditService.query, tenantId here is an optional filter (omit = all tenants).
+   * Joins tenant + actor names for display.
+   */
+  async getAuditLog(params: {
+    tenantId?: string; operation?: string; entityType?: string;
+    dateFrom?: string; dateTo?: string; page?: number; pageSize?: number;
+  }) {
+    const page = Math.max(1, params.page ?? 1);
+    const pageSize = Math.min(params.pageSize ?? 50, 100);
+    const offset = (page - 1) * pageSize;
+    const where: string[] = [];
+    const vals: unknown[] = [];
+    let i = 1;
+    if (params.tenantId) { where.push(`a.tenant_id = $${i++}`); vals.push(params.tenantId); }
+    if (params.operation) { where.push(`a.operation = $${i++}`); vals.push(params.operation); }
+    if (params.entityType) { where.push(`a.entity_type = $${i++}`); vals.push(params.entityType); }
+    if (params.dateFrom) { where.push(`a.created_at >= $${i++}`); vals.push(params.dateFrom); }
+    if (params.dateTo) { where.push(`a.created_at <= $${i++}`); vals.push(params.dateTo); }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const countRes = await this.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM audit_logs a ${whereClause}`,
+      vals,
+    );
+    const total = parseInt(countRes.rows[0]!.count, 10);
+
+    const dataRes = await this.pool.query(
+      `SELECT a.id, a.created_at, a.operation, a.entity_type, a.entity_id,
+              a.before_value, a.after_value, a.metadata, a.ip_address,
+              a.tenant_id, t.name AS tenant_name, a.user_id, u.name AS user_name
+         FROM audit_logs a
+         LEFT JOIN tenants t ON t.id = a.tenant_id
+         LEFT JOIN users u ON u.id = a.user_id
+         ${whereClause}
+         ORDER BY a.created_at DESC
+         LIMIT $${i} OFFSET $${i + 1}`,
+      [...vals, pageSize, offset],
+    );
+    const data = dataRes.rows.map((x: any) => ({
+      id: x.id, at: x.created_at, operation: x.operation, entityType: x.entity_type, entityId: x.entity_id,
+      beforeValue: x.before_value, afterValue: x.after_value, metadata: x.metadata ?? {}, ipAddress: x.ip_address,
+      tenantId: x.tenant_id, tenantName: x.tenant_name, userId: x.user_id, userName: x.user_name,
+    }));
+    return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
+  }
+
+  /** Distinct operations + entity types present in the audit log, for filter dropdowns. */
+  async getAuditFilters(): Promise<{ operations: string[]; entityTypes: string[] }> {
+    const [ops, ents] = await Promise.all([
+      this.pool.query<{ operation: string }>(`SELECT DISTINCT operation FROM audit_logs ORDER BY operation`),
+      this.pool.query<{ entity_type: string }>(`SELECT DISTINCT entity_type FROM audit_logs ORDER BY entity_type`),
+    ]);
+    return { operations: ops.rows.map((r) => r.operation), entityTypes: ents.rows.map((r) => r.entity_type) };
+  }
+
+  // ── Growth analytics (platform-wide) ────────────────────────────────────────
+
+  /**
+   * SaaS growth metrics for the Analytics page. Note: without a status-change
+   * history we approximate churn from the CURRENT snapshot (cancelled/suspended
+   * counts) and cohort retention from signup month vs still-active — surfaced
+   * honestly in the UI. MRR by plan reads monthly-equivalent prices from
+   * platform_plans.
+   */
+  async getGrowthAnalytics(months = 12) {
+    const win = `${months} months`;
+    const [cohort, snapshot, byPlan] = await Promise.all([
+      this.pool.query(
+        `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
+                COUNT(*)::int AS signups,
+                COUNT(*) FILTER (WHERE status='active')::int AS still_active
+           FROM tenants
+           WHERE created_at > NOW() - $1::interval
+           GROUP BY 1 ORDER BY 1`,
+        [win],
+      ),
+      this.pool.query(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE status='active')::int AS active,
+                COUNT(*) FILTER (WHERE status='suspended')::int AS suspended,
+                COUNT(*) FILTER (WHERE status='cancelled')::int AS cancelled
+           FROM tenants`,
+      ),
+      this.pool.query(
+        `SELECT COALESCE(t.plan,'unspecified') AS plan,
+                COUNT(*) FILTER (WHERE t.status='active')::int AS active_tenants,
+                COALESCE(MAX(CASE WHEN pp.billing_cycle='annual' THEN pp.price/12 ELSE pp.price END),0) AS monthly_price
+           FROM tenants t LEFT JOIN platform_plans pp ON pp.code = t.plan
+           GROUP BY 1 ORDER BY 2 DESC`,
+      ),
+    ]);
+
+    const snap = snapshot.rows[0] as { total: number; active: number; suspended: number; cancelled: number };
+    const plans = byPlan.rows.map((x: any) => {
+      const monthlyPrice = this.num(x.monthly_price);
+      return { plan: x.plan, activeTenants: x.active_tenants, monthlyPrice, mrr: monthlyPrice * x.active_tenants };
+    });
+    const totalMrr = plans.reduce((s, p) => s + p.mrr, 0);
+    // Simple churn proxy: cancelled share of all tenants ever created.
+    const churnRate = snap.total > 0 ? (snap.cancelled / snap.total) * 100 : 0;
+
+    return {
+      snapshot: snap,
+      churnRate,
+      totalMrr,
+      arr: totalMrr * 12,
+      cohorts: cohort.rows.map((x: any) => ({
+        month: x.month,
+        signups: x.signups,
+        stillActive: x.still_active,
+        retentionPct: x.signups > 0 ? Math.round((x.still_active / x.signups) * 100) : 0,
+      })),
+      mrrByPlan: plans,
     };
   }
 

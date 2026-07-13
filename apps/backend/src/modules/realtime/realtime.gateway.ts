@@ -38,14 +38,6 @@ export interface PaymentConfirmedPayload {
   method: string;
 }
 
-export interface AlprDetectionPayload {
-  plates: Array<{
-    text: string;
-    confidence: number;
-    cropImageUrl?: string;
-  }>;
-  cameraId: string;
-}
 
 export interface NotificationAlertPayload {
   type: string;
@@ -150,18 +142,6 @@ export class RealtimeGateway
     this.server
       .to(`outlet:${outletId}`)
       .emit('payment:confirmed', payload);
-  }
-
-  /**
-   * Emit ALPR detection event to the outlet room.
-   */
-  emitAlprDetection(
-    outletId: string,
-    payload: AlprDetectionPayload,
-  ): void {
-    this.server
-      .to(`outlet:${outletId}`)
-      .emit('alpr:detection', payload);
   }
 
   /**

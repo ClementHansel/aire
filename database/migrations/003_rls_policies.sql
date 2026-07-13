@@ -43,7 +43,6 @@ ALTER TABLE voucher_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE campaign_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bays ENABLE ROW LEVEL SECURITY;
-ALTER TABLE alpr_detections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE queue_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employee_shifts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
@@ -182,11 +181,6 @@ CREATE POLICY tenant_isolation_bays ON bays
   FOR ALL
   USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
--- ALPR detections: tenant isolation
-CREATE POLICY tenant_isolation_alpr_detections ON alpr_detections
-  FOR ALL
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
-
 -- Queue entries: tenant isolation
 CREATE POLICY tenant_isolation_queue_entries ON queue_entries
   FOR ALL
@@ -235,14 +229,6 @@ CREATE POLICY outlet_scope_services ON services
 
 -- Bays: outlet scoping
 CREATE POLICY outlet_scope_bays ON bays
-  FOR ALL
-  USING (
-    current_setting('app.role', true) IN ('tenant_owner', 'platform_super_admin')
-    OR outlet_id = current_setting('app.outlet_id', true)::uuid
-  );
-
--- ALPR detections: outlet scoping
-CREATE POLICY outlet_scope_alpr_detections ON alpr_detections
   FOR ALL
   USING (
     current_setting('app.role', true) IN ('tenant_owner', 'platform_super_admin')

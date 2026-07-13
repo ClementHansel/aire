@@ -2,39 +2,33 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { isAuthenticated } from '@/lib/auth';
+import { isAuthenticated, getUser } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
+import { PageHeader, StatCard, Panel, ErrorBanner, fmtIDR } from '@/components/dashboard/ui';
+import { BarChart } from '@/components/admin/charts';
 
 type Scope = 'global' | 'tenant' | 'branch';
 interface TenantLite { id: string; name: string }
 interface BranchLite { id: string; name: string }
 interface Mon { totals: { orders: number; paid: number; cancelled: number; revenue: number; customers: number }; series: { day: string; orders: number; revenue: number }[] }
 
-const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
-
-function Bars({ data, valueKey, color }: { data: { day: string; orders: number; revenue: number }[]; valueKey: 'orders' | 'revenue'; color: string }) {
-  const max = Math.max(1, ...data.map((d) => d[valueKey]));
-  return (
-    <div className="flex items-end gap-1 h-32">
-      {data.length === 0 ? <p className="text-sm text-text-muted">No data.</p> : data.map((d) => (
-        <div key={d.day} className="flex-1 flex flex-col items-center justify-end" title={`${d.day}: ${valueKey === 'revenue' ? fmt(d.revenue) : d.orders}`}>
-          <div style={{ height: `${(d[valueKey] / max) * 100}%`, background: color }} className="w-full rounded-t" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function AdminMonitoringPage() {
-  const [scope, setScope] = useState<Scope>('global');
+  const { t } = useI18n();
+  const isSuper = getUser()?.role === 'platform_super_admin';
+  const myTenant = getUser()?.tenantId ?? '';
+  const [scope, setScope] = useState<Scope>(isSuper ? 'global' : 'tenant');
   const [tenants, setTenants] = useState<TenantLite[]>([]);
   const [branches, setBranches] = useState<BranchLite[]>([]);
-  const [tenantId, setTenantId] = useState('');
+  const [tenantId, setTenantId] = useState(isSuper ? '' : myTenant);
   const [outletId, setOutletId] = useState('');
   const [days, setDays] = useState('30');
   const [data, setData] = useState<Mon | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => { if (!isAuthenticated()) { window.location.href = '/'; return; } api.get<TenantLite[]>('/admin/tenants/enriched').then(setTenants).catch(() => {}); }, []);
+  useEffect(() => {
+    if (!isAuthenticated()) { window.location.href = '/'; return; }
+    if (isSuper) api.get<TenantLite[]>('/admin/tenants/enriched').then(setTenants).catch(() => {});
+  }, [isSuper]);
   useEffect(() => {
     if (scope !== 'global' && tenantId) api.get<BranchLite[]>(`/admin/tenants/${tenantId}/branches`).then(setBranches).catch(() => setBranches([]));
   }, [scope, tenantId]);
@@ -45,56 +39,63 @@ export default function AdminMonitoringPage() {
     if (scope !== 'global' && tenantId) qs.set('tenantId', tenantId);
     if (scope === 'branch' && outletId) qs.set('outletId', outletId);
     try { setData(await api.get<Mon>(`/admin/monitoring?${qs.toString()}`)); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Failed to load'); }
-  }, [scope, tenantId, outletId, days]);
+    catch (err) { setError(err instanceof Error ? err.message : t('admin.monitoring.failedToLoad', 'Failed to load')); }
+  }, [scope, tenantId, outletId, days, t]);
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div data-testid="admin-monitoring">
-      <h1 className="text-2xl font-bold text-text-primary mb-4">Operational Monitoring</h1>
+    <div className="space-y-6" data-testid="admin-monitoring">
+      <PageHeader
+        title={t('admin.monitoring.title', 'Operational Monitoring')}
+        subtitle={t('admin.monitoring.subtitle', 'Orders, revenue, and customers across the platform or a single tenant / branch.')}
+      />
 
-      <div className="flex flex-wrap items-center gap-3 mb-5">
-        <select className="input-field max-w-[160px]" value={scope} onChange={(e) => { setScope(e.target.value as Scope); setOutletId(''); }}>
-          <option value="global">Global (all tenants)</option>
-          <option value="tenant">Per tenant</option>
-          <option value="branch">Per branch</option>
+      <div className="flex flex-wrap items-center gap-3">
+        <select className="input-field max-w-[180px]" value={scope} onChange={(e) => { setScope(e.target.value as Scope); setOutletId(''); }}>
+          {isSuper && <option value="global">{t('admin.monitoring.scopeGlobal', 'Global (all tenants)')}</option>}
+          <option value="tenant">{isSuper ? t('admin.monitoring.scopePerTenant', 'Per tenant') : t('admin.monitoring.scopeMyBusiness', 'My business')}</option>
+          <option value="branch">{t('admin.monitoring.scopePerBranch', 'Per branch')}</option>
         </select>
-        {scope !== 'global' && (
+        {isSuper && scope !== 'global' && (
           <select className="input-field max-w-[220px]" value={tenantId} onChange={(e) => { setTenantId(e.target.value); setOutletId(''); }}>
-            <option value="">Select tenant…</option>
-            {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            <option value="">{t('admin.monitoring.selectTenant', 'Select tenant…')}</option>
+            {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
           </select>
         )}
         {scope === 'branch' && tenantId && (
           <select className="input-field max-w-[220px]" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
-            <option value="">Select branch…</option>
+            <option value="">{t('admin.monitoring.selectBranch', 'Select branch…')}</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         )}
         <select className="input-field max-w-[120px]" value={days} onChange={(e) => setDays(e.target.value)}>
-          <option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option>
+          <option value="7">{t('admin.monitoring.days7', '7 days')}</option><option value="30">{t('admin.monitoring.days30', '30 days')}</option><option value="90">{t('admin.monitoring.days90', '90 days')}</option>
         </select>
       </div>
 
-      {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
 
       {scope !== 'global' && !tenantId ? (
-        <p className="text-text-muted">Select a tenant to view metrics.</p>
+        <p className="text-text-muted">{t('admin.monitoring.selectTenantMetrics', 'Select a tenant to view metrics.')}</p>
       ) : data ? (
         <>
-          <section className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-            <div className="bg-white rounded-xl border border-border p-4"><p className="text-xs text-text-secondary uppercase">Orders</p><p className="text-2xl font-bold mt-1">{data.totals.orders}</p></div>
-            <div className="bg-white rounded-xl border border-border p-4"><p className="text-xs text-text-secondary uppercase">Paid</p><p className="text-2xl font-bold text-green-600 mt-1">{data.totals.paid}</p></div>
-            <div className="bg-white rounded-xl border border-border p-4"><p className="text-xs text-text-secondary uppercase">Cancelled</p><p className="text-2xl font-bold text-red-600 mt-1">{data.totals.cancelled}</p></div>
-            <div className="bg-white rounded-xl border border-border p-4"><p className="text-xs text-text-secondary uppercase">Revenue</p><p className="text-2xl font-bold text-primary-600 mt-1">{fmt(data.totals.revenue)}</p></div>
-            <div className="bg-white rounded-xl border border-border p-4"><p className="text-xs text-text-secondary uppercase">Customers</p><p className="text-2xl font-bold mt-1">{data.totals.customers}</p></div>
+          <section className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <StatCard label={t('admin.monitoring.orders', 'Orders')} value={String(data.totals.orders)} />
+            <StatCard label={t('admin.monitoring.paid', 'Paid')} value={String(data.totals.paid)} tone="positive" />
+            <StatCard label={t('admin.monitoring.cancelled', 'Cancelled')} value={String(data.totals.cancelled)} tone="negative" />
+            <StatCard label={t('admin.monitoring.revenue', 'Revenue')} value={fmtIDR(data.totals.revenue)} tone="primary" />
+            <StatCard label={t('admin.monitoring.customers', 'Customers')} value={String(data.totals.customers)} />
           </section>
           <div className="grid lg:grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl border border-border p-5"><h2 className="text-sm font-semibold mb-3">Revenue / day</h2><Bars data={data.series} valueKey="revenue" color="#1652F0" /></div>
-            <div className="bg-white rounded-xl border border-border p-5"><h2 className="text-sm font-semibold mb-3">Orders / day</h2><Bars data={data.series} valueKey="orders" color="#10b981" /></div>
+            <Panel title={t('admin.monitoring.revenuePerDay', 'Revenue / day')}>
+              <BarChart data={data.series.map((d) => ({ label: d.day, value: d.revenue, tooltip: `${d.day}: ${fmtIDR(d.revenue)}` }))} empty={t('admin.monitoring.noData', 'No data.')} />
+            </Panel>
+            <Panel title={t('admin.monitoring.ordersPerDay', 'Orders / day')}>
+              <BarChart data={data.series.map((d) => ({ label: d.day, value: d.orders }))} color="var(--color-green-500, #10b981)" empty={t('admin.monitoring.noData', 'No data.')} />
+            </Panel>
           </div>
         </>
-      ) : <p className="text-text-muted">Loading…</p>}
+      ) : <p className="text-text-muted">{t('admin.monitoring.loading', 'Loading…')}</p>}
     </div>
   );
 }

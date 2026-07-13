@@ -2,6 +2,7 @@ import { Injectable, Inject, Optional, BadRequestException, NotFoundException } 
 import { Pool, PoolClient } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
+import { CommissionService } from '../commission/commission.service';
 import { DomainEventType } from '../events/event.types';
 
 export interface AdjustmentDto {
@@ -9,7 +10,9 @@ export interface AdjustmentDto {
   type: 'bonus' | 'deduction' | 'advance';
   amount: number;
   reason?: string;
-  period: string; // YYYY-MM
+  period: string; // YYYY-MM (start period)
+  recurring?: boolean;   // repeat every payroll run for `totalPeriods` months
+  totalPeriods?: number; // required when recurring; how many months it repeats
 }
 export interface LoanDto {
   employeeId: string;
@@ -32,6 +35,7 @@ const PERIOD_RE = /^\d{4}-\d{2}$/;
 export class PayrollService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly commission: CommissionService,
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
@@ -42,21 +46,33 @@ export class PayrollService {
     if (!['bonus', 'deduction', 'advance'].includes(dto.type)) throw new BadRequestException('Invalid adjustment type');
     if (!dto.amount || dto.amount <= 0) throw new BadRequestException('amount must be positive');
     if (!PERIOD_RE.test(dto.period)) throw new BadRequestException('period must be YYYY-MM');
+    const recurring = dto.recurring === true;
+    let totalPeriods: number | null = null;
+    if (recurring) {
+      totalPeriods = Math.floor(Number(dto.totalPeriods ?? 0));
+      if (!Number.isFinite(totalPeriods) || totalPeriods < 1) {
+        throw new BadRequestException('totalPeriods must be at least 1 for a recurring adjustment');
+      }
+    }
+    // Recurring parents live as 'active' and auto-apply each run; one-shots stay 'pending'.
     const res = await this.pool.query(
-      `INSERT INTO payroll_adjustments (tenant_id, employee_id, type, amount, reason, effective_period, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, type, amount, effective_period, status`,
-      [tenantId, dto.employeeId, dto.type, dto.amount, dto.reason ?? null, dto.period, actor ?? null],
+      `INSERT INTO payroll_adjustments (tenant_id, employee_id, type, amount, reason, effective_period, recurring, total_periods, status, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, type, amount, effective_period, status, recurring, total_periods`,
+      [tenantId, dto.employeeId, dto.type, dto.amount, dto.reason ?? null, dto.period, recurring, totalPeriods, recurring ? 'active' : 'pending', actor ?? null],
     );
-    void this.eventBus?.emit({ type: DomainEventType.PayrollAdjustmentAdded, tenantId, actor: actor ?? 'system', payload: { type: dto.type, amount: dto.amount, period: dto.period, employeeId: dto.employeeId } });
+    void this.eventBus?.emit({ type: DomainEventType.PayrollAdjustmentAdded, tenantId, actor: actor ?? 'system', payload: { type: dto.type, amount: dto.amount, period: dto.period, employeeId: dto.employeeId, recurring } });
     return res.rows[0]!;
   }
 
-  async listAdjustments(tenantId: string, period?: string): Promise<unknown[]> {
+  async listAdjustments(tenantId: string, opts: { period?: string; employeeId?: string } = {}): Promise<unknown[]> {
     const params: unknown[] = [tenantId];
     let where = 'pa.tenant_id = $1';
-    if (period) { params.push(period); where += ` AND pa.effective_period = $${params.length}`; }
+    if (opts.period) { params.push(opts.period); where += ` AND pa.effective_period = $${params.length}`; }
+    if (opts.employeeId) { params.push(opts.employeeId); where += ` AND pa.employee_id = $${params.length}`; }
     const res = await this.pool.query(
-      `SELECT pa.id, pa.type, pa.amount, pa.reason, pa.effective_period, pa.status, e.name AS employee, pa.employee_id
+      `SELECT pa.id, pa.type, pa.amount, pa.reason, pa.effective_period, pa.status, pa.recurring, pa.total_periods,
+              e.name AS employee, pa.employee_id,
+              (SELECT COUNT(*) FROM payroll_adjustment_applications a WHERE a.adjustment_id = pa.id) AS applied_count
        FROM payroll_adjustments pa JOIN employees e ON e.id = pa.employee_id
        WHERE ${where} ORDER BY pa.created_at DESC LIMIT 300`,
       params,
@@ -64,6 +80,7 @@ export class PayrollService {
     return res.rows.map((r) => ({
       id: r.id, employee: r.employee, employeeId: r.employee_id, type: r.type,
       amount: parseFloat(r.amount), reason: r.reason, period: r.effective_period, status: r.status,
+      recurring: r.recurring, totalPeriods: r.total_periods, appliedCount: parseInt(r.applied_count, 10) || 0,
     }));
   }
 
@@ -82,10 +99,11 @@ export class PayrollService {
     return { id: res.rows[0]!.id, balance: parseFloat(res.rows[0]!.balance) };
   }
 
-  async listLoans(tenantId: string, status?: string): Promise<unknown[]> {
+  async listLoans(tenantId: string, opts: { status?: string; employeeId?: string } = {}): Promise<unknown[]> {
     const params: unknown[] = [tenantId];
     let where = 'l.tenant_id = $1';
-    if (status) { params.push(status); where += ` AND l.status = $${params.length}`; }
+    if (opts.status) { params.push(opts.status); where += ` AND l.status = $${params.length}`; }
+    if (opts.employeeId) { params.push(opts.employeeId); where += ` AND l.employee_id = $${params.length}`; }
     const res = await this.pool.query(
       `SELECT l.id, l.principal, l.balance, l.monthly_installment, l.reason, l.status, e.name AS employee, l.employee_id
        FROM employee_loans l JOIN employees e ON e.id = l.employee_id
@@ -170,6 +188,29 @@ export class PayrollService {
     return { id: runId, status: 'finalized' };
   }
 
+  /**
+   * One-click payroll: generate + finalize a period in a single action, using the
+   * tenant's configured default working-days (falls back to 26). Idempotent — if
+   * the period is already finalized it just returns the existing run. This is the
+   * "start button" for small teams with no payroll clerk.
+   */
+  async runPayroll(tenantId: string, period: string, actor?: string): Promise<Record<string, unknown>> {
+    if (!PERIOD_RE.test(period)) throw new BadRequestException('period must be YYYY-MM');
+    const existing = await this.pool.query<{ id: string; status: string }>(
+      `SELECT id, status FROM payroll_runs WHERE tenant_id = $1 AND period = $2`, [tenantId, period],
+    );
+    const finalized = existing.rows.find((r) => r.status === 'finalized');
+    if (finalized) return this.getRun(tenantId, finalized.id); // already run — no-op
+    // Read the tenant's default working-days (self-contained; no cross-module dep).
+    const wd = await this.pool.query<{ payroll_working_days: number }>(
+      `SELECT payroll_working_days FROM tenant_finance_settings WHERE tenant_id = $1`, [tenantId],
+    ).catch(() => ({ rows: [] as { payroll_working_days: number }[] }));
+    const workingDays = wd.rows[0]?.payroll_working_days ?? 26;
+    const run = await this.generatePayroll(tenantId, period, workingDays, actor);
+    await this.finalize(tenantId, run.id as string, actor);
+    return this.getRun(tenantId, run.id as string);
+  }
+
   async exportCsv(tenantId: string, runId: string): Promise<{ filename: string; csv: string }> {
     const run = await this.getRun(tenantId, runId);
     const slips = run.payslips as Record<string, unknown>[];
@@ -228,6 +269,10 @@ export class PayrollService {
       for (const emp of employees.rows) {
         const base = parseFloat(emp.salary);
 
+        // Roll this period's accrued commission (+ met monthly target) into a pending
+        // bonus adjustment so the sum below picks it up. Reversible via reverseRun.
+        await this.commission.rollupIntoPayroll(client, tenantId, emp.id, period, runId);
+
         // Adjustments (pending, this period) → apply.
         const adj = await client.query<{ type: string; sum: string }>(
           `SELECT type, COALESCE(SUM(amount),0) AS sum FROM payroll_adjustments
@@ -246,6 +291,39 @@ export class PayrollService {
            WHERE tenant_id = $2 AND employee_id = $3 AND effective_period = $4 AND status = 'pending'`,
           [runId, tenantId, emp.id, period],
         );
+
+        // Recurring adjustments: any 'active' recurring adj that started on or
+        // before this period and still has installments left applies its amount
+        // this run — recorded in payroll_adjustment_applications so a
+        // regenerate/reverse can undo just this run's slice (mirrors loans).
+        const recurring = await client.query<{ id: string; type: string; amount: string; total_periods: number | null; applied_count: string; applied_here: boolean }>(
+          `SELECT pa.id, pa.type, pa.amount, pa.total_periods,
+                  (SELECT COUNT(*) FROM payroll_adjustment_applications a WHERE a.adjustment_id = pa.id) AS applied_count,
+                  EXISTS(SELECT 1 FROM payroll_adjustment_applications a WHERE a.adjustment_id = pa.id AND a.period = $3) AS applied_here
+           FROM payroll_adjustments pa
+           WHERE pa.tenant_id = $1 AND pa.employee_id = $2 AND pa.recurring = true AND pa.status = 'active'
+             AND pa.effective_period <= $3
+           FOR UPDATE`,
+          [tenantId, emp.id, period],
+        );
+        for (const r of recurring.rows) {
+          if (r.applied_here) continue; // already counted for this period
+          const appliedCount = parseInt(r.applied_count, 10) || 0;
+          const total = r.total_periods == null ? Number.POSITIVE_INFINITY : r.total_periods;
+          if (appliedCount >= total) continue; // exhausted
+          const amt = parseFloat(r.amount);
+          if (r.type === 'bonus') bonus += amt;
+          else if (r.type === 'deduction') deduction += amt;
+          else if (r.type === 'advance') advance += amt;
+          await client.query(
+            `INSERT INTO payroll_adjustment_applications (tenant_id, adjustment_id, run_id, period, amount)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [tenantId, r.id, runId, period, amt],
+          );
+          if (appliedCount + 1 >= total) {
+            await client.query(`UPDATE payroll_adjustments SET status = 'completed' WHERE id = $1`, [r.id]);
+          }
+        }
 
         // Loan installments for active loans.
         let loanRepayment = 0;
@@ -333,6 +411,9 @@ export class PayrollService {
 
   /** Reverse an applied draft run: restore adjustments + loan balances, delete payslips + run. */
   private async reverseRun(client: PoolClient, tenantId: string, runId: string): Promise<void> {
+    // Undo commission rollup first (restores accruals + deletes their origin
+    // bonus adjustments) so the generic un-apply below doesn't touch them.
+    await this.commission.reversePayrollRollup(client, tenantId, runId);
     // Restore loan balances from this run's repayments.
     const reps = await client.query<{ loan_id: string; amount: string }>(
       `SELECT loan_id, amount FROM loan_repayments WHERE run_id = $1`,
@@ -345,11 +426,19 @@ export class PayrollService {
       );
     }
     await client.query(`DELETE FROM loan_repayments WHERE run_id = $1`, [runId]);
-    // Un-apply adjustments.
+    // Un-apply one-shot adjustments.
     await client.query(
       `UPDATE payroll_adjustments SET status = 'pending', applied_run_id = NULL WHERE applied_run_id = $1`,
       [runId],
     );
+    // Reactivate any recurring adjustments this run completed, then drop this run's applications.
+    await client.query(
+      `UPDATE payroll_adjustments SET status = 'active'
+       WHERE recurring = true AND status = 'completed'
+         AND id IN (SELECT adjustment_id FROM payroll_adjustment_applications WHERE run_id = $1)`,
+      [runId],
+    );
+    await client.query(`DELETE FROM payroll_adjustment_applications WHERE run_id = $1`, [runId]);
     await client.query(`DELETE FROM payslips WHERE payroll_run_id = $1`, [runId]);
     await client.query(`DELETE FROM payroll_runs WHERE id = $1 AND tenant_id = $2`, [runId, tenantId]);
   }

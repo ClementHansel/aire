@@ -1,11 +1,13 @@
 import { Controller, Get, Post, Body, Param, Query, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, RequiresOnboarding } from '../../common/decorators';
+import { OnboardingCompleteGuard } from '../../common/guards';
 import { ShiftService, OpenShiftDto, CloseShiftDto, PettyCashDto, ShiftIssueDto } from './shift.service';
 
 @Controller('api/shifts')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, OnboardingCompleteGuard)
+@RequiresOnboarding()
 export class ShiftController {
   constructor(private readonly service: ShiftService) {}
 

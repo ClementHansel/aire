@@ -36,9 +36,27 @@ export class WhatsappWebhookController {
 export class WhatsappController {
   constructor(private readonly service: WhatsappService) {}
 
-  @Get('status') status(@CurrentUser() u: JWTPayload) { return this.service.status(u.tenant_id); }
+  @Get('status') async status(@CurrentUser() u: JWTPayload) {
+    const s = await this.service.status(u.tenant_id);
+    return { ...s, mock: this.service.isMock() };
+  }
   @Post('connect') @HttpCode(HttpStatus.OK) connect(@CurrentUser() u: JWTPayload) { return this.service.ensureSession(u.tenant_id); }
   @Get('qr') qr(@CurrentUser() u: JWTPayload) { return this.service.qr(u.tenant_id); }
+
+  /** Simulation bypass: outbound sends captured while WAHA_MOCK is on. */
+  @Get('mock-outbox') mockOutbox(@CurrentUser() u: JWTPayload) { return this.service.listMockOutbox(u.tenant_id); }
+
+  /** Bookings the WhatsApp agent proposed and the customer confirmed, now awaiting staff approval. */
+  @Get('pending-approvals') pendingApprovals(@CurrentUser() u: JWTPayload) { return this.service.listPendingApprovals(u.tenant_id); }
+
+  @Post('pending-approvals/:bookingId/decision')
+  @HttpCode(HttpStatus.OK)
+  decideApproval(@CurrentUser() u: JWTPayload, @Param('bookingId') bookingId: string, @Body() body: { accept: boolean }) {
+    return this.service.decidePendingApproval(u.tenant_id, bookingId, !!body.accept, u.sub);
+  }
+
+  /** Audit trail: who approved/rejected booking proposals, via which channel, when. */
+  @Get('booking-approvals/history') approvalHistory(@CurrentUser() u: JWTPayload) { return this.service.listApprovalHistory(u.tenant_id); }
 
   @Get('conversations') conversations(@CurrentUser() u: JWTPayload) { return this.service.listConversations(u.tenant_id); }
   @Get('conversations/:id/messages') messages(@CurrentUser() u: JWTPayload, @Param('id') id: string) { return this.service.listMessages(u.tenant_id, id); }

@@ -21,7 +21,7 @@ import {
 
 /** Generates a non-empty trimmed name */
 const validName = fc
-  .stringOf(fc.char().filter((c) => c.trim().length > 0), { minLength: 1, maxLength: 50 })
+  .string({ unit: fc.string({ unit: 'binary-ascii', minLength: 1, maxLength: 1 }).filter((c) => c.trim().length > 0), minLength: 1, maxLength: 50 })
   .filter((s) => s.trim().length > 0);
 
 /** Generates an empty or whitespace-only name (violates Rule 1) */
@@ -31,10 +31,8 @@ const invalidName = fc.constantFrom('', '   ', '\t', '\n');
 const validPhone = fc
   .integer({ min: MIN_PHONE_LENGTH, max: 15 })
   .chain((len) =>
-    fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), {
-      minLength: len,
-      maxLength: len,
-    }),
+    fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: len,
+      maxLength: len, }),
   );
 
 /** Generates a phone string with fewer than MIN_PHONE_LENGTH digits (violates Rule 2) */
@@ -43,10 +41,8 @@ const invalidPhone = fc
   .chain((len) =>
     len === 0
       ? fc.constant('')
-      : fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), {
-          minLength: len,
-          maxLength: len,
-        }),
+      : fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: len,
+          maxLength: len, }),
   );
 
 /** Generates a valid cart item */
@@ -107,7 +103,7 @@ const validOrderWithPlatesArb: fc.Arbitrary<OrderValidationInput> = fc
     validName,
     validPhone,
     validCart,
-    fc.array(fc.stringOf(alphanumChar, { minLength: 4, maxLength: 10 }), { minLength: 2, maxLength: 5 }),
+    fc.array(fc.string({ unit: alphanumChar, minLength: 4, maxLength: 10 }), { minLength: 2, maxLength: 5 }),
   )
   .map(([name, phone, items, plates]) => ({
     customerName: name,
@@ -189,15 +185,15 @@ const arbitraryOrderInput: fc.Arbitrary<OrderValidationInput> = fc.record({
     cartWithoutMainService,
     emptyCart,
   ),
-  voucherCodes: fc.option(fc.array(fc.hexaString({ minLength: 4, maxLength: 10 }), { minLength: 1, maxLength: 3 }), { nil: undefined }),
+  voucherCodes: fc.option(fc.array(fc.string({ unit: fc.constantFrom(...'0123456789abcdef'), minLength: 4, maxLength: 10 }), { minLength: 1, maxLength: 3 }), { nil: undefined }),
   voucherMinOrderAmount: fc.option(fc.integer({ min: 0, max: 500000 }), { nil: undefined }),
   orderSubtotal: fc.option(fc.integer({ min: 0, max: 1000000 }), { nil: undefined }),
   memberPlates: fc.option(
-    fc.array(fc.stringOf(alphanumChar, { minLength: 3, maxLength: 10 }), { minLength: 0, maxLength: 5 }),
+    fc.array(fc.string({ unit: alphanumChar, minLength: 3, maxLength: 10 }), { minLength: 0, maxLength: 5 }),
     { nil: undefined },
   ),
   selectedPlate: fc.option(fc.oneof(
-    fc.stringOf(alphanumChar, { minLength: 3, maxLength: 10 }),
+    fc.string({ unit: alphanumChar, minLength: 3, maxLength: 10 }),
     fc.constant(''),
     fc.constant('   '),
   ), { nil: undefined }),
@@ -329,10 +325,8 @@ describe('validateOrder - Property-Based Tests', () => {
         fc.property(
           validName,
           validCart,
-          fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), {
-            minLength: MIN_PHONE_LENGTH,
-            maxLength: MIN_PHONE_LENGTH,
-          }),
+          fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: MIN_PHONE_LENGTH,
+            maxLength: MIN_PHONE_LENGTH, }),
           (name, items, phone) => {
             const input: OrderValidationInput = {
               customerName: name,
@@ -356,10 +350,8 @@ describe('validateOrder - Property-Based Tests', () => {
         fc.property(
           validName,
           validCart,
-          fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), {
-            minLength: MIN_PHONE_LENGTH - 1,
-            maxLength: MIN_PHONE_LENGTH - 1,
-          }),
+          fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: MIN_PHONE_LENGTH - 1,
+            maxLength: MIN_PHONE_LENGTH - 1, }),
           (name, items, phone) => {
             const input: OrderValidationInput = {
               customerName: name,

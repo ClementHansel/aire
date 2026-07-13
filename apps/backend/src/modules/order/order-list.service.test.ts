@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OrderListService } from './order-list.service';
 import { OrderStatus } from '@aire/shared';
 
+const TENANT = '11111111-1111-1111-1111-111111111111';
+
 describe('OrderListService', () => {
   let service: OrderListService;
   let mockPool: { query: ReturnType<typeof vi.fn> };
@@ -53,7 +55,7 @@ describe('OrderListService', () => {
       // Items query
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows });
 
-      const result = await service.listOrders({});
+      const result = await service.listOrders({ tenantId: TENANT });
 
       expect(result.total).toBe(2);
       expect(result.page).toBe(1);
@@ -87,7 +89,7 @@ describe('OrderListService', () => {
     it('should return empty result when no orders match', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [{ total: 0 }] });
 
-      const result = await service.listOrders({});
+      const result = await service.listOrders({ tenantId: TENANT });
 
       expect(result.orders).toEqual([]);
       expect(result.total).toBe(0);
@@ -101,12 +103,14 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      const result = await service.listOrders({ status: OrderStatus.Paid });
+      const result = await service.listOrders({ tenantId: TENANT, status: OrderStatus.Paid });
 
       expect(result.total).toBe(1);
-      // Verify status was included as a parameter in the count query
+      // Tenant scope is always $1; status is therefore $2.
       const countCall = mockPool.query.mock.calls[0];
-      expect(countCall[0]).toContain('o.status = $1');
+      expect(countCall[0]).toContain('o.tenant_id = $1');
+      expect(countCall[0]).toContain('o.status = $2');
+      expect(countCall[1]).toContain(TENANT);
       expect(countCall[1]).toContain('paid');
     });
 
@@ -115,7 +119,7 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      const result = await service.listOrders({ search: 'John' });
+      const result = await service.listOrders({ tenantId: TENANT, search: 'John' });
 
       expect(result.total).toBe(1);
       const countCall = mockPool.query.mock.calls[0];
@@ -129,27 +133,43 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
       await service.listOrders({
+        tenantId: TENANT,
         dateFrom: '2024-01-15',
         dateTo: '2024-01-16',
       });
 
+      // Tenant scope is $1, dateFrom $2, dateTo $3.
       const countCall = mockPool.query.mock.calls[0];
       expect(countCall[0]).toContain('o.created_at >=');
-      expect(countCall[0]).toContain("o.created_at < ($2::date + interval '1 day')");
+      expect(countCall[0]).toContain("o.created_at < ($3::date + interval '1 day')");
       expect(countCall[1]).toContain('2024-01-15');
       expect(countCall[1]).toContain('2024-01-16');
     });
 
-    it('should filter by outletId', async () => {
+    it('should filter by the role-resolved outletIds set', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      await service.listOrders({ outletId: 'outlet-001' });
+      await service.listOrders({ tenantId: TENANT, outletIds: ['outlet-001'] });
+
+      // Tenant scope is $1; the branch set is applied as ANY($2::uuid[]).
+      const countCall = mockPool.query.mock.calls[0];
+      expect(countCall[0]).toContain('o.outlet_id = ANY($2::uuid[])');
+      expect(countCall[1]).toEqual([TENANT, ['outlet-001']]);
+    });
+
+    it('should NOT filter by branch when outletIds is null (all branches)', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
+
+      await service.listOrders({ tenantId: TENANT, outletIds: null });
 
       const countCall = mockPool.query.mock.calls[0];
-      expect(countCall[0]).toContain('o.outlet_id = $1::uuid');
-      expect(countCall[1]).toContain('outlet-001');
+      expect(countCall[0]).toContain('o.tenant_id = $1');
+      expect(countCall[0]).not.toContain('o.outlet_id');
+      expect(countCall[1]).toEqual([TENANT]);
     });
 
     it('should apply pagination correctly', async () => {
@@ -159,7 +179,7 @@ describe('OrderListService', () => {
       });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      const result = await service.listOrders({ page: 2, pageSize: 10 });
+      const result = await service.listOrders({ tenantId: TENANT, page: 2, pageSize: 10 });
 
       expect(result.page).toBe(2);
       expect(result.pageSize).toBe(10);
@@ -178,7 +198,7 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      const result = await service.listOrders({ pageSize: 500 });
+      const result = await service.listOrders({ tenantId: TENANT, pageSize: 500 });
 
       expect(result.pageSize).toBe(100);
       const ordersCall = mockPool.query.mock.calls[1];
@@ -191,7 +211,7 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      const result = await service.listOrders({});
+      const result = await service.listOrders({ tenantId: TENANT });
 
       expect(result.page).toBe(1);
       expect(result.pageSize).toBe(20);
@@ -202,7 +222,7 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // no items found
 
-      const result = await service.listOrders({});
+      const result = await service.listOrders({ tenantId: TENANT });
 
       expect(result.orders[0]!.items).toEqual([]);
     });
@@ -213,17 +233,19 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
       await service.listOrders({
+        tenantId: TENANT,
         status: OrderStatus.Paid,
         search: 'John',
         dateFrom: '2024-01-15',
-        outletId: 'outlet-001',
+        outletIds: ['outlet-001'],
       });
 
       const countCall = mockPool.query.mock.calls[0];
-      expect(countCall[0]).toContain('o.status = $1');
+      expect(countCall[0]).toContain('o.tenant_id = $1');
+      expect(countCall[0]).toContain('o.status = $2');
       expect(countCall[0]).toContain('ILIKE');
       expect(countCall[0]).toContain('o.created_at >=');
-      expect(countCall[0]).toContain('o.outlet_id =');
+      expect(countCall[0]).toContain('o.outlet_id = ANY(');
     });
 
     it('should set hasMore to false on last page', async () => {
@@ -233,7 +255,7 @@ describe('OrderListService', () => {
       });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const result = await service.listOrders({ page: 1, pageSize: 20 });
+      const result = await service.listOrders({ tenantId: TENANT, page: 1, pageSize: 20 });
 
       // offset(0) + 20 items = 20, not less than total(20) so hasMore = false
       expect(result.hasMore).toBe(false);
@@ -244,7 +266,7 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      await service.listOrders({ search: '   ' });
+      await service.listOrders({ tenantId: TENANT, search: '   ' });
 
       const countCall = mockPool.query.mock.calls[0];
       expect(countCall[0]).not.toContain('ILIKE');
@@ -255,7 +277,7 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
 
-      const result = await service.listOrders({ page: -1 });
+      const result = await service.listOrders({ tenantId: TENANT, page: -1 });
 
       expect(result.page).toBe(1);
       const ordersCall = mockPool.query.mock.calls[1];

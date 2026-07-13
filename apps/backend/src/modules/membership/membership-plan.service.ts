@@ -10,7 +10,7 @@ import { ERR_MEMBERSHIP_PLAN_NOT_FOUND, ERR_VALIDATION_FAILED } from '@aire/shar
 import { CreateMembershipPlanDto, UpdateMembershipPlanDto } from './dto';
 import { MembershipPlan, MembershipPlanRow } from './interfaces';
 
-const ALLOWED_DURATIONS = [1, 3, 12];
+const ALLOWED_DURATIONS = [1, 3, 6, 12];
 
 @Injectable()
 export class MembershipPlanService {
@@ -58,6 +58,9 @@ export class MembershipPlanService {
   ): Promise<MembershipPlan> {
     if (dto.durationMonths !== undefined && !ALLOWED_DURATIONS.includes(dto.durationMonths)) {
       throw new BadRequestException(ERR_VALIDATION_FAILED);
+    }
+    if (dto.discountedServices !== undefined) {
+      this.validateDiscountedServices(dto.discountedServices);
     }
 
     const fields: string[] = [];
@@ -199,6 +202,30 @@ export class MembershipPlanService {
     }
     if (dto.maxPlates !== undefined && dto.maxPlates <= 0) {
       throw new BadRequestException(ERR_VALIDATION_FAILED);
+    }
+    if (dto.discountedServices !== undefined) {
+      this.validateDiscountedServices(dto.discountedServices);
+    }
+  }
+
+  /**
+   * Validates the discounted-services benefit list: each entry must reference a
+   * service and carry a discount percentage in the 0–100 range.
+   */
+  private validateDiscountedServices(
+    discounts: { serviceId: string; discountPct: number }[],
+  ): void {
+    for (const d of discounts) {
+      if (!d.serviceId || d.serviceId.trim().length === 0) {
+        throw new BadRequestException(ERR_VALIDATION_FAILED);
+      }
+      if (
+        typeof d.discountPct !== 'number' ||
+        d.discountPct < 0 ||
+        d.discountPct > 100
+      ) {
+        throw new BadRequestException(ERR_VALIDATION_FAILED);
+      }
     }
   }
 

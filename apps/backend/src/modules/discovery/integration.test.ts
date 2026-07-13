@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DiscoveryService } from './discovery.service';
 import { SettingsService } from '../settings/settings.service';
 import { AuditService } from '../audit/audit.service';
+import { BridgeDispatchService } from '../bridge/bridge-dispatch.service';
+import { BridgeEvents } from '../bridge/bridge.events';
 import type { TenantAutomationSettings, DiscoveredDevice } from '../settings/settings.interfaces';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 
@@ -84,22 +86,60 @@ describe('Integration: Device Scan → Confirm → Auto-Configure → Health Che
     discoveryService = new DiscoveryService(mockSettingsService, mockAuditService);
   });
 
-  describe('Network Scan', () => {
-    it('should return discovered devices from the network scan', async () => {
-      const result = await discoveryService.scanNetwork(TENANT_ID);
+  describe('Network Scan (bridge dispatch)', () => {
+    let scanService: DiscoveryService;
+    let bridgeEvents: BridgeEvents;
+    let mockDispatch: BridgeDispatchService;
 
-      // The scan completes and returns a result with timing info
-      expect(result).toHaveProperty('devices');
-      expect(result).toHaveProperty('scan_duration_ms');
-      expect(result).toHaveProperty('errors');
-      expect(result.scan_duration_ms).toBeGreaterThanOrEqual(0);
-      expect(Array.isArray(result.devices)).toBe(true);
-      expect(Array.isArray(result.errors)).toBe(true);
+    beforeEach(() => {
+      bridgeEvents = new BridgeEvents();
+      mockDispatch = {
+        dispatchScan: vi.fn().mockReturnValue('scan-int-1'),
+      } as unknown as BridgeDispatchService;
+      scanService = new DiscoveryService(
+        mockSettingsService,
+        mockAuditService,
+        mockDispatch,
+        bridgeEvents,
+      );
+      scanService.onModuleInit();
     });
 
-    it('should audit-log the scan completion', async () => {
-      await discoveryService.scanNetwork(TENANT_ID);
+    it('should dispatch a scan and return a scanId', async () => {
+      const result = await scanService.scanNetwork(TENANT_ID, OUTLET_ID);
 
+      expect(result).toEqual({ scanId: 'scan-int-1' });
+      expect(mockDispatch.dispatchScan).toHaveBeenCalledWith(OUTLET_ID);
+    });
+
+    it('should buffer streamed devices and audit-log completion on scan:done', async () => {
+      const { scanId } = await scanService.scanNetwork(TENANT_ID, OUTLET_ID);
+
+      bridgeEvents.emit('device', {
+        bridgeId: 'b1',
+        tenantId: TENANT_ID,
+        outletId: OUTLET_ID,
+        scanId,
+        device: {
+          ip_address: '192.168.1.60',
+          device_type: 'camera',
+          manufacturer: 'Hikvision',
+          model: 'DS-1',
+        },
+      });
+      expect(scanService.getScan(scanId)!.devices).toHaveLength(1);
+
+      bridgeEvents.emit('scan:done', {
+        bridgeId: 'b1',
+        tenantId: TENANT_ID,
+        outletId: OUTLET_ID,
+        scanId,
+        count: 1,
+        errors: [],
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(scanService.getScan(scanId)!.status).toBe('done');
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId: TENANT_ID,
@@ -162,7 +202,7 @@ describe('Integration: Device Scan → Confirm → Auto-Configure → Health Che
       // Verify updateSettings was called with the updated devices list
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         TENANT_ID,
-        'system',
+        null,
         expect.objectContaining({
           discovered_devices: expect.arrayContaining([
             expect.objectContaining({
@@ -265,7 +305,7 @@ describe('Integration: Device Scan → Confirm → Auto-Configure → Health Che
       // Settings should be updated with the offline status
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         TENANT_ID,
-        'system',
+        null,
         expect.objectContaining({
           discovered_devices: expect.arrayContaining([
             expect.objectContaining({
@@ -290,11 +330,22 @@ describe('Integration: Device Scan → Confirm → Auto-Configure → Health Che
 
   describe('Full Flow: Scan → Confirm → Auto-Configure → Health Check', () => {
     it('should complete the entire device lifecycle', async () => {
-      // Step 1: Scan network (stub returns empty, but we verify the flow)
-      const scanResult = await discoveryService.scanNetwork(TENANT_ID);
-      expect(scanResult).toBeDefined();
+      // Step 1: Dispatch a scan through a bridge-wired service
+      const bridgeEvents = new BridgeEvents();
+      const mockDispatch = {
+        dispatchScan: vi.fn().mockReturnValue('scan-flow-1'),
+      } as unknown as BridgeDispatchService;
+      const scanService = new DiscoveryService(
+        mockSettingsService,
+        mockAuditService,
+        mockDispatch,
+        bridgeEvents,
+      );
+      scanService.onModuleInit();
+      const scanResult = await scanService.scanNetwork(TENANT_ID, OUTLET_ID);
+      expect(scanResult.scanId).toBe('scan-flow-1');
 
-      // Step 2: Confirm a discovered camera
+      // Step 2: Confirm a discovered camera (legacy auto-config path)
       const confirmedCamera = await discoveryService.confirmDevice(TENANT_ID, {
         device_id: 'cam-001',
         assigned_outlet_id: OUTLET_ID,

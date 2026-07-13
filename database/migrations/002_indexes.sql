@@ -19,7 +19,6 @@ CREATE INDEX idx_voucher_templates_tenant ON voucher_templates(tenant_id);
 CREATE INDEX idx_voucher_packs_tenant ON voucher_packs(tenant_id);
 CREATE INDEX idx_campaigns_tenant ON campaigns(tenant_id);
 CREATE INDEX idx_bays_tenant ON bays(tenant_id);
-CREATE INDEX idx_alpr_detections_tenant ON alpr_detections(tenant_id);
 CREATE INDEX idx_queue_entries_tenant ON queue_entries(tenant_id);
 CREATE INDEX idx_employee_shifts_tenant ON employee_shifts(tenant_id);
 CREATE INDEX idx_audit_logs_tenant ON audit_logs(tenant_id);
@@ -33,7 +32,6 @@ CREATE INDEX idx_users_outlet ON users(outlet_id);
 CREATE INDEX idx_services_outlet ON services(outlet_id);
 CREATE INDEX idx_orders_outlet ON orders(outlet_id);
 CREATE INDEX idx_bays_outlet ON bays(outlet_id);
-CREATE INDEX idx_alpr_detections_outlet ON alpr_detections(outlet_id);
 CREATE INDEX idx_queue_entries_outlet ON queue_entries(outlet_id);
 CREATE INDEX idx_employee_shifts_outlet ON employee_shifts(outlet_id);
 
@@ -50,7 +48,7 @@ CREATE INDEX idx_orders_status_created ON orders(status, created_at DESC);
 -- Customers: phone lookup
 CREATE INDEX idx_customers_phone_normalized ON customers(tenant_id, phone_normalized);
 
--- Membership plates: ALPR plate lookup
+-- Membership plates: normalized plate lookup
 CREATE INDEX idx_membership_plates_normalized ON membership_plates(plate_normalized);
 
 -- Memberships: customer lookup
@@ -81,8 +79,5 @@ CREATE INDEX idx_campaign_grants_campaign_customer ON campaign_grants(campaign_i
 
 -- Voucher packs: customer lookup
 CREATE INDEX idx_voucher_packs_customer ON voucher_packs(customer_id);
-
--- ALPR: detection time range
-CREATE INDEX idx_alpr_detections_detected_at ON alpr_detections(outlet_id, detected_at);
 
 COMMIT;

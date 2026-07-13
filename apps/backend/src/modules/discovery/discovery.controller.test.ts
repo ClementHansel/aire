@@ -5,12 +5,13 @@ import { DiscoveryService } from './discovery.service';
 import { SettingsService } from '../settings/settings.service';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 import type { DiscoveredDevice } from '../settings/settings.interfaces';
-import type { NetworkScanResult, DeviceHealthCheck } from './discovery.types';
+import type { DeviceHealthCheck } from './discovery.types';
 
 describe('DiscoveryController', () => {
   let controller: DiscoveryController;
   let mockDiscoveryService: {
     scanNetwork: ReturnType<typeof vi.fn>;
+    getScan: ReturnType<typeof vi.fn>;
     confirmDevice: ReturnType<typeof vi.fn>;
     healthCheck: ReturnType<typeof vi.fn>;
   };
@@ -52,9 +53,12 @@ describe('DiscoveryController', () => {
     },
   };
 
-  const mockScanResult: NetworkScanResult = {
+  const mockScanSession = {
+    scanId: 'scan-1',
+    tenantId: mockTenantId,
+    outletId: 'outlet-001',
+    status: 'scanning' as const,
     devices: [mockDevice],
-    scan_duration_ms: 1200,
     errors: [],
   };
 
@@ -69,7 +73,8 @@ describe('DiscoveryController', () => {
     vi.clearAllMocks();
 
     mockDiscoveryService = {
-      scanNetwork: vi.fn().mockResolvedValue(mockScanResult),
+      scanNetwork: vi.fn().mockResolvedValue({ scanId: 'scan-1' }),
+      getScan: vi.fn().mockReturnValue(mockScanSession),
       confirmDevice: vi.fn().mockResolvedValue(mockConfirmedDevice),
       healthCheck: vi.fn().mockResolvedValue([mockHealthCheck]),
     };
@@ -88,43 +93,26 @@ describe('DiscoveryController', () => {
   });
 
   describe('POST /api/discovery/:tenantId/scan', () => {
-    it('should initiate a network scan and return results', async () => {
-      const result = await controller.scanNetwork(mockTenantId);
+    it('should dispatch a scan for the given outlet and return a scanId', async () => {
+      const result = await controller.scanNetwork(mockTenantId, { outletId: 'outlet-001' });
 
-      expect(mockDiscoveryService.scanNetwork).toHaveBeenCalledWith(mockTenantId);
-      expect(result).toEqual(mockScanResult);
-      expect(result.devices).toHaveLength(1);
-      expect(result.scan_duration_ms).toBe(1200);
+      expect(mockDiscoveryService.scanNetwork).toHaveBeenCalledWith(mockTenantId, 'outlet-001');
+      expect(result).toEqual({ scanId: 'scan-1' });
+    });
+  });
+
+  describe('GET /api/discovery/:tenantId/scan/:scanId', () => {
+    it('should return the buffered scan session', () => {
+      const result = controller.getScan(mockTenantId, 'scan-1');
+
+      expect(mockDiscoveryService.getScan).toHaveBeenCalledWith('scan-1');
+      expect(result).toEqual(mockScanSession);
     });
 
-    it('should return scan results with errors when protocols fail', async () => {
-      const resultWithErrors: NetworkScanResult = {
-        devices: [mockDevice],
-        scan_duration_ms: 3000,
-        errors: [
-          { protocol: 'onvif', message: 'Timeout scanning ONVIF devices' },
-          { protocol: 'mqtt', message: 'MQTT broker unreachable' },
-        ],
-      };
-      mockDiscoveryService.scanNetwork.mockResolvedValue(resultWithErrors);
-
-      const result = await controller.scanNetwork(mockTenantId);
-
-      expect(result.errors).toHaveLength(2);
-      expect(result.devices).toHaveLength(1);
-    });
-
-    it('should return empty results when no devices found', async () => {
-      mockDiscoveryService.scanNetwork.mockResolvedValue({
-        devices: [],
-        scan_duration_ms: 500,
-        errors: [],
-      });
-
-      const result = await controller.scanNetwork(mockTenantId);
-
-      expect(result.devices).toHaveLength(0);
-      expect(result.errors).toHaveLength(0);
+    it('should return null for an unknown scanId', () => {
+      mockDiscoveryService.getScan.mockReturnValue(null);
+      const result = controller.getScan(mockTenantId, 'missing');
+      expect(result).toBeNull();
     });
   });
 

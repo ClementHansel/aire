@@ -7,6 +7,7 @@ describe('MembershipRenewalService', () => {
   let service: MembershipRenewalService;
   let mockPool: { query: ReturnType<typeof vi.fn> };
   let mockPlanService: { getPlan: ReturnType<typeof vi.fn> };
+  let mockLifecycle: { recordEvent: ReturnType<typeof vi.fn> };
 
   const customerId = 'customer-001';
   const planId = 'plan-001';
@@ -51,9 +52,12 @@ describe('MembershipRenewalService', () => {
     vi.clearAllMocks();
     mockPool = { query: vi.fn() };
     mockPlanService = { getPlan: vi.fn() };
+    mockLifecycle = { recordEvent: vi.fn().mockResolvedValue(undefined) };
     service = new MembershipRenewalService(
       mockPool as any,
       mockPlanService as unknown as MembershipPlanService,
+      mockLifecycle as any,
+      {} as any, // PosCheckoutService — unused by renewMembership
     );
   });
 

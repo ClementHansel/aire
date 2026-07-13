@@ -1,5 +1,12 @@
 # AIRE Operations Platform — Technical Documentation
 
+> **⚠️ Superseded (kept for reference).** The current, code-verified documentation set lives in
+> [`docs/README.md`](README.md) → `docs/tech/*` and `docs/manuals/*`. This older note predates
+> several changes: the backend now runs on **NestJS + Express** (not Fastify), there is **no
+> separate `ai-service`** (AI lives in the backend `agent`/`whatsapp`/`agent-bridge` modules), and
+> the portal, COGS, membership lifecycle, n8n, and MinIO features are not covered here. Prefer the
+> `docs/tech/` set; the WhatsApp agent security model below is still accurate.
+
 This document describes the architecture, module map, data model, the WhatsApp
 agent runtime (including its security model), and the migration history.
 

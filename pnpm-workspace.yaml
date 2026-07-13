@@ -2,3 +2,16 @@ packages:
   - "apps/*"
   - "packages/*"
   - "database"
+  # NOTE: integrations/n8n-nodes-aire is intentionally NOT a workspace member.
+  # It's a separately-publishable n8n community node whose dev/peer dep n8n-workflow@2
+  # drags in transitive advisories (lodash, uuid) that are unpatchable upstream and
+  # never reach the aire runtime. Keeping it out avoids polluting the platform audit.
+  # It is upgraded/built in isolation (its own node_modules).
+
+# Security overrides (pnpm reads overrides here, not from package.json's "pnpm" field).
+# - postcss < 8.5.10: XSS via unescaped </style> (GHSA-qx2v-qp2m-jg93). Forces Next's bundled copy up.
+# - ip: SSRF in isPublic (GHSA-2p57-rm9w-gvfp); upstream archived with no patched release,
+#   so aliased to neoip, the maintained drop-in fork with the fix (used by branch-bridge discovery).
+overrides:
+  "postcss@<8.5.10": ">=8.5.10"
+  ip: "npm:neoip@^3.1.0"

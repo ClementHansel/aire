@@ -243,12 +243,16 @@ describe('MembershipSellService', () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ ...mockMembershipRow, status: MembershipStatus.Active }],
       });
+      // 6b: membership-number issuance looks up the order's outlet (best-effort).
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       const result = await service.activateMembership(membershipId, { plates: [] });
 
       expect(result.status).toBe(MembershipStatus.Active);
-      // No plate insert queries should be made (only 3 queries: fetch, plan, update)
-      expect(mockPool.query).toHaveBeenCalledTimes(3);
+      // No plate INSERT should run: fetch, plan, update, order-outlet lookup = 4.
+      expect(mockPool.query).toHaveBeenCalledTimes(4);
+      const sqls = mockPool.query.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(sqls.some((s: string) => s.includes('INSERT INTO membership_plates'))).toBe(false);
     });
   });
 

@@ -5,7 +5,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 
-export interface OpenShiftDto { openingFloat?: number; outletId?: string; }
+export interface OpenShiftDto { openingFloat?: number; outletId?: string; offScheduleReason?: string; }
 export interface CloseShiftDto { countedCash: number; notes?: string; }
 export interface PettyCashDto { type: 'in' | 'out'; amount: number; category?: string; reason?: string; }
 export interface ShiftIssueDto { severity?: 'low' | 'medium' | 'high'; description: string; }
@@ -36,6 +36,30 @@ export class ShiftService {
     );
     if (existing.rows.length > 0) throw new ConflictException('You already have an open shift. Close it first.');
 
+    // Attendance gate: a cashier opening a shift while off-schedule (working a
+    // branch they're not scheduled at) or with no schedule today (e.g. late /
+    // unscheduled login) must give a reason here — once, at login/shift start —
+    // rather than being asked on every order in the POS.
+    const sched = await this.pool.query<{ today: string | null }>(
+      `SELECT es.outlet_id AS today
+       FROM employees e
+       LEFT JOIN employee_schedules es ON es.employee_id = e.id AND es.work_date = CURRENT_DATE
+       WHERE e.tenant_id = $1 AND e.user_id = $2 AND e.status = 'active'
+       LIMIT 1`,
+      [user.tenant_id, user.sub],
+    );
+    const scheduledToday = sched.rows[0]?.today ?? null;
+    const noSchedule = scheduledToday == null;
+    const offSchedule = noSchedule || scheduledToday !== outletId;
+    const reason = dto.offScheduleReason?.trim();
+    if (offSchedule && !reason) {
+      throw new BadRequestException(
+        noSchedule
+          ? 'You have no schedule today — a reason is required to open a shift.'
+          : 'You are not scheduled at this branch today — a reason is required to open a shift.',
+      );
+    }
+
     const nameRes = await this.pool.query<{ name: string }>(`SELECT name FROM users WHERE id = $1`, [user.sub]);
     const operatorName = nameRes.rows[0]?.name ?? null;
 
@@ -45,6 +69,14 @@ export class ShiftService {
       [user.tenant_id, outletId, user.sub, operatorName, dto.openingFloat ?? 0],
     );
     const s = res.rows[0]!;
+
+    if (offSchedule && reason) {
+      await this.pool.query(
+        `INSERT INTO audit_logs (tenant_id, outlet_id, user_id, operation, entity_type, metadata)
+         VALUES ($1, $2, $3, 'pos.shift_off_schedule', 'shift', $4)`,
+        [user.tenant_id, outletId, user.sub, JSON.stringify({ reason, scheduledOutletId: scheduledToday, noSchedule, shiftId: s.id })],
+      );
+    }
     void this.eventBus?.emit({
       type: DomainEventType.ShiftOpened,
       tenantId: user.tenant_id, outletId, actor: user.sub,
@@ -87,6 +119,29 @@ export class ShiftService {
       payload: { shiftId, expected, counted: dto.countedCash, variance, totalSales: sales.total, orders: sales.count },
     });
     return this.mapShift(s);
+  }
+
+  /**
+   * The open shift a branch-level order (e.g. a self-service kiosk) should be
+   * booked into. This is the SINGLE seam for that decision: today it returns the
+   * branch's sole open shift, or the earliest-opened when several cashiers are
+   * open. The later HR-driven rule (schedule + `multiCashier`/`cashiersPerBranch`
+   * setting) replaces only this method's body — callers never change. `hint` is
+   * reserved for that rule (e.g. a specific register/operator).
+   */
+  async resolveBranchShift(
+    tenantId: string,
+    outletId: string,
+    _hint?: string,
+  ): Promise<{ id: string; outletId: string } | null> {
+    const res = await this.pool.query<{ id: string; outlet_id: string }>(
+      `SELECT id, outlet_id FROM pos_shifts
+       WHERE tenant_id = $1 AND outlet_id = $2 AND status = 'open'
+       ORDER BY opened_at ASC LIMIT 1`,
+      [tenantId, outletId],
+    );
+    const r = res.rows[0];
+    return r ? { id: r.id, outletId: r.outlet_id } : null;
   }
 
   /** The operator's current open shift, if any. */

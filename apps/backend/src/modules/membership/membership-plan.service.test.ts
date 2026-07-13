@@ -90,9 +90,36 @@ describe('MembershipPlanService', () => {
       await expect(
         service.createPlan(tenantId, {
           name: 'Bad Plan',
-          durationMonths: 6, // not 1, 3, or 12
+          durationMonths: 5, // not an allowed duration (1, 3, 6, 12)
           maxUses: 10,
           price: 50000,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should accept the 6-month duration tier', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ ...mockPlanRow, duration_months: 6 }],
+      });
+
+      const result = await service.createPlan(tenantId, {
+        name: '6 Month Plan',
+        durationMonths: 6,
+        maxUses: 180,
+        price: 1500000,
+      });
+
+      expect(result.durationMonths).toBe(6);
+    });
+
+    it('should throw BadRequestException for discountPct out of range', async () => {
+      await expect(
+        service.createPlan(tenantId, {
+          name: 'Plan',
+          durationMonths: 1,
+          maxUses: 10,
+          price: 50000,
+          discountedServices: [{ serviceId: 'svc-1', discountPct: 150 }],
         }),
       ).rejects.toThrow(BadRequestException);
     });

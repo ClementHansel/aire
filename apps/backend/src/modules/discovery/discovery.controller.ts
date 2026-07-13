@@ -8,11 +8,17 @@ import {
 } from '@nestjs/common';
 import { Role } from '@aire/shared';
 import { Roles } from '../../common/decorators';
+import { JwtAuthGuard } from '../auth/auth.guard';
 import { RolesGuard, RlsContextGuard } from '../../common/guards';
 import { DiscoveryService } from './discovery.service';
 import { SettingsService } from '../settings/settings.service';
-import type { NetworkScanResult, DeviceConfirmation, DeviceHealthCheck } from './discovery.types';
+import type { DeviceConfirmation, DeviceHealthCheck, ScanSession } from './discovery.types';
 import type { DiscoveredDevice } from '../settings/settings.interfaces';
+
+/** Body for POST :tenantId/scan — the outlet whose bridge should run the scan. */
+interface ScanRequest {
+  outletId: string;
+}
 
 /**
  * Discovery Controller.
@@ -26,7 +32,7 @@ import type { DiscoveredDevice } from '../settings/settings.interfaces';
  * Requirements: 9.4, 9.5
  */
 @Controller('api/discovery')
-@UseGuards(RlsContextGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
 export class DiscoveryController {
   constructor(
     private readonly discoveryService: DiscoveryService,
@@ -36,9 +42,8 @@ export class DiscoveryController {
   /**
    * POST /api/discovery/:tenantId/scan
    *
-   * Initiate a network scan for the tenant's local network.
-   * Discovers ONVIF cameras, MQTT IoT controllers, and SSDP/mDNS routers.
-   * Returns partial results if individual protocol scans fail.
+   * Dispatch a LAN scan to the given outlet's bridge agent. Returns a scanId
+   * immediately; devices stream in asynchronously — poll GET .../scan/:scanId.
    *
    * Requires: Tenant_Owner role
    * Requirements: 9.1, 9.4
@@ -47,8 +52,27 @@ export class DiscoveryController {
   @Roles(Role.TenantOwner)
   async scanNetwork(
     @Param('tenantId') tenantId: string,
-  ): Promise<NetworkScanResult> {
-    return this.discoveryService.scanNetwork(tenantId);
+    @Body() body: ScanRequest,
+  ): Promise<{ scanId: string }> {
+    return this.discoveryService.scanNetwork(tenantId, body.outletId);
+  }
+
+  /**
+   * GET /api/discovery/:tenantId/scan/:scanId
+   *
+   * Poll the progress of an in-flight scan: its status ('scanning' | 'done')
+   * and the devices discovered so far.
+   *
+   * Requires: Tenant_Owner role
+   * Requirements: 9.1, 9.4
+   */
+  @Get(':tenantId/scan/:scanId')
+  @Roles(Role.TenantOwner)
+  getScan(
+    @Param('tenantId') _tenantId: string,
+    @Param('scanId') scanId: string,
+  ): ScanSession | null {
+    return this.discoveryService.getScan(scanId);
   }
 
   /**

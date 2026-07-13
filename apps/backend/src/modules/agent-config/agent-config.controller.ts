@@ -18,6 +18,6 @@ export class AgentConfigController {
 
   @Put()
   update(@CurrentUser() user: JWTPayload, @Body() dto: UpdateAgentConfigDto) {
-    return this.service.update(user.tenant_id, dto);
+    return this.service.update(user.tenant_id, dto, user.sub);
   }
 }

@@ -9,17 +9,20 @@
 'use client';
 
 import Link from 'next/link';
-import { getUser, logout } from '@/lib/auth';
+import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
+import { getUser, clearSession } from '@/lib/auth';
+import { useI18n, LanguageToggle } from '@/lib/i18n';
 
 export type PosTab = 'new-order' | 'orders' | 'sell-pack' | 'queue' | 'summary' | 'shift';
 
-const TABS: { id: PosTab; label: string }[] = [
-  { id: 'new-order', label: 'New Order' },
-  { id: 'orders', label: 'Orders' },
-  { id: 'sell-pack', label: 'Sell Pack' },
-  { id: 'queue', label: 'Queue' },
-  { id: 'summary', label: 'Summary' },
-  { id: 'shift', label: 'Shift' },
+const TABS: { id: PosTab; label: string; key: string }[] = [
+  { id: 'new-order', label: 'New Order', key: 'pos.newOrder' },
+  { id: 'orders', label: 'Orders', key: 'pos.orders' },
+  { id: 'sell-pack', label: 'Sell Pack', key: 'pos.sellPack' },
+  { id: 'queue', label: 'Queue', key: 'pos.queue' },
+  { id: 'summary', label: 'Summary', key: 'pos.summary' },
+  { id: 'shift', label: 'Shift', key: 'pos.shift' },
 ];
 
 export interface PosNavProps {
@@ -29,13 +32,38 @@ export interface PosNavProps {
   active: PosTab;
   /** Optional header title; defaults to the active tab's label. */
   title?: string;
-  /** Optional sub-label under the title (e.g. the agent id). */
+  /**
+   * Optional sub-label under the title. When omitted, PosNav resolves the
+   * branch name for `agent` and shows "Agent: <branch name>" instead of the
+   * raw outlet id.
+   */
   subtitle?: string;
 }
 
 export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
   const user = getUser();
-  const activeLabel = TABS.find((t) => t.id === active)?.label ?? 'POS';
+  const { t } = useI18n();
+  // Resolve the branch name for the outlet id in the URL so the header shows a
+  // human-readable name ("Agent: Super Made Branch") rather than the raw UUID.
+  const [agentName, setAgentName] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ id: string; name: string }[]>('/outlets')
+      .then((outlets) => {
+        if (cancelled) return;
+        const match = outlets.find((o) => o.id === agent);
+        if (match) setAgentName(match.name);
+      })
+      .catch(() => { /* fall back to the passed subtitle / raw id */ });
+    return () => { cancelled = true; };
+  }, [agent]);
+
+  const activeTab = TABS.find((tab) => tab.id === active);
+  const activeLabel = activeTab ? t(activeTab.key, activeTab.label) : 'POS';
+  // Prefer an explicit subtitle from the page; otherwise show the resolved
+  // branch name once it loads.
+  const resolvedSubtitle = subtitle ?? (agentName ? `${t('pos.agent', 'Branch')}: ${agentName}` : undefined);
 
   return (
     <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
@@ -46,28 +74,35 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
           </div>
           <div>
             <p className="font-semibold text-text-primary text-sm">{title ?? activeLabel}</p>
-            {subtitle && <p className="text-xs text-text-muted">{subtitle}</p>}
+            {resolvedSubtitle && <p className="text-xs text-text-muted">{resolvedSubtitle}</p>}
           </div>
         </div>
+        {/* No "Hub" escape here — a registered POS terminal stays in the POS
+            shell; leaving happens by signing out (which shows the cashier gate). */}
         <nav className="hidden sm:flex gap-1 text-sm" data-testid="pos-nav">
-          <Link href="/hub" className="btn-ghost py-1.5 px-3">🏠 Hub</Link>
-          {TABS.map((t) =>
-            t.id === active ? (
-              <span key={t.id} className="btn-ghost py-1.5 px-3 bg-surface-sunken" data-testid={`pos-nav-${t.id}-active`}>
-                {t.label}
+          {TABS.map((tab) =>
+            tab.id === active ? (
+              <span key={tab.id} className="btn-ghost py-1.5 px-3 bg-surface-sunken" data-testid={`pos-nav-${tab.id}-active`}>
+                {t(tab.key, tab.label)}
               </span>
             ) : (
-              <Link key={t.id} href={`/pos/${agent}/${t.id}`} className="btn-ghost py-1.5 px-3" data-testid={`pos-nav-${t.id}`}>
-                {t.label}
+              <Link key={tab.id} href={`/pos/${agent}/${tab.id}`} className="btn-ghost py-1.5 px-3" data-testid={`pos-nav-${tab.id}`}>
+                {t(tab.key, tab.label)}
               </Link>
             ),
           )}
         </nav>
       </div>
       <div className="flex items-center gap-3">
+        <LanguageToggle />
         <span className="text-xs text-text-secondary">{user?.name}</span>
-        <button onClick={logout} className="text-xs text-text-secondary hover:text-text-primary">
-          Sign out
+        {/* Sign out the cashier but keep the terminal registered — the POS shell
+            guard then shows the cashier sign-in for the next operator. */}
+        <button
+          onClick={() => { clearSession(); if (typeof window !== 'undefined') window.location.reload(); }}
+          className="text-xs text-text-secondary hover:text-text-primary"
+        >
+          {t('common.signOut', 'Sign out')}
         </button>
       </div>
     </header>

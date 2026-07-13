@@ -57,6 +57,8 @@ export interface MemberLookupResponse {
     id: string;
     name: string;
     phone: string;
+    /** 12-char membership number (present once the member has been issued one). */
+    membershipNumber?: string;
     plates: PlateInfo[];
   };
   memberships: MembershipDetail[];

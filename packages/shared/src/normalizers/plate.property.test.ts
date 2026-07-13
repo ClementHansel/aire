@@ -17,15 +17,11 @@ describe('normalizePlate - Property Tests (Property 5: Normalization Equivalence
    */
   const validPlateArb = fc
     .tuple(
-      fc.stringOf(fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), {
-        minLength: 1,
-        maxLength: 12,
-      }),
+      fc.string({ unit: fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), minLength: 1,
+        maxLength: 12, }),
       fc.array(
-        fc.stringOf(fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'), {
-          minLength: 0,
-          maxLength: 4,
-        }),
+        fc.string({ unit: fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'), minLength: 0,
+          maxLength: 4, }),
         { minLength: 0, maxLength: 3 },
       ),
     )

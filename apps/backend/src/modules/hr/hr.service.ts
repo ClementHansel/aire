@@ -12,7 +12,20 @@ export interface CreateEmployeeDto {
   salary?: number;
   outletId?: string;
   hiredAt?: string;
+  employmentType?: 'permanent' | 'contract';
   userId?: string | null;
+}
+
+export interface UpdateEmployeeDto {
+  name?: string;
+  role?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  salary?: number;
+  outletId?: string | null;
+  hiredAt?: string | null;
+  employmentType?: 'permanent' | 'contract';
+  status?: 'active' | 'inactive';
 }
 
 /**
@@ -25,6 +38,8 @@ export interface BranchContext {
   homeOutletId: string | null;   // the employee's base outlet
   todayOutletId: string | null;  // scheduled branch for CURRENT_DATE, if any
   todayScheduled: boolean;
+  todayStartTime: string | null; // scheduled shift start (HH:MM), if rostered today
+  todayEndTime: string | null;   // scheduled shift end (HH:MM), if rostered today
   assignedOutletIds: string[];   // union of every branch they're scheduled at (+ home)
   branches: { id: string; name: string }[]; // all active tenant branches (for the POS override picker)
 }
@@ -68,8 +83,8 @@ export class HrService {
     let where = 'e.tenant_id = $1';
     if (outletId) { params.push(outletId); where += ` AND e.outlet_id = $${params.length}`; }
     const res = await this.pool.query(
-      `SELECT e.id, e.name, e.role, e.phone, e.email, e.salary, e.status, e.hired_at, e.outlet_id, o.name AS outlet_name,
-              e.user_id, u.email AS user_email
+      `SELECT e.id, e.name, e.role, e.phone, e.email, e.salary, e.status, e.hired_at, e.employment_type,
+              e.outlet_id, o.name AS outlet_name, e.user_id, u.email AS user_email
        FROM employees e
        LEFT JOIN outlets o ON o.id = e.outlet_id
        LEFT JOIN users u ON u.id = e.user_id
@@ -78,10 +93,121 @@ export class HrService {
     );
     return res.rows.map((r) => ({
       id: r.id, name: r.name, role: r.role, phone: r.phone, email: r.email,
-      salary: parseFloat(r.salary), status: r.status, hiredAt: r.hired_at,
+      salary: parseFloat(r.salary), status: r.status, hiredAt: r.hired_at, employmentType: r.employment_type,
       outletId: r.outlet_id, outletName: r.outlet_name ?? null,
       userId: r.user_id ?? null, userEmail: r.user_email ?? null,
     }));
+  }
+
+  /**
+   * Full profile + history for one employee: attendance summary, upcoming/recent
+   * schedules, leave, payroll adjustments, loans (+ repayments) and payslip
+   * history across runs. Powers the HR employee-detail drawer.
+   */
+  async getEmployeeDetail(tenantId: string, employeeId: string): Promise<Record<string, unknown>> {
+    const empRes = await this.pool.query(
+      `SELECT e.id, e.name, e.role, e.phone, e.email, e.salary, e.status, e.hired_at, e.employment_type,
+              e.outlet_id, o.name AS outlet_name, e.user_id, u.email AS user_email, e.created_at
+       FROM employees e
+       LEFT JOIN outlets o ON o.id = e.outlet_id
+       LEFT JOIN users u ON u.id = e.user_id
+       WHERE e.id = $1 AND e.tenant_id = $2`,
+      [employeeId, tenantId],
+    );
+    if (empRes.rows.length === 0) throw new NotFoundException('Employee not found');
+    const e = empRes.rows[0]!;
+
+    const [attendance, schedules, leave, adjustments, loans, payslips] = await Promise.all([
+      // Recent attendance (last 30 rows) + this-month present/late/absent counts.
+      this.pool.query(
+        `SELECT work_date, status, check_in, check_out, hours_worked
+         FROM attendance_records WHERE tenant_id = $1 AND employee_id = $2
+         ORDER BY work_date DESC LIMIT 30`,
+        [tenantId, employeeId],
+      ),
+      this.pool.query(
+        `SELECT es.id, es.work_date, es.start_time, es.end_time, es.notes, es.outlet_id, o.name AS outlet_name
+         FROM employee_schedules es LEFT JOIN outlets o ON o.id = es.outlet_id
+         WHERE es.tenant_id = $1 AND es.employee_id = $2
+         ORDER BY es.work_date DESC LIMIT 30`,
+        [tenantId, employeeId],
+      ),
+      this.pool.query(
+        `SELECT id, start_date, end_date, type, reason, status, paid
+         FROM leave_requests WHERE tenant_id = $1 AND employee_id = $2
+         ORDER BY start_date DESC LIMIT 50`,
+        [tenantId, employeeId],
+      ),
+      this.pool.query(
+        `SELECT pa.id, pa.type, pa.amount, pa.reason, pa.effective_period, pa.status, pa.recurring, pa.total_periods,
+                (SELECT COUNT(*) FROM payroll_adjustment_applications a WHERE a.adjustment_id = pa.id) AS applied_count
+         FROM payroll_adjustments pa WHERE pa.tenant_id = $1 AND pa.employee_id = $2
+         ORDER BY pa.created_at DESC LIMIT 100`,
+        [tenantId, employeeId],
+      ),
+      this.pool.query(
+        `SELECT id, principal, balance, monthly_installment, reason, status, created_at
+         FROM employee_loans WHERE tenant_id = $1 AND employee_id = $2
+         ORDER BY created_at DESC LIMIT 50`,
+        [tenantId, employeeId],
+      ),
+      this.pool.query(
+        `SELECT ps.id, ps.base_salary, ps.bonus_total, ps.deduction_total, ps.advance_total,
+                ps.loan_repayment_total, ps.unpaid_leave_deduction, ps.gross_pay, ps.net_pay,
+                ps.days_worked, ps.scheduled_days, pr.period, pr.status, pr.finalized_at
+         FROM payslips ps JOIN payroll_runs pr ON pr.id = ps.payroll_run_id
+         WHERE ps.tenant_id = $1 AND ps.employee_id = $2
+         ORDER BY pr.period DESC LIMIT 24`,
+        [tenantId, employeeId],
+      ),
+    ]);
+
+    const monthPrefix = new Date().toISOString().slice(0, 7);
+    const att = attendance.rows;
+    const attendanceThisMonth = {
+      present: att.filter((r) => String(r.work_date).slice(0, 7) === monthPrefix && (r.status === 'present' || r.status === 'late')).length,
+      absent: att.filter((r) => String(r.work_date).slice(0, 7) === monthPrefix && r.status === 'absent').length,
+    };
+
+    return {
+      id: e.id, name: e.name, role: e.role, phone: e.phone, email: e.email,
+      salary: parseFloat(e.salary), status: e.status, hiredAt: e.hired_at, employmentType: e.employment_type,
+      outletId: e.outlet_id, outletName: e.outlet_name ?? null,
+      userId: e.user_id ?? null, userEmail: e.user_email ?? null, createdAt: e.created_at,
+      attendanceThisMonth,
+      attendance: att.map((r) => ({ workDate: r.work_date, status: r.status, checkIn: r.check_in, checkOut: r.check_out, hoursWorked: r.hours_worked == null ? null : parseFloat(r.hours_worked) })),
+      schedules: schedules.rows.map((r) => ({ id: r.id, workDate: r.work_date, startTime: r.start_time, endTime: r.end_time, notes: r.notes, outletId: r.outlet_id, outletName: r.outlet_name ?? null })),
+      leave: leave.rows.map((r) => ({ id: r.id, startDate: r.start_date, endDate: r.end_date, type: r.type, reason: r.reason, status: r.status, paid: r.paid })),
+      adjustments: adjustments.rows.map((r) => ({ id: r.id, type: r.type, amount: parseFloat(r.amount), reason: r.reason, period: r.effective_period, status: r.status, recurring: r.recurring, totalPeriods: r.total_periods, appliedCount: parseInt(r.applied_count, 10) || 0 })),
+      loans: loans.rows.map((r) => ({ id: r.id, principal: parseFloat(r.principal), balance: parseFloat(r.balance), monthlyInstallment: parseFloat(r.monthly_installment), reason: r.reason, status: r.status, createdAt: r.created_at })),
+      payslips: payslips.rows.map((r) => ({ id: r.id, period: r.period, runStatus: r.status, finalizedAt: r.finalized_at, baseSalary: parseFloat(r.base_salary), bonusTotal: parseFloat(r.bonus_total), deductionTotal: parseFloat(r.deduction_total), advanceTotal: parseFloat(r.advance_total), loanRepaymentTotal: parseFloat(r.loan_repayment_total), unpaidLeaveDeduction: parseFloat(r.unpaid_leave_deduction), grossPay: parseFloat(r.gross_pay), netPay: parseFloat(r.net_pay), daysWorked: r.days_worked, scheduledDays: r.scheduled_days })),
+    };
+  }
+
+  /** Update an employee's profile fields (partial). */
+  async updateEmployee(tenantId: string, employeeId: string, dto: UpdateEmployeeDto): Promise<Record<string, unknown>> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const set = (col: string, val: unknown) => { params.push(val); sets.push(`${col} = $${params.length}`); };
+    if (dto.name !== undefined) set('name', dto.name);
+    if (dto.role !== undefined) set('role', dto.role);
+    if (dto.phone !== undefined) set('phone', dto.phone);
+    if (dto.email !== undefined) set('email', dto.email);
+    if (dto.salary !== undefined) set('salary', dto.salary);
+    if (dto.outletId !== undefined) set('outlet_id', dto.outletId);
+    if (dto.hiredAt !== undefined) set('hired_at', dto.hiredAt);
+    if (dto.employmentType !== undefined) set('employment_type', dto.employmentType);
+    if (dto.status !== undefined) set('status', dto.status);
+    if (sets.length === 0) throw new BadRequestException('No fields to update');
+    sets.push('updated_at = NOW()');
+    params.push(employeeId, tenantId);
+    const res = await this.pool.query(
+      `UPDATE employees SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND tenant_id = $${params.length}
+       RETURNING id, name, status, employment_type`,
+      params,
+    );
+    if (res.rows.length === 0) throw new NotFoundException('Employee not found');
+    return { id: res.rows[0]!.id, name: res.rows[0]!.name, status: res.rows[0]!.status, employmentType: res.rows[0]!.employment_type };
   }
 
   /**
@@ -118,11 +244,11 @@ export class HrService {
       [tenantId, userId],
     );
     if (empRes.rows.length === 0) {
-      return { employeeId: null, homeOutletId: null, todayOutletId: null, todayScheduled: false, assignedOutletIds: [], branches };
+      return { employeeId: null, homeOutletId: null, todayOutletId: null, todayScheduled: false, todayStartTime: null, todayEndTime: null, assignedOutletIds: [], branches };
     }
     const emp = empRes.rows[0]!;
-    const todayRes = await this.pool.query<{ outlet_id: string | null }>(
-      `SELECT outlet_id FROM employee_schedules WHERE employee_id = $1 AND work_date = CURRENT_DATE LIMIT 1`,
+    const todayRes = await this.pool.query<{ outlet_id: string | null; start_time: string | null; end_time: string | null }>(
+      `SELECT outlet_id, start_time, end_time FROM employee_schedules WHERE employee_id = $1 AND work_date = CURRENT_DATE LIMIT 1`,
       [emp.id],
     );
     const assignedRes = await this.pool.query<{ outlet_id: string }>(
@@ -132,11 +258,14 @@ export class HrService {
     const assigned = new Set<string>(assignedRes.rows.map((r) => r.outlet_id));
     if (emp.outlet_id) assigned.add(emp.outlet_id);
     const today = todayRes.rows[0]?.outlet_id ?? null;
+    const todayRow = todayRes.rows[0];
     return {
       employeeId: emp.id,
       homeOutletId: emp.outlet_id,
       todayOutletId: today,
       todayScheduled: today != null,
+      todayStartTime: todayRow?.start_time ?? null,
+      todayEndTime: todayRow?.end_time ?? null,
       assignedOutletIds: [...assigned],
       branches,
     };
@@ -145,9 +274,9 @@ export class HrService {
   async createEmployee(tenantId: string, dto: CreateEmployeeDto, actor?: string): Promise<Record<string, unknown>> {
     if (!dto.name?.trim()) throw new BadRequestException('name is required');
     const res = await this.pool.query(
-      `INSERT INTO employees (tenant_id, outlet_id, name, role, phone, email, salary, hired_at, user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [tenantId, dto.outletId ?? null, dto.name.trim(), dto.role ?? null, dto.phone ?? null, dto.email ?? null, dto.salary ?? 0, dto.hiredAt ?? null, dto.userId ?? null],
+      `INSERT INTO employees (tenant_id, outlet_id, name, role, phone, email, salary, hired_at, employment_type, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'permanent'),$10) RETURNING *`,
+      [tenantId, dto.outletId ?? null, dto.name.trim(), dto.role ?? null, dto.phone ?? null, dto.email ?? null, dto.salary ?? 0, dto.hiredAt ?? null, dto.employmentType ?? null, dto.userId ?? null],
     );
     const e = res.rows[0]!;
     void this.eventBus?.emit({

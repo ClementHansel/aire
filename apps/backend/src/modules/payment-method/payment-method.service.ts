@@ -1,6 +1,7 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { KIND_RANK, seedDefaultPaymentMethods } from './payment-method.defaults';
 
 export type PaymentKind = 'cash' | 'qris' | 'edc' | 'cc' | 'transfer';
 
@@ -70,11 +71,23 @@ export class PaymentMethodService {
         dto.businessUnit ?? null,
         dto.logoUrl ?? null,
         dto.color ?? '#1652F0',
-        dto.sortOrder ?? 0,
+        // Placement is fixed by payment kind so POS buttons stay predictable,
+        // unless the caller explicitly overrides the order.
+        dto.sortOrder ?? KIND_RANK[dto.kind] ?? 0,
         dto.isActive ?? true,
       ],
     );
     return this.mapRow(res.rows[0]);
+  }
+
+  /**
+   * Seed the default starter set for a tenant that has none yet. Idempotent:
+   * does nothing if the tenant already has any payment method. Returns the
+   * resulting list so the caller can render immediately.
+   */
+  async seedDefaults(tenantId: string): Promise<PaymentMethodRecord[]> {
+    await seedDefaultPaymentMethods(this.pool, tenantId);
+    return this.findAll(tenantId);
   }
 
   async update(tenantId: string, id: string, dto: Partial<UpsertPaymentMethodDto>): Promise<PaymentMethodRecord> {

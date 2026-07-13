@@ -1,0 +1,18 @@
+[Unit]
+Description=Aire Branch Bridge agent (device discovery + CCTV relay + MQTT bridge)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aire-bridge
+WorkingDirectory=@INSTALL_DIR@
+EnvironmentFile=@INSTALL_DIR@/bridge.env
+ExecStart=@NODE_BIN@ @INSTALL_DIR@/dist/index.js
+Restart=always
+RestartSec=5
+# Discovery uses raw/multicast sockets; keep the process lean but resilient.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

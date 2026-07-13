@@ -53,6 +53,41 @@ export class PaymentService {
   }
 
   /**
+   * Masked payment config for the settings UI — never returns the raw secrets.
+   */
+  async getPublicConfig(tenantId: string): Promise<{ provider: string; hasApiKey: boolean; hasWebhookSecret: boolean; sandbox: boolean }> {
+    const cfg = await this.getTenantPaymentConfig(tenantId);
+    return {
+      provider: cfg.provider,
+      hasApiKey: !!cfg.apiKey,
+      hasWebhookSecret: !!cfg.webhookSecret,
+      sandbox: isSandboxKey(cfg.apiKey),
+    };
+  }
+
+  /**
+   * Update the tenant's payment config (per-tenant, in tenants.settings.payment).
+   * Blank apiKey/webhookSecret are ignored so the UI can change provider without
+   * re-entering secrets. Preserves other settings keys.
+   */
+  async setTenantConfig(
+    tenantId: string,
+    dto: { provider: string; apiKey?: string; webhookSecret?: string },
+  ): Promise<{ provider: string; hasApiKey: boolean; hasWebhookSecret: boolean; sandbox: boolean }> {
+    const current = await this.getTenantPaymentConfig(tenantId);
+    const merged = {
+      provider: dto.provider || current.provider,
+      apiKey: dto.apiKey && dto.apiKey.trim() ? dto.apiKey.trim() : current.apiKey,
+      webhookSecret: dto.webhookSecret && dto.webhookSecret.trim() ? dto.webhookSecret.trim() : current.webhookSecret,
+    };
+    await this.pool.query(
+      `UPDATE tenants SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{payment}', $2::jsonb, true), updated_at = NOW() WHERE id = $1`,
+      [tenantId, JSON.stringify(merged)],
+    );
+    return this.getPublicConfig(tenantId);
+  }
+
+  /**
    * Create a dynamic QRIS charge for an order.
    * Stores the gateway transaction id on the order's payment_reference and
    * leaves the order in 'ordered' status until the webhook confirms payment.
@@ -69,8 +104,9 @@ export class PaymentService {
     }
 
     const cfg = await this.getTenantPaymentConfig(tenantId);
+    const sandbox = isSandboxKey(cfg.apiKey);
     if (!cfg.apiKey) {
-      throw new BadRequestException('Payment provider is not configured. Add gateway API keys in settings.');
+      throw new BadRequestException('Payment provider is not configured. Set the gateway + API key in Settings → Payment (use "mock" for sandbox).');
     }
 
     const provider = this.registry.getProvider(tenantId, cfg);
@@ -94,7 +130,7 @@ export class PaymentService {
     // customer scanning and paying by confirming the order through the exact
     // same DB path a real webhook uses, after a realistic delay. All state is
     // real; only the gateway round-trip is simulated.
-    if (isSandboxKey(cfg.apiKey)) {
+    if (sandbox) {
       const delayMs = parseInt(this.config.get('PAYMENT_SANDBOX_CONFIRM_DELAY_MS') ?? '6000', 10) || 6000;
       this.logger.log(`Sandbox: order ${orderId} will auto-confirm in ${delayMs}ms`);
       setTimeout(() => {

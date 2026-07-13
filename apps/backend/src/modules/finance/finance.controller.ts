@@ -1,12 +1,16 @@
 import { Controller, Get, Post, Body, Query, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, RequirePermission } from '../../common/decorators';
+import { PermissionsGuard } from '../../common/guards';
 import { ScopeService } from '../../common/scope/scope.service';
 import { FinanceService, RecordExpenseDto } from './finance.service';
 
+// Finance is sensitive: reads need finance.read, recording expenses needs
+// finance.write. Zero-regression (unrestricted users hold '*').
 @Controller('api/finance')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+@RequirePermission('finance.read')
 export class FinanceController {
   constructor(
     private readonly service: FinanceService,
@@ -27,6 +31,7 @@ export class FinanceController {
 
   @Post('expenses')
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission('finance.write')
   record(@CurrentUser() user: JWTPayload, @Body() dto: RecordExpenseDto) {
     return this.service.recordExpense(user.tenant_id, dto, user.sub);
   }

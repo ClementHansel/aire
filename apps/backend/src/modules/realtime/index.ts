@@ -5,6 +5,5 @@ export type {
   BayStatusChangedPayload,
   QueueUpdatedPayload,
   PaymentConfirmedPayload,
-  AlprDetectionPayload,
   NotificationAlertPayload,
 } from './realtime.gateway';

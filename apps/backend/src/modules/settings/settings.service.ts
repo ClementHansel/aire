@@ -10,7 +10,7 @@ import { Pool } from 'pg';
 import Ajv, { ErrorObject } from 'ajv';
 import addFormats from 'ajv-formats';
 import { DATABASE_POOL } from '../auth/database.provider';
-import type { TenantAutomationSettings, AutomationToggles } from './settings.interfaces';
+import type { TenantAutomationSettings, AutomationToggles, PublicTenantSettings } from './settings.interfaces';
 import { DEFAULT_AUTOMATION_SETTINGS } from './settings.interfaces';
 import { TENANT_AUTOMATION_SETTINGS_SCHEMA } from './settings.schema';
 import { encrypt, decrypt } from './encryption.util';
@@ -77,6 +77,23 @@ export class SettingsService {
   }
 
   /**
+   * Retrieve automation settings for a tenant with sensitive fields redacted.
+   * Secrets (WhatsApp token, LLM API key) are never returned as plaintext to the
+   * client — only booleans indicating whether each is set. Use this for any
+   * response that leaves the server; use {@link getSettings} for internal callers
+   * (LLM router, WhatsApp runtime, etc.) that need the decrypted values.
+   */
+  async getPublicSettings(tenantId: string): Promise<PublicTenantSettings> {
+    const s = await this.getSettings(tenantId);
+    const { whatsapp_token_encrypted, llm_api_key_encrypted, ...rest } = s;
+    return {
+      ...rest,
+      whatsapp_token_set: !!whatsapp_token_encrypted,
+      llm_api_key_set: !!llm_api_key_encrypted,
+    };
+  }
+
+  /**
    * Update automation settings for a tenant. Merges the patch with existing
    * settings (partial update), validates against JSON Schema, encrypts
    * sensitive fields, persists, and audit-logs the change.
@@ -85,8 +102,9 @@ export class SettingsService {
    */
   async updateSettings(
     tenantId: string,
-    userId: string,
+    userId: string | null,
     patch: Partial<TenantAutomationSettings>,
+    ipAddress?: string,
   ): Promise<TenantAutomationSettings> {
     // 1. Verify tenant exists and get current settings
     const current = await this.getRawSettings(tenantId);
@@ -147,6 +165,7 @@ export class SettingsService {
       entityId: tenantId,
       beforeValue: this.sanitizeForAudit(current),
       afterValue: this.sanitizeForAudit(merged),
+      ipAddress,
     });
 
     // 9. Return the decrypted merged settings

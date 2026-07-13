@@ -31,6 +31,8 @@ export interface CreateOrderRequest {
   businessUnit?: BusinessUnit;
   /** Salesperson credited for this transaction (distinct from the logged-in cashier). */
   salespersonName?: string;
+  /** Employee credited for this sale — links the sale to an employee for commission accrual. */
+  salespersonEmployeeId?: string;
   voucherCodes?: string[];
   membershipId?: string;
   selectedPlate?: string;
@@ -44,6 +46,17 @@ export interface CreateOrderRequest {
   operatingOutletId?: string;
   /** Reason for operating a branch other than today's scheduled one (audit-logged). */
   offScheduleReason?: string;
+  /**
+   * Vehicle-queue entry this order is being rung up for (POS "order from queue").
+   * When supplied, the created order is linked back to the queue entry so the
+   * queue board can show it as paid/unpaid. Service status stays independent.
+   */
+  queueEntryId?: string;
+  /**
+   * Ordering interface that created this order. Defaults to 'pos'. Customer/kiosk
+   * channels block out-of-stock products; the POS is not gated.
+   */
+  channel?: 'pos' | 'kiosk' | 'customer';
 }
 
 /**
@@ -83,6 +96,8 @@ export interface UpdateOrderStatusRequest {
  * GET /api/orders
  */
 export interface OrderQueryParams {
+  /** Tenant scope — REQUIRED. Every list query must be bound to one tenant. */
+  tenantId: string;
   status?: OrderStatus;
   search?: string;
   dateFrom?: string;

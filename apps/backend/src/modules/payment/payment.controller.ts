@@ -8,14 +8,16 @@ import {
 } from '@nestjs/common';
 import { JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, RequiresOnboarding } from '../../common/decorators';
+import { OnboardingCompleteGuard } from '../../common/guards';
 import { PaymentService, QrisChargeResult } from './payment.service';
 
 /**
  * Payment controller — initiates gateway charges from the POS.
  */
 @Controller('api/payments')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, OnboardingCompleteGuard)
+@RequiresOnboarding()
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 

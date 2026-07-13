@@ -8,7 +8,8 @@ import { DATABASE_POOL } from '../auth/database.provider';
 export interface AuditLogEntry {
   tenantId: string;
   outletId?: string;
-  userId: string;
+  /** null for system-initiated actions (no human actor); column is a nullable FK. */
+  userId: string | null;
   operation: string;
   entityType: string;
   entityId?: string;
@@ -40,6 +41,9 @@ export interface AuditLogRecord {
   tenantId: string;
   outletId: string | null;
   userId: string;
+  /** Resolved from the users table for display (null for system/deleted users). */
+  userName: string | null;
+  userEmail: string | null;
   operation: string;
   entityType: string;
   entityId: string | null;
@@ -126,36 +130,38 @@ export class AuditService {
     const pageSize = Math.min(params.pageSize ?? 50, 100);
     const offset = (page - 1) * pageSize;
 
-    const conditions: string[] = ['tenant_id = $1'];
+    // Conditions are qualified to the audit_logs alias `a` because the data query
+    // joins `users` (which also has tenant_id/outlet_id/created_at) — otherwise ambiguous.
+    const conditions: string[] = ['a.tenant_id = $1'];
     const values: unknown[] = [params.tenantId];
     let paramIndex = 2;
 
     if (params.outletId) {
-      conditions.push(`outlet_id = $${paramIndex}`);
+      conditions.push(`a.outlet_id = $${paramIndex}`);
       values.push(params.outletId);
       paramIndex++;
     }
 
     if (params.operation) {
-      conditions.push(`operation = $${paramIndex}`);
+      conditions.push(`a.operation = $${paramIndex}`);
       values.push(params.operation);
       paramIndex++;
     }
 
     if (params.entityType) {
-      conditions.push(`entity_type = $${paramIndex}`);
+      conditions.push(`a.entity_type = $${paramIndex}`);
       values.push(params.entityType);
       paramIndex++;
     }
 
     if (params.dateFrom) {
-      conditions.push(`created_at >= $${paramIndex}`);
+      conditions.push(`a.created_at >= $${paramIndex}`);
       values.push(params.dateFrom);
       paramIndex++;
     }
 
     if (params.dateTo) {
-      conditions.push(`created_at <= $${paramIndex}`);
+      conditions.push(`a.created_at <= $${paramIndex}`);
       values.push(params.dateTo);
       paramIndex++;
     }
@@ -164,18 +170,20 @@ export class AuditService {
 
     // Count query
     const countResult = await this.pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count FROM audit_logs WHERE ${whereClause}`,
+      `SELECT COUNT(*)::text as count FROM audit_logs a WHERE ${whereClause}`,
       values,
     );
     const total = parseInt(countResult.rows[0]!.count, 10);
 
-    // Data query with pagination
+    // Data query with pagination — resolve the actor's name/email for display.
     const dataResult = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, user_id, operation, entity_type, entity_id,
-              before_value, after_value, metadata, ip_address, created_at
-       FROM audit_logs
+      `SELECT a.id, a.tenant_id, a.outlet_id, a.user_id, a.operation, a.entity_type, a.entity_id,
+              a.before_value, a.after_value, a.metadata, a.ip_address, a.created_at,
+              u.name AS user_name, u.email AS user_email
+       FROM audit_logs a
+       LEFT JOIN users u ON u.id = a.user_id
        WHERE ${whereClause}
-       ORDER BY created_at DESC
+       ORDER BY a.created_at DESC
        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...values, pageSize, offset],
     );
@@ -185,6 +193,8 @@ export class AuditService {
       tenantId: row.tenant_id,
       outletId: row.outlet_id,
       userId: row.user_id,
+      userName: row.user_name ?? null,
+      userEmail: row.user_email ?? null,
       operation: row.operation,
       entityType: row.entity_type,
       entityId: row.entity_id,

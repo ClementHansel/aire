@@ -25,15 +25,11 @@ const arbDateWIB: fc.Arbitrary<string> = fc
 /** Generates a normalized license plate (uppercase, no spaces) */
 const arbPlate: fc.Arbitrary<string> = fc
   .tuple(
-    fc.stringOf(fc.constantFrom('A', 'B', 'D', 'F', 'H', 'L', 'N'), { minLength: 1, maxLength: 2 }),
-    fc.stringOf(fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), {
-      minLength: 1,
-      maxLength: 4,
-    }),
-    fc.stringOf(fc.constantFrom('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'), {
-      minLength: 1,
-      maxLength: 3,
-    }),
+    fc.string({ unit: fc.constantFrom('A', 'B', 'D', 'F', 'H', 'L', 'N'), minLength: 1, maxLength: 2 }),
+    fc.string({ unit: fc.constantFrom('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), minLength: 1,
+      maxLength: 4, }),
+    fc.string({ unit: fc.constantFrom('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'), minLength: 1,
+      maxLength: 3, }),
   )
   .map(([prefix, digits, suffix]) => `${prefix}${digits}${suffix}`);
 

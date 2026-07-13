@@ -69,6 +69,10 @@ export enum BayStatus {
  */
 export enum MembershipStatus {
   Active = 'active',
+  /** Paid period ended, within the H+1..H+14 renewable window (no benefits). */
+  Grace = 'grace',
+  /** Past the renewable window (H+15+) — terminal; a new membership is required. */
+  Revoked = 'revoked',
   Expired = 'expired',
   Pending = 'pending',
   Cancelled = 'cancelled',
@@ -76,6 +80,9 @@ export enum MembershipStatus {
    *  the paid duration, but blocked from use until reactivated). */
   Suspended = 'suspended',
 }
+
+/** Days after end_date a membership can still be renewed before it is revoked. */
+export const MEMBERSHIP_GRACE_DAYS = 14;
 
 /**
  * Service catalog categories.

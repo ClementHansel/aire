@@ -11,6 +11,31 @@ import { getAccessToken, getRefreshToken, setSession, clearSession, getUser } fr
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
+/** The configured API base (e.g. "https://host/api" or "/api"). */
+export const API_BASE_URL = API_BASE;
+
+/**
+ * Build an ABSOLUTE URL to a raw backend resource (e.g. an HLS playlist/segment)
+ * that is fetched outside the `api` client — hls.js needs a fully-qualified URL,
+ * not a relative one. `path` is like "/cctv/cameras/:id/live.m3u8".
+ * Pass `withToken` to append `?access_token=…` (native-video fallback where XHR
+ * headers can't be set).
+ */
+export function streamUrl(path: string, withToken = false): string {
+  const p = path.startsWith('/') ? path : `/${path}`;
+  let base = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
+  // Resolve a relative base ("/api") against the current origin for hls.js.
+  if (!/^https?:\/\//i.test(base) && typeof window !== 'undefined') {
+    base = `${window.location.origin}${base.startsWith('/') ? '' : '/'}${base}`;
+  }
+  let url = `${base}${p}`;
+  if (withToken && typeof window !== 'undefined') {
+    const token = getAccessToken();
+    if (token) url += `${url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token)}`;
+  }
+  return url;
+}
+
 export class ApiError extends Error {
   status: number;
   details?: unknown;
@@ -55,8 +80,10 @@ export async function apiFetch<T = unknown>(
   retry = true,
 ): Promise<T> {
   const token = getAccessToken();
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    // Let the browser set multipart boundaries for FormData; JSON otherwise.
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string>),
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -98,4 +125,7 @@ export const api = {
   patch: <T = unknown>(path: string, data?: unknown) =>
     apiFetch<T>(path, { method: 'PATCH', body: data ? JSON.stringify(data) : undefined }),
   delete: <T = unknown>(path: string) => apiFetch<T>(path, { method: 'DELETE' }),
+  /** Upload a file via multipart/form-data (e.g. logo, card background). */
+  upload: <T = unknown>(path: string, formData: FormData, method: 'PUT' | 'POST' = 'PUT') =>
+    apiFetch<T>(path, { method, body: formData }),
 };

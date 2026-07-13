@@ -63,7 +63,6 @@ Legend: `[x]` done & deployed · `[~]` partial · `[ ]` not started
 - [x] Payment gateway env-var wiring + sandbox provider (production-grade mock)
 - [x] Admin: Tenants CRUD, Platform Config, Billing view, Support view
 - [x] Kiosk + Queue Board public pages
-- [x] ALPR detections service (Phase 2 groundwork)
 - [x] Audit log table
 
 ---

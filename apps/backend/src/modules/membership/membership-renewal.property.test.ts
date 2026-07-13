@@ -26,6 +26,7 @@ const durationMonthsArbitrary = fc.constantFrom(1, 3, 12);
 const dateArbitrary = fc.date({
   min: new Date('2023-01-01'),
   max: new Date('2026-12-31'),
+  noInvalidDate: true,
 });
 
 const membershipStatusArbitrary = fc.constantFrom(
@@ -122,9 +123,12 @@ describe('Property 17: Membership Renewal Date Logic', () => {
       }),
     };
     mockPlanService = { getPlan: vi.fn() };
+    const mockLifecycle = { recordEvent: vi.fn().mockResolvedValue(undefined) };
     service = new MembershipRenewalService(
       mockPool as any,
       mockPlanService as unknown as MembershipPlanService,
+      mockLifecycle as any,
+      {} as any, // PosCheckoutService — unused by renewMembership
     );
   });
 

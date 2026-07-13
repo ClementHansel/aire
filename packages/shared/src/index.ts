@@ -7,6 +7,9 @@ export * from './interfaces';
 // Constants
 export * from './constants';
 
+// Per-tenant module registry (enable/disable modules per tenant)
+export * from './modules';
+
 // Error Codes
 export * from './error-codes';
 
@@ -45,9 +48,6 @@ export * from './report';
 
 // Employee (commission calculation, shift tracking)
 export * from './employee';
-
-// ALPR (confidence routing logic)
-export * from './alpr';
 
 // Queue (queue management, priority, bay assignment)
 export * from './queue';

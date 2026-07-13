@@ -39,9 +39,11 @@ const mockRedis = {
   set: vi.fn(),
   del: vi.fn(),
 };
-vi.mock('ioredis', () => ({
-  default: vi.fn(() => mockRedis),
-}));
+// Regular function (not arrow) so `new Redis()` is constructable under vitest 4.
+vi.mock('ioredis', () => {
+  const Redis = vi.fn(function () { return mockRedis; });
+  return { default: Redis, Redis };
+});
 
 // ─── Arbitraries ────────────────────────────────────────────────────────────────
 
@@ -120,8 +122,8 @@ describe('Property 3: JWT Claims Completeness', () => {
     authService = new AuthService(jwtService, configService, mockPool as any);
   });
 
-  it('should always include non-null sub (user_id) in JWT for any authenticated user', () => {
-    fc.assert(
+  it('should always include non-null sub (user_id) in JWT for any authenticated user', async () => {
+    await fc.assert(
       fc.asyncProperty(arbAnyUser, async (user) => {
         capturedPayloads = [];
         mockPool.query.mockResolvedValueOnce({ rows: [user] });
@@ -130,8 +132,10 @@ describe('Property 3: JWT Claims Completeness', () => {
 
         await authService.login({ email: user.email, password: 'any-password' });
 
-        expect(capturedPayloads).toHaveLength(1);
-        const payload = capturedPayloads[0];
+        // login() signs an access token AND a refresh token; assert on the
+        // access-token payload (the refresh payload carries `type: 'refresh'`).
+        const payload = capturedPayloads.find((p) => (p as { type?: string }).type !== 'refresh')!;
+        expect(payload).toBeDefined();
         expect(payload.sub).not.toBeNull();
         expect(payload.sub).not.toBeUndefined();
         expect(typeof payload.sub).toBe('string');
@@ -142,8 +146,8 @@ describe('Property 3: JWT Claims Completeness', () => {
     );
   });
 
-  it('should always include non-null tenant_id in JWT for any authenticated user', () => {
-    fc.assert(
+  it('should always include non-null tenant_id in JWT for any authenticated user', async () => {
+    await fc.assert(
       fc.asyncProperty(arbAnyUser, async (user) => {
         capturedPayloads = [];
         mockPool.query.mockResolvedValueOnce({ rows: [user] });
@@ -152,8 +156,10 @@ describe('Property 3: JWT Claims Completeness', () => {
 
         await authService.login({ email: user.email, password: 'any-password' });
 
-        expect(capturedPayloads).toHaveLength(1);
-        const payload = capturedPayloads[0];
+        // login() signs an access token AND a refresh token; assert on the
+        // access-token payload (the refresh payload carries `type: 'refresh'`).
+        const payload = capturedPayloads.find((p) => (p as { type?: string }).type !== 'refresh')!;
+        expect(payload).toBeDefined();
         expect(payload.tenant_id).not.toBeNull();
         expect(payload.tenant_id).not.toBeUndefined();
         expect(typeof payload.tenant_id).toBe('string');
@@ -164,8 +170,8 @@ describe('Property 3: JWT Claims Completeness', () => {
     );
   });
 
-  it('should always include a valid role from the Role enum in JWT for any authenticated user', () => {
-    fc.assert(
+  it('should always include a valid role from the Role enum in JWT for any authenticated user', async () => {
+    await fc.assert(
       fc.asyncProperty(arbAnyUser, async (user) => {
         capturedPayloads = [];
         mockPool.query.mockResolvedValueOnce({ rows: [user] });
@@ -174,8 +180,10 @@ describe('Property 3: JWT Claims Completeness', () => {
 
         await authService.login({ email: user.email, password: 'any-password' });
 
-        expect(capturedPayloads).toHaveLength(1);
-        const payload = capturedPayloads[0];
+        // login() signs an access token AND a refresh token; assert on the
+        // access-token payload (the refresh payload carries `type: 'refresh'`).
+        const payload = capturedPayloads.find((p) => (p as { type?: string }).type !== 'refresh')!;
+        expect(payload).toBeDefined();
         expect(payload.role).not.toBeNull();
         expect(payload.role).not.toBeUndefined();
         expect(VALID_ROLES).toContain(payload.role);
@@ -185,8 +193,8 @@ describe('Property 3: JWT Claims Completeness', () => {
     );
   });
 
-  it('should set outlet_id to non-null for outlet-scoped roles (OutletAdmin, Cashier)', () => {
-    fc.assert(
+  it('should set outlet_id to non-null for outlet-scoped roles (OutletAdmin, Cashier)', async () => {
+    await fc.assert(
       fc.asyncProperty(arbOutletScopedUser, async (user) => {
         capturedPayloads = [];
         mockPool.query.mockResolvedValueOnce({ rows: [user] });
@@ -195,8 +203,10 @@ describe('Property 3: JWT Claims Completeness', () => {
 
         await authService.login({ email: user.email, password: 'any-password' });
 
-        expect(capturedPayloads).toHaveLength(1);
-        const payload = capturedPayloads[0];
+        // login() signs an access token AND a refresh token; assert on the
+        // access-token payload (the refresh payload carries `type: 'refresh'`).
+        const payload = capturedPayloads.find((p) => (p as { type?: string }).type !== 'refresh')!;
+        expect(payload).toBeDefined();
         expect(OUTLET_SCOPED_ROLES).toContain(payload.role as Role);
         expect(payload.outlet_id).not.toBeNull();
         expect(payload.outlet_id).not.toBeUndefined();
@@ -207,8 +217,8 @@ describe('Property 3: JWT Claims Completeness', () => {
     );
   });
 
-  it('should set outlet_id to null for tenant-wide roles (PlatformSuperAdmin, TenantOwner)', () => {
-    fc.assert(
+  it('should set outlet_id to null for tenant-wide roles (PlatformSuperAdmin, TenantOwner)', async () => {
+    await fc.assert(
       fc.asyncProperty(arbTenantWideUser, async (user) => {
         capturedPayloads = [];
         mockPool.query.mockResolvedValueOnce({ rows: [user] });
@@ -217,8 +227,10 @@ describe('Property 3: JWT Claims Completeness', () => {
 
         await authService.login({ email: user.email, password: 'any-password' });
 
-        expect(capturedPayloads).toHaveLength(1);
-        const payload = capturedPayloads[0];
+        // login() signs an access token AND a refresh token; assert on the
+        // access-token payload (the refresh payload carries `type: 'refresh'`).
+        const payload = capturedPayloads.find((p) => (p as { type?: string }).type !== 'refresh')!;
+        expect(payload).toBeDefined();
         expect(TENANT_WIDE_ROLES).toContain(payload.role as Role);
         expect(payload.outlet_id).toBeNull();
       }),

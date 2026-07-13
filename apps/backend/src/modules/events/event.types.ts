@@ -10,12 +10,16 @@ export enum DomainEventType {
   // Orders
   OrderCreated = 'order.created',
   OrderPaid = 'order.paid',
+  OrderVoided = 'order.voided',
+  RefundIssued = 'order.refund_issued',
   // Payments
   PaymentCharged = 'payment.charged',
   PaymentConfirmed = 'payment.confirmed',
   // Memberships
   MembershipSold = 'membership.sold',
   MembershipActivated = 'membership.activated',
+  MembershipEnteredGrace = 'membership.entered_grace',
+  MembershipRevoked = 'membership.revoked',
   // Vouchers
   VoucherPackSold = 'voucher.pack_sold',
   VoucherPackIssued = 'voucher.pack_issued',
@@ -30,12 +34,29 @@ export enum DomainEventType {
   InventoryItemCreated = 'inventory.item_created',
   InventoryStockAdjusted = 'inventory.stock_adjusted',
   InventoryLowStock = 'inventory.low_stock',
+  StockOpnameClosed = 'inventory.opname_closed',
   // Procurement
   SupplierCreated = 'procurement.supplier_created',
   PurchaseOrderCreated = 'procurement.po_created',
   PurchaseOrderReceived = 'procurement.po_received',
+  GoodsReceived = 'procurement.goods_received',
+  // Commission
+  CommissionAccrued = 'commission.accrued',
+  // Customer feedback
+  FeedbackRequested = 'feedback.requested',
+  FeedbackReceived = 'feedback.received',
+  FeedbackAlert = 'feedback.alert',
+  // Marketing broadcast
+  BroadcastStarted = 'broadcast.started',
+  BroadcastProgress = 'broadcast.progress',
+  BroadcastCompleted = 'broadcast.completed',
+  // Tax invoice (e-Faktur)
+  TaxInvoiceIssued = 'tax.invoice_issued',
   // Finance
   ExpenseRecorded = 'finance.expense_recorded',
+  // Settlement (inter-branch)
+  SettlementAccrued = 'settlement.accrued',
+  SettlementPaidOut = 'settlement.paid_out',
   // Sales
   SalesLeadCreated = 'sales.lead_created',
   SalesLeadStatusChanged = 'sales.lead_status_changed',

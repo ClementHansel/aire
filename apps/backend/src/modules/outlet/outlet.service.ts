@@ -21,7 +21,10 @@ export interface CreateOutletDto {
   name: string;
   agentId?: string;
   code?: string;
+  /** @deprecated free-text legal entity — use legalEntityId (kept for back-compat) */
   legalEntity?: string;
+  /** FK into legal_entities — the tenant-owned PT this branch operates under */
+  legalEntityId?: string | null;
   address?: string;
   phone?: string;
   mapsUrl?: string;
@@ -37,7 +40,10 @@ export interface UpdateOutletDto {
   name?: string;
   agentId?: string;
   code?: string;
+  /** @deprecated free-text legal entity — use legalEntityId (kept for back-compat) */
   legalEntity?: string;
+  /** FK into legal_entities — the tenant-owned PT this branch operates under */
+  legalEntityId?: string | null;
   address?: string;
   phone?: string;
   mapsUrl?: string;
@@ -56,6 +62,7 @@ export interface OutletRecord {
   agentId: string;
   code: string | null;
   legalEntity: string | null;
+  legalEntityId: string | null;
   address: string | null;
   phone: string | null;
   mapsUrl: string | null;
@@ -68,7 +75,7 @@ export interface OutletRecord {
 
 /** Shared column projection so every query returns the same shape. */
 const OUTLET_COLUMNS =
-  'id, tenant_id, name, agent_id, code, legal_entity, address, phone, maps_url, timezone, is_active, settings, created_at, updated_at';
+  'id, tenant_id, name, agent_id, code, legal_entity, legal_entity_id, address, phone, maps_url, timezone, is_active, settings, created_at, updated_at';
 
 /**
  * OutletService handles CRUD operations for outlets, including
@@ -93,8 +100,8 @@ export class OutletService {
     // Agent id must be unique; auto-generate from the code when not provided.
     const agentId = dto.agentId ?? `${code.toLowerCase()}-${Math.random().toString(36).slice(2, 8)}`;
     const result = await this.pool.query(
-      `INSERT INTO outlets (tenant_id, name, agent_id, code, legal_entity, address, phone, maps_url, timezone, is_active, settings)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO outlets (tenant_id, name, agent_id, code, legal_entity, address, phone, maps_url, timezone, is_active, settings, legal_entity_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING ${OUTLET_COLUMNS}`,
       [
         dto.tenantId,
@@ -108,6 +115,7 @@ export class OutletService {
         dto.timezone ?? 'Asia/Jakarta',
         dto.isActive ?? true,
         dto.settings ? JSON.stringify(dto.settings) : '{}',
+        dto.legalEntityId ?? null,
       ],
     );
 
@@ -182,6 +190,12 @@ export class OutletService {
     if (dto.legalEntity !== undefined) {
       setClauses.push(`legal_entity = $${paramIndex}`);
       values.push(dto.legalEntity);
+      paramIndex++;
+    }
+
+    if (dto.legalEntityId !== undefined) {
+      setClauses.push(`legal_entity_id = $${paramIndex}`);
+      values.push(dto.legalEntityId);
       paramIndex++;
     }
 
@@ -291,6 +305,7 @@ export class OutletService {
       agentId: row.agent_id,
       code: row.code ?? null,
       legalEntity: row.legal_entity ?? null,
+      legalEntityId: row.legal_entity_id ?? null,
       address: row.address,
       phone: row.phone ?? null,
       mapsUrl: row.maps_url ?? null,

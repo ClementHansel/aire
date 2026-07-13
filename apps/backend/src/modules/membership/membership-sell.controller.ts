@@ -8,17 +8,20 @@ import {
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
-import { JWTPayload } from '@aire/shared';
+import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { RolesGuard } from '../../common/guards';
+import { CurrentUser, Roles } from '../../common/decorators';
 import { PosCheckoutService } from '../order/pos-checkout.service';
 import { MembershipPlanService } from './membership-plan.service';
 import { MembershipSellService } from './membership-sell.service';
+import { MembershipRenewalService } from './membership-renewal.service';
+import { MembershipIdentityService } from './membership-identity.service';
 import { PlateRegistrationDto } from './dto';
 
 interface SellMembershipBody {
   planId: string;
-  customer: { name: string; phone: string };
+  customer: { name: string; phone: string; email?: string };
 }
 
 interface ActivateBody {
@@ -42,7 +45,44 @@ export class MembershipSellController {
     private readonly planService: MembershipPlanService,
     private readonly sellService: MembershipSellService,
     private readonly checkout: PosCheckoutService,
+    private readonly renewalService: MembershipRenewalService,
+    private readonly identity: MembershipIdentityService,
   ) {}
+
+  /**
+   * POST /api/memberships/backfill-numbers — one-time: assign membership numbers
+   * to existing members of the caller's tenant who don't have one yet. Idempotent.
+   */
+  @Post('backfill-numbers')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard)
+  @Roles(Role.OutletAdmin)
+  async backfillNumbers(@CurrentUser() user: JWTPayload) {
+    return this.identity.backfillNumbers(user.tenant_id);
+  }
+
+  /**
+   * POST /api/memberships/:id/renew — renew an existing membership on a plan.
+   * Creates the renewal fee order and extends (active/grace) or creates a new
+   * membership (revoked). Returns the unpaid order to collect payment on.
+   */
+  @Post(':id/renew')
+  @HttpCode(HttpStatus.OK)
+  async renew(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { planId: string }) {
+    if (!body?.planId) throw new BadRequestException('planId is required');
+    return this.renewalService.renewByMembershipId(user, id, body.planId);
+  }
+
+  /**
+   * POST /api/memberships/apply-renewal — apply a pending renewal after its fee
+   * order is paid (extends/creates). Called by POS/CRM once payment succeeds.
+   */
+  @Post('apply-renewal')
+  @HttpCode(HttpStatus.OK)
+  async applyRenewal(@CurrentUser() user: JWTPayload, @Body() body: { orderId: string }) {
+    if (!body?.orderId) throw new BadRequestException('orderId is required');
+    return this.renewalService.applyRenewal(user.tenant_id, body.orderId);
+  }
 
   @Post('sell')
   @HttpCode(HttpStatus.CREATED)
@@ -67,6 +107,7 @@ export class MembershipSellController {
         user.tenant_id,
         body.customer.name.trim(),
         body.customer.phone.trim(),
+        body.customer.email,
       );
       order = await this.checkout.createPackOrder(client, user, {
         customerId,

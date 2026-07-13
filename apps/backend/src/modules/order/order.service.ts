@@ -4,7 +4,7 @@ import {
   Optional,
   BadRequestException,
 } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
@@ -29,7 +29,11 @@ import {
   hashVoucherCode,
   MAX_VOUCHER_CODES_PER_ORDER,
   BusinessUnit,
+  Role,
+  checkVoidAuthorization,
+  VOID_PAID_WARNING_MESSAGE,
 } from '@aire/shared';
+import * as bcrypt from 'bcrypt';
 import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
 
 /**
@@ -155,24 +159,16 @@ export class OrderService {
   async createOrder(
     request: CreateOrderRequest,
     user: JWTPayload,
+    opts: { shift?: { id: string; outletId: string } } = {},
   ): Promise<CreatedOrderResponse> {
     // Step 1: Look up services by ID to get prices and isMainService flags
     const serviceIds = request.items.map((item) => item.serviceId);
     const services = await this.lookupServices(serviceIds);
 
-    // A transaction belongs to exactly one business unit (AIRE car wash / LEAD
-    // detailing). Every line item must belong to that same unit.
+    // A single order can mix AIRE (car wash) and LEAD (detailing) items into one
+    // receipt/payment. The order's business_unit records the payment channel; it
+    // defaults to the caller's selected unit (see request.businessUnit).
     const businessUnit = request.businessUnit ?? BusinessUnit.Aire;
-    for (const item of request.items) {
-      const svc = services.get(item.serviceId);
-      if (svc && svc.business_unit && svc.business_unit !== businessUnit) {
-        throw new BadRequestException({
-          statusCode: 400,
-          error: ERR_VALIDATION_FAILED,
-          message: `All items must belong to the ${businessUnit} business unit. "${svc.name}" belongs to ${svc.business_unit}.`,
-        });
-      }
-    }
 
     // Step 2: Build validation input
     const validationInput: OrderValidationInput = {
@@ -230,6 +226,8 @@ export class OrderService {
     // Step 5: Apply membership pricing if membershipId is provided
     let membershipApplied = false;
     let membershipSettlement: { homeOutletId: string | null; amount: number } = { homeOutletId: null, amount: 0 };
+    // Captured for the post-commit SettlementAccrued event (drives ledger accrual).
+    let settlementAccrual: { entryId: string; owingOutletId: string; servingOutletId: string; amount: number } | null = null;
     if (request.membershipId) {
       const meta = await this.getMembershipBenefits(request.membershipId);
       membershipSettlement = { homeOutletId: meta.homeOutletId, amount: meta.settlementAmount };
@@ -240,9 +238,25 @@ export class OrderService {
       }
     }
 
-    // Resolve the branch this order belongs to (POS follows the HR schedule).
-    // Defaults to the operator's own outlet, so omitting it is a no-op.
-    const operatingOutletId = await this.resolveOperatingOutlet(user, request);
+    // Every order is booked into an open cashier shift and inherits that shift's
+    // branch (the branch is chosen once, at shift open — so finance never
+    // diverges). Kiosk callers pass a pre-resolved branch shift via opts.shift;
+    // cashiers use their own open shift.
+    let shift = opts.shift;
+    if (!shift) {
+      const sh = await this.pool.query<{ id: string; outlet_id: string }>(
+        `SELECT id, outlet_id FROM pos_shifts
+         WHERE tenant_id = $1 AND operator_id = $2 AND status = 'open'
+         ORDER BY opened_at DESC LIMIT 1`,
+        [user.tenant_id, user.sub],
+      );
+      if (sh.rows.length === 0) {
+        throw new BadRequestException('Open a shift before taking orders.');
+      }
+      shift = { id: sh.rows[0]!.id, outletId: sh.rows[0]!.outlet_id };
+    }
+    const operatingOutletId = shift.outletId;
+    const shiftId = shift.id;
 
     // Step 6: Apply voucher discounts — resolve codes (read-only) and compute
     // the discount. Codes are atomically redeemed inside the transaction below.
@@ -305,9 +319,9 @@ export class OrderService {
           (tenant_id, outlet_id, operator_id, order_number, status,
            customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
            subtotal, service_charge, tax, voucher_discount, promo_discount, total,
-           note, membership_id, business_unit, salesperson_name, shift_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-           (SELECT id FROM pos_shifts WHERE tenant_id = $1 AND operator_id = $3 AND status = 'open' ORDER BY opened_at DESC LIMIT 1))
+           note, membership_id, business_unit, salesperson_name, channel, shift_id,
+           salesperson_employee_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
          RETURNING *`,
         [
           user.tenant_id,
@@ -330,6 +344,9 @@ export class OrderService {
           request.membershipId ?? null,
           businessUnit,
           request.salespersonName ?? null,
+          request.channel ?? 'pos',
+          shiftId,
+          request.salespersonEmployeeId ?? null,
         ],
       );
 
@@ -468,12 +485,40 @@ export class OrderService {
         );
         if (membershipSettlement.homeOutletId && operatingOutletId &&
             membershipSettlement.homeOutletId !== operatingOutletId && membershipSettlement.amount > 0) {
-          await client.query(
+          const seRes = await client.query<{ id: string }>(
             `INSERT INTO settlement_entries (tenant_id, membership_id, usage_id, owing_outlet_id, serving_outlet_id, amount)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
             [user.tenant_id, request.membershipId, usage.rows[0]!.id, membershipSettlement.homeOutletId, operatingOutletId, membershipSettlement.amount],
           );
+          settlementAccrual = {
+            entryId: seRes.rows[0]!.id,
+            owingOutletId: membershipSettlement.homeOutletId,
+            servingOutletId: operatingOutletId,
+            amount: membershipSettlement.amount,
+          };
         }
+      }
+
+      // Auto-deduct recipe (BOM) stock for each line and freeze a per-unit COGS
+      // snapshot — inside the transaction so stock and the sale commit atomically.
+      await this.applyRecipeCogs(
+        client,
+        { id: order.id, orderNumber: order.order_number },
+        orderItems,
+        user.sub,
+        user.tenant_id,
+      );
+
+      // Link this order back to its vehicle-queue entry ("order from queue"),
+      // so the queue board can render it as paid/unpaid. Service status
+      // (waiting/serving/done) is left untouched — payment and service are
+      // independent dimensions. Scoped by tenant; a stale/foreign id is a no-op.
+      if (request.queueEntryId) {
+        await client.query(
+          `UPDATE vehicle_queue SET order_id = $1, updated_at = NOW()
+           WHERE id = $2 AND tenant_id = $3`,
+          [order.id, request.queueEntryId, user.tenant_id],
+        );
       }
 
       await client.query('COMMIT');
@@ -492,6 +537,29 @@ export class OrderService {
           itemCount: cartItems.length,
         },
       });
+
+      // Voucher / ticket single-use redemptions committed with the order.
+      const redeemedCount = resolvedVoucherHashes.length + resolvedTicketCodes.length;
+      if (redeemedCount > 0) {
+        void this.eventBus?.emit({
+          type: DomainEventType.VoucherRedeemed,
+          tenantId: user.tenant_id,
+          outletId: operatingOutletId,
+          actor: user.sub,
+          payload: { orderId: order.id, orderNumber: order.order_number, count: redeemedCount, discount: voucherDiscount },
+        });
+      }
+
+      // Inter-branch settlement accrual → drives the accounting ledger accrual.
+      if (settlementAccrual) {
+        void this.eventBus?.emit({
+          type: DomainEventType.SettlementAccrued,
+          tenantId: user.tenant_id,
+          outletId: settlementAccrual.servingOutletId,
+          actor: user.sub,
+          payload: settlementAccrual,
+        });
+      }
 
       // Determine customer type tags (will be persisted on payment)
       const tags = assignCustomerTags({
@@ -591,6 +659,17 @@ export class OrderService {
         ? null
         : (payment.paymentChannel ?? order.business_unit ?? BusinessUnit.Aire);
 
+    // Book the sale into the shift of the cashier who is taking the money, so the
+    // cash lands in the drawer that received it — this is what keeps a
+    // pay-at-cashier (incl. kiosk-created) order true to shift reconciliation.
+    // Falls back to the order's existing shift if the cashier has none open.
+    const psh = await this.pool.query<{ id: string }>(
+      `SELECT id FROM pos_shifts WHERE tenant_id = $1 AND operator_id = $2 AND status = 'open'
+       ORDER BY opened_at DESC LIMIT 1`,
+      [user.tenant_id, user.sub],
+    );
+    const payShiftId = psh.rows[0]?.id ?? null;
+
     const updated = await this.pool.query(
       `UPDATE orders
        SET status = 'paid',
@@ -599,9 +678,10 @@ export class OrderService {
            amount_received = $3,
            change_amount = $4,
            payment_channel = $5,
+           shift_id = COALESCE($6, shift_id),
            paid_at = NOW(),
            updated_at = NOW()
-       WHERE id = $6
+       WHERE id = $7
        RETURNING *`,
       [
         payment.method,
@@ -609,6 +689,7 @@ export class OrderService {
         payment.amountReceived ?? null,
         changeAmount,
         paymentChannel,
+        payShiftId,
         orderId,
       ],
     );
@@ -710,7 +791,7 @@ export class OrderService {
    */
   async deleteOrder(orderId: string, user: JWTPayload): Promise<{ id: string }> {
     const cur = await this.pool.query(
-      `SELECT o.id, o.status, o.total, s.status AS shift_status
+      `SELECT o.id, o.status, o.total, o.order_number, s.status AS shift_status
        FROM orders o LEFT JOIN pos_shifts s ON s.id = o.shift_id
        WHERE o.id = $1 AND o.tenant_id = $2`,
       [orderId, user.tenant_id],
@@ -718,6 +799,28 @@ export class OrderService {
     const row = cur.rows[0];
     if (!row) throw new BadRequestException('Order not found');
     if (row.shift_status === 'closed') throw new BadRequestException('Order is day-locked (its shift is closed) and cannot be deleted');
+
+    // Restock recipe stock deducted for this order — only when transitioning out of
+    // a non-cancelled state, so a repeated cancel never double-restocks.
+    if (row.status !== 'cancelled') {
+      const moves = await this.pool.query<{ item_id: string; quantity: string }>(
+        `SELECT item_id, quantity FROM inventory_movements
+         WHERE reference = $1 AND type = 'sale' AND tenant_id = $2`,
+        [row.order_number, user.tenant_id],
+      );
+      for (const m of moves.rows) {
+        const qty = parseFloat(m.quantity);
+        await this.pool.query(
+          `UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
+          [qty, m.item_id],
+        );
+        await this.pool.query(
+          `INSERT INTO inventory_movements (tenant_id, item_id, type, quantity, reason, reference, actor)
+           VALUES ($1, $2, 'sale_return', $3, $4, $5, $6)`,
+          [user.tenant_id, m.item_id, qty, `Cancel ${row.order_number}`, row.order_number, user.sub],
+        );
+      }
+    }
 
     await this.pool.query(
       `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
@@ -732,19 +835,215 @@ export class OrderService {
   }
 
   /**
+   * Void an order from the POS. Unlike deleteOrder (back-office, OutletAdmin+),
+   * this is the cashier-facing path: authorization is decided by the shared
+   * void-authorization rules — a reason is always required; within the outlet's
+   * free-void window (default 0 min) any cashier may void; after it, an admin PIN
+   * is required (owner bypasses). The reversal (restock, restore vouchers, reverse
+   * membership usage + settlement, restore promotion quota, cancel) runs in one
+   * transaction. Money already collected is NOT auto-refunded — the caller is told
+   * to refund separately (VOID_PAID_WARNING_MESSAGE).
+   */
+  async voidOrder(
+    orderId: string,
+    user: JWTPayload,
+    input: { reason: string; adminPin?: string },
+  ): Promise<{ id: string; showPaidWarning: boolean; paidWarningMessage?: string }> {
+    const cur = await this.pool.query(
+      `SELECT o.id, o.status, o.total, o.order_number, o.created_at,
+              s.status AS shift_status, ot.settings AS outlet_settings
+       FROM orders o
+       LEFT JOIN pos_shifts s ON s.id = o.shift_id
+       LEFT JOIN outlets ot ON ot.id = o.outlet_id
+       WHERE o.id = $1 AND o.tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const row = cur.rows[0];
+    if (!row) throw new BadRequestException('Order not found');
+    if (row.status === 'cancelled') throw new BadRequestException('Order is already cancelled');
+    if (row.shift_status === 'closed') {
+      throw new BadRequestException('Order is day-locked (its shift is closed) and cannot be voided');
+    }
+
+    const freeWindow = Number(row.outlet_settings?.free_void_window_minutes ?? 0) || 0;
+
+    // Verify an admin PIN against any owner/outlet-admin who has one set.
+    let pinRows: { admin_pin_hash: string }[] = [];
+    if (input.adminPin) {
+      const pr = await this.pool.query<{ admin_pin_hash: string }>(
+        `SELECT admin_pin_hash FROM users
+         WHERE tenant_id = $1 AND admin_pin_hash IS NOT NULL
+           AND role IN ('tenant_owner', 'outlet_admin')`,
+        [user.tenant_id],
+      );
+      pinRows = pr.rows;
+    }
+
+    const auth = checkVoidAuthorization(
+      {
+        role: user.role as Role,
+        reason: input.reason,
+        adminPin: input.adminPin,
+        orderCreatedAt: new Date(row.created_at).toISOString(),
+        currentTime: new Date().toISOString(),
+        freeVoidWindowMinutes: freeWindow,
+      },
+      (pin) => pinRows.some((r) => !!r.admin_pin_hash && bcrypt.compareSync(pin, r.admin_pin_hash)),
+    );
+    if (!auth.authorized) {
+      // requiresPin lets the POS reveal the PIN field and retry.
+      throw new BadRequestException({
+        message: auth.error?.message ?? 'Void not authorized',
+        code: auth.error?.code,
+        requiresPin: auth.requiresPin,
+      });
+    }
+
+    const paidStatuses = [OrderStatus.Paid, OrderStatus.Confirmed, OrderStatus.Completed];
+    const showPaidWarning = paidStatuses.includes(row.status as OrderStatus);
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Restock recipe stock deducted at sale (idempotent: only out of a
+      //    non-cancelled state, mirrors deleteOrder).
+      const moves = await client.query<{ item_id: string; quantity: string }>(
+        `SELECT item_id, quantity FROM inventory_movements
+         WHERE reference = $1 AND type = 'sale' AND tenant_id = $2`,
+        [row.order_number, user.tenant_id],
+      );
+      for (const m of moves.rows) {
+        const qty = parseFloat(m.quantity);
+        await client.query(
+          `UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
+          [qty, m.item_id],
+        );
+        await client.query(
+          `INSERT INTO inventory_movements (tenant_id, item_id, type, quantity, reason, reference, actor)
+           VALUES ($1, $2, 'sale_return', $3, $4, $5, $6)`,
+          [user.tenant_id, m.item_id, qty, `Void ${row.order_number}`, row.order_number, user.sub],
+        );
+      }
+
+      // 2. Restore redeemed voucher codes + roll back their packs' usage.
+      const restored = await client.query<{ pack_id: string }>(
+        `UPDATE voucher_codes SET status = 'active', redeemed_at = NULL, order_id = NULL
+         WHERE order_id = $1 RETURNING pack_id`,
+        [orderId],
+      );
+      for (const c of restored.rows) {
+        await client.query(
+          `UPDATE voucher_packs
+           SET uses_count = GREATEST(uses_count - 1, 0),
+               status = CASE WHEN status = 'fully_redeemed' THEN 'active' ELSE status END,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [c.pack_id],
+        );
+      }
+      // Shareable voucher tickets.
+      await client.query(
+        `UPDATE voucher_tickets SET status = 'active', redeemed_at = NULL, redeemed_order_id = NULL, redeemed_outlet_id = NULL
+         WHERE redeemed_order_id = $1 AND tenant_id = $2`,
+        [orderId, user.tenant_id],
+      );
+
+      // 3. Restore promotion quota + drop the grant rows for this order.
+      const grants = await client.query<{ promotion_id: string }>(
+        `SELECT promotion_id FROM promotion_grants WHERE order_id = $1`,
+        [orderId],
+      );
+      for (const g of grants.rows) {
+        await client.query(
+          `UPDATE promotions SET used_quota = GREATEST(used_quota - 1, 0), updated_at = NOW() WHERE id = $1`,
+          [g.promotion_id],
+        );
+      }
+      await client.query(`DELETE FROM promotion_grants WHERE order_id = $1`, [orderId]);
+
+      // 4. Reverse membership usage + void any still-pending settlement it accrued.
+      const usages = await client.query<{ id: string }>(
+        `UPDATE membership_usages SET reversed = true, reversed_at = NOW()
+         WHERE order_id = $1 AND reversed = false RETURNING id`,
+        [orderId],
+      );
+      if (usages.rows.length > 0) {
+        const ids = usages.rows.map((u) => u.id);
+        await client.query(
+          `UPDATE settlement_entries SET status = 'void'
+           WHERE usage_id = ANY($1::uuid[]) AND status = 'pending'`,
+          [ids],
+        );
+      }
+
+      // 5. Cancel the order.
+      await client.query(
+        `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [orderId, user.tenant_id],
+      );
+
+      // 6. Audit (reason + whether a PIN was used).
+      await client.query(
+        `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+         VALUES ($1, $2, 'order.void', 'order', $3, $4, $5)`,
+        [
+          user.tenant_id, user.sub, orderId,
+          JSON.stringify({ status: row.status, total: row.total }),
+          JSON.stringify({ status: 'cancelled', reason: input.reason, pinUsed: auth.requiresPin }),
+        ],
+      );
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // Reverse the accounting for a voided sale (only paid orders were ever booked).
+    // Best-effort, post-commit — the poster reads the order + its (now-voided)
+    // settlement entries and posts mirror entries.
+    void this.eventBus?.emit({
+      type: DomainEventType.OrderVoided,
+      tenantId: user.tenant_id,
+      actor: user.sub,
+      payload: { orderId, wasPaid: showPaidWarning },
+    });
+
+    return {
+      id: orderId,
+      showPaidWarning,
+      paidWarningMessage: showPaidWarning ? VOID_PAID_WARNING_MESSAGE : undefined,
+    };
+  }
+
+  /**
    * Lightweight order status lookup (for POS payment polling).
    */
   async getOrderStatus(
     orderId: string,
     user: JWTPayload,
-  ): Promise<{ id: string; orderNumber: string; status: string; total: number } | null> {
+  ): Promise<{
+    id: string; orderNumber: string; status: string; total: number;
+    subtotal: number; serviceCharge: number; tax: number; voucherDiscount: number;
+    customerName: string | null; customerPhone: string | null;
+  } | null> {
     const res = await this.pool.query(
-      'SELECT id, order_number, status, total FROM orders WHERE id = $1 AND tenant_id = $2',
+      `SELECT id, order_number, status, total, subtotal, service_charge, tax, voucher_discount,
+              customer_name, customer_phone
+       FROM orders WHERE id = $1 AND tenant_id = $2`,
       [orderId, user.tenant_id],
     );
     const row = res.rows[0];
     if (!row) return null;
-    return { id: row.id, orderNumber: row.order_number, status: row.status, total: parseFloat(row.total) };
+    return {
+      id: row.id, orderNumber: row.order_number, status: row.status, total: parseFloat(row.total),
+      subtotal: parseFloat(row.subtotal), serviceCharge: parseFloat(row.service_charge),
+      tax: parseFloat(row.tax), voucherDiscount: parseFloat(row.voucher_discount),
+      customerName: row.customer_name ?? null, customerPhone: row.customer_phone ?? null,
+    };
   }
 
   /**
@@ -773,6 +1072,80 @@ export class OrderService {
   }
 
   /**
+   * Auto-deduct recipe (BOM) stock for each sold line and freeze a per-unit COGS
+   * snapshot on the order line. Runs INSIDE the order transaction so stock and the
+   * sale commit atomically. Non-physical cost components (tax/profit/utilities) are
+   * folded into the snapshot but never touch inventory. Recipe quantities are
+   * converted to each item's stock unit via uom_conversions. Stock may go negative
+   * at the POS (allow-and-alert); the customer/kiosk out-of-stock block is separate.
+   */
+  private async applyRecipeCogs(
+    client: PoolClient,
+    order: { id: string; orderNumber: string },
+    orderItems: Array<{ id: string; serviceId: string; quantity: number; unitPrice: number }>,
+    actor: string,
+    tenantId: string,
+  ): Promise<void> {
+    for (const line of orderItems) {
+      // Physical components → deduct stock and accumulate per-unit material cost.
+      const comps = await client.query<{
+        inventory_item_id: string; quantity: string; unit: string; item_unit: string; unit_cost: string;
+      }>(
+        `SELECT rc.inventory_item_id, rc.quantity, rc.unit, ii.unit AS item_unit, ii.unit_cost
+         FROM service_recipe_components rc
+         JOIN inventory_items ii ON ii.id = rc.inventory_item_id
+         WHERE rc.service_id = $1 AND rc.tenant_id = $2`,
+        [line.serviceId, tenantId],
+      );
+
+      let materialPerUnit = 0;
+      for (const c of comps.rows) {
+        const recipeQty = parseFloat(c.quantity);
+        const unitCost = parseFloat(c.unit_cost);
+        let factor = 1;
+        if (c.unit !== c.item_unit) {
+          const conv = await client.query<{ factor: string }>(
+            `SELECT factor FROM uom_conversions
+             WHERE inventory_item_id = $1 AND from_unit = $2 AND to_unit = $3 LIMIT 1`,
+            [c.inventory_item_id, c.unit, c.item_unit],
+          );
+          factor = conv.rows[0] ? parseFloat(conv.rows[0].factor) : 1;
+        }
+        const perUnitStockQty = recipeQty * factor; // item stock units per 1 product
+        const deductQty = perUnitStockQty * line.quantity; // for the whole line
+        materialPerUnit += perUnitStockQty * unitCost;
+
+        await client.query(
+          `UPDATE inventory_items SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2`,
+          [deductQty, c.inventory_item_id],
+        );
+        await client.query(
+          `INSERT INTO inventory_movements (tenant_id, item_id, type, quantity, reason, reference, actor)
+           VALUES ($1, $2, 'sale', $3, $4, $5, $6)`,
+          [tenantId, c.inventory_item_id, deductQty, `Sale ${order.orderNumber}`, order.orderNumber, actor],
+        );
+      }
+
+      // Non-physical cost components → add to per-unit COGS (no stock impact).
+      const costLines = await client.query<{ value: string; kind: string }>(
+        `SELECT scc.value, ct.kind
+         FROM service_cost_components scc
+         JOIN cost_component_types ct ON ct.id = scc.component_type_id
+         WHERE scc.service_id = $1 AND scc.tenant_id = $2`,
+        [line.serviceId, tenantId],
+      );
+      let overheadPerUnit = 0;
+      for (const cl of costLines.rows) {
+        const v = parseFloat(cl.value);
+        overheadPerUnit += cl.kind === 'percentage' ? (line.unitPrice * v) / 100 : v;
+      }
+
+      const unitCogs = materialPerUnit + overheadPerUnit;
+      await client.query(`UPDATE order_items SET cost_snapshot = $1 WHERE id = $2`, [unitCogs, line.id]);
+    }
+  }
+
+  /**
    * Gets membership plates for validation (multi-plate selection check).
    */
   private async getMembershipPlates(membershipId: string): Promise<string[]> {
@@ -789,10 +1162,12 @@ export class OrderService {
   private async getMembershipBenefits(
     membershipId: string,
   ): Promise<{ benefits: MembershipBenefit[]; homeOutletId: string | null; settlementAmount: number }> {
-    // Look up the membership and its plan
+    // Look up the membership and its plan. Benefits require status 'active' AND a
+    // paid period that hasn't ended — a date-expired-but-stale-'active' row (or a
+    // grace/revoked one) must NOT grant benefits. See MembershipLifecycleService.
     const membershipResult = await this.pool.query<MembershipRow>(
       `SELECT id, plan_id, status, uses_count, max_uses, daily_limit, home_outlet_id
-       FROM memberships WHERE id = $1 AND status = 'active'`,
+       FROM memberships WHERE id = $1 AND status = 'active' AND end_date >= CURRENT_DATE`,
       [membershipId],
     );
 
@@ -827,49 +1202,6 @@ export class OrderService {
       homeOutletId: membership.home_outlet_id ?? null,
       settlementAmount: plan.settlement_amount ? parseFloat(plan.settlement_amount) : 0,
     };
-  }
-
-  /**
-   * Determine which branch this order belongs to. POS follows the HR schedule:
-   * the operator may work a branch other than their home outlet. When the POS
-   * omits operatingOutletId (or it equals the operator's own outlet), behavior is
-   * unchanged. An explicit different branch must be a valid tenant outlet; if it
-   * is not the operator's scheduled branch for today, a reason is required and the
-   * override is written to the audit log. operator_id always stays the JWT user.
-   */
-  private async resolveOperatingOutlet(user: JWTPayload, request: CreateOrderRequest): Promise<string | null> {
-    const requested = request.operatingOutletId;
-    if (!requested || requested === user.outlet_id) return user.outlet_id;
-
-    const outlet = await this.pool.query(
-      `SELECT 1 FROM outlets WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
-      [requested, user.tenant_id],
-    );
-    if (outlet.rows.length === 0) throw new BadRequestException('Invalid operating branch');
-
-    // Today's scheduled branch for this operator, via their linked employee.
-    const sched = await this.pool.query<{ today: string | null }>(
-      `SELECT es.outlet_id AS today
-       FROM employees e
-       LEFT JOIN employee_schedules es ON es.employee_id = e.id AND es.work_date = CURRENT_DATE
-       WHERE e.tenant_id = $1 AND e.user_id = $2 AND e.status = 'active'
-       LIMIT 1`,
-      [user.tenant_id, user.sub],
-    );
-    const scheduledToday = sched.rows[0]?.today ?? null;
-
-    if (requested !== scheduledToday) {
-      const reason = request.offScheduleReason?.trim();
-      if (!reason) {
-        throw new BadRequestException('You are not scheduled at this branch today — a reason is required to proceed.');
-      }
-      await this.pool.query(
-        `INSERT INTO audit_logs (tenant_id, outlet_id, user_id, operation, entity_type, metadata)
-         VALUES ($1, $2, $3, 'pos.off_schedule_branch', 'order', $4)`,
-        [user.tenant_id, requested, user.sub, JSON.stringify({ reason, scheduledOutletId: scheduledToday })],
-      );
-    }
-    return requested;
   }
 
   /**

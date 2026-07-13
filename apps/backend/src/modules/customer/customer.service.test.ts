@@ -8,6 +8,8 @@ function createMockPool() {
   };
 }
 
+const TENANT = '11111111-1111-1111-1111-111111111111';
+
 describe('CustomerService', () => {
   let service: CustomerService;
   let mockPool: ReturnType<typeof createMockPool>;
@@ -91,7 +93,7 @@ describe('CustomerService', () => {
         rows: [{ total_redeemed: 3, total_saved: '75000' }],
       });
 
-      const result = await service.getProfile('cust-001');
+      const result = await service.getProfile(TENANT, 'cust-001');
 
       expect(result.id).toBe('cust-001');
       expect(result.name).toBe('John Doe');
@@ -116,7 +118,7 @@ describe('CustomerService', () => {
     it('should throw NotFoundException when customer does not exist', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await expect(service.getProfile('nonexistent')).rejects.toThrow(
+      await expect(service.getProfile(TENANT, 'nonexistent')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -145,7 +147,7 @@ describe('CustomerService', () => {
         rows: [{ total_redeemed: 0, total_saved: '0' }],
       });
 
-      const result = await service.getProfile('cust-002');
+      const result = await service.getProfile(TENANT, 'cust-002');
 
       expect(result.totalVisits).toBe(0);
       expect(result.totalSpending).toBe(0);
@@ -201,7 +203,7 @@ describe('CustomerService', () => {
         rows: [{ last_visit: new Date().toISOString() }],
       });
 
-      const result = await service.getAnalytics('cust-001');
+      const result = await service.getAnalytics(TENANT, 'cust-001');
 
       expect(result.customerId).toBe('cust-001');
       expect(result.visitFrequency.totalVisits).toBe(20);
@@ -221,7 +223,7 @@ describe('CustomerService', () => {
     it('should throw NotFoundException when customer does not exist', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await expect(service.getAnalytics('nonexistent')).rejects.toThrow(
+      await expect(service.getAnalytics(TENANT, 'nonexistent')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -253,7 +255,7 @@ describe('CustomerService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // membership
       mockPool.query.mockResolvedValueOnce({ rows: [{ last_visit: null }] });
 
-      const result = await service.getAnalytics('cust-003');
+      const result = await service.getAnalytics(TENANT, 'cust-003');
 
       expect(result.visitFrequency.totalVisits).toBe(0);
       expect(result.visitFrequency.averageDaysBetweenVisits).toBeNull();
@@ -293,7 +295,7 @@ describe('CustomerService', () => {
         rows: [{ last_visit: new Date().toISOString() }],
       });
 
-      const result = await service.getAnalytics('cust-vip');
+      const result = await service.getAnalytics(TENANT, 'cust-vip');
 
       expect(result.segmentation.frequencyTier).toBe('high');
       expect(result.segmentation.spendTier).toBe('vip');
@@ -332,7 +334,7 @@ describe('CustomerService', () => {
         rows: [{ last_visit: lastVisit.toISOString() }],
       });
 
-      const result = await service.getAnalytics('cust-ex');
+      const result = await service.getAnalytics(TENANT, 'cust-ex');
 
       expect(result.segmentation.membershipStatus).toBe('expired_member');
       expect(result.segmentation.recency).toBe('lapsing');
@@ -357,7 +359,7 @@ describe('CustomerService', () => {
         ],
       });
 
-      const result = await service.searchCustomers('John');
+      const result = await service.searchCustomers(TENANT, 'John');
 
       expect(result.total).toBe(1);
       expect(result.customers).toHaveLength(1);
@@ -369,7 +371,7 @@ describe('CustomerService', () => {
     it('should return empty results when no match found', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [{ total: 0 }] });
 
-      const result = await service.searchCustomers('Nonexistent');
+      const result = await service.searchCustomers(TENANT, 'Nonexistent');
 
       expect(result.total).toBe(0);
       expect(result.customers).toHaveLength(0);
@@ -390,19 +392,19 @@ describe('CustomerService', () => {
         ],
       });
 
-      const result = await service.searchCustomers('Customer', 3, 10);
+      const result = await service.searchCustomers(TENANT, 'Customer', 3, 10);
 
       expect(result.total).toBe(50);
-      // Verify offset calculation: (3-1)*10 = 20
+      // Verify offset calculation: (3-1)*10 = 20; tenant id is the 4th bind param.
       const queryCall = mockPool.query.mock.calls[1];
-      expect(queryCall[1]).toEqual(['%Customer%', 10, 20]);
+      expect(queryCall[1]).toEqual(['%Customer%', 10, 20, TENANT]);
     });
 
     it('should cap page size at 100', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [{ total: 200 }] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await service.searchCustomers('test', 1, 500);
+      await service.searchCustomers(TENANT, 'test', 1, 500);
 
       const queryCall = mockPool.query.mock.calls[1];
       expect(queryCall[1][1]).toBe(100); // pageSize capped at 100

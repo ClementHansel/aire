@@ -98,7 +98,7 @@ export class AgentToolsService {
         case 'payroll_runs':
           return { success: true, data: { runs: await this.payroll.listRuns(tenantId) } };
         case 'list_loans':
-          return { success: true, data: { loans: await this.payroll.listLoans(tenantId, p.status as string) } };
+          return { success: true, data: { loans: await this.payroll.listLoans(tenantId, { status: p.status as string }) } };
         // ── Business module action tools ─────────────────────────────
         case 'adjust_inventory_stock':
           return {

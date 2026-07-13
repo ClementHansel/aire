@@ -5,6 +5,9 @@ import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import Redis from 'ioredis';
 import { Pool } from 'pg';
+import { assignTenantCode } from '../../common/tenant-code';
+import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
+import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
 import {
   JWTPayload,
   LoginRequest,
@@ -133,6 +136,17 @@ export class AuthService {
         [tenantId, email, passwordHash, name],
       );
       await client.query('COMMIT');
+
+      // Assign the tenant's canonical code at registration (feeds membership numbers).
+      await assignTenantCode(this.pool, tenantId).catch(() => undefined);
+
+      // Give the new tenant a ready-to-use set of payment methods so cashiers can
+      // take payment immediately (non-fatal — tenant can add them manually later).
+      await seedDefaultPaymentMethods(this.pool, tenantId).catch(() => undefined);
+
+      // Seed a default chart of accounts so the ledger auto-posting has accounts
+      // to book against from day one (non-fatal — also lazily seeded on first post).
+      await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
 
       const user = userRes.rows[0]!;
       const accessToken = this.issueAccessToken(user);
@@ -267,6 +281,85 @@ export class AuthService {
     };
   }
 
+  /**
+   * Platform-admin "view as employee": issue a staff access token for a real
+   * employee of the tenant that has a linked login (employees.user_id). Opens the
+   * employee self-service dashboard (/employee) in that person's POV. When no
+   * employeeId is given, picks the tenant's oldest employee-with-login. Caller
+   * MUST be a Platform Super Admin and MUST audit the act.
+   */
+  async issueEmployeeImpersonationToken(
+    tenantId: string,
+    employeeId?: string,
+  ): Promise<{
+    accessToken: string;
+    user: { id: string; name: string; role: string; tenantId: string; outletId: string | null };
+    employee: { id: string; name: string };
+  }> {
+    const params: unknown[] = [tenantId];
+    if (employeeId) params.push(employeeId);
+    const res = await this.pool.query<
+      UserRow & { name: string; employee_id: string; employee_name: string }
+    >(
+      `SELECT u.id, u.tenant_id, u.outlet_id, u.role, u.name,
+              e.id AS employee_id, e.name AS employee_name
+         FROM employees e
+         JOIN users u ON u.id = e.user_id
+        WHERE e.tenant_id = $1 AND e.user_id IS NOT NULL
+          ${employeeId ? 'AND e.id = $2' : ''}
+        ORDER BY e.created_at ASC
+        LIMIT 1`,
+      params,
+    );
+    const row = res.rows[0];
+    if (!row) {
+      throw new BadRequestException('No employee with a linked login to view as');
+    }
+    return {
+      accessToken: this.issueAccessToken(row),
+      user: {
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        tenantId: row.tenant_id,
+        outletId: row.outlet_id ?? null,
+      },
+      employee: { id: row.employee_id, name: row.employee_name },
+    };
+  }
+
+  /**
+   * Platform-admin "view as customer": mint a customer-portal JWT (typ: 'customer',
+   * the same shape PortalAuthService issues after OTP) for a real customer of the
+   * tenant, WITHOUT an OTP round-trip. Opens the customer portal in that person's
+   * POV. When no customerId is given, picks the tenant's most recent customer.
+   * Caller MUST be a Platform Super Admin and MUST audit the act.
+   */
+  async issueCustomerPreviewToken(
+    tenantId: string,
+    customerId?: string,
+  ): Promise<{ token: string; customer: { id: string; name: string } }> {
+    const params: unknown[] = [tenantId];
+    if (customerId) params.push(customerId);
+    const res = await this.pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM customers
+        WHERE tenant_id = $1 ${customerId ? 'AND id = $2' : ''}
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      params,
+    );
+    const c = res.rows[0];
+    if (!c) {
+      throw new BadRequestException('Tenant has no customers to view as');
+    }
+    // 2h, matching PortalAuthService's customer-token TTL.
+    const token = this.jwtService.sign(
+      { sub: c.id, tenant_id: tenantId, typ: 'customer' },
+      { expiresIn: '2h' },
+    );
+    return { token, customer: { id: c.id, name: c.name } };
+  }
+
   // ─── Private Helpers ──────────────────────────────────────────────────────────
 
   private issueAccessToken(user: UserRow): string {
@@ -309,9 +402,13 @@ export class AuthService {
   }
 
   private async findUserByEmail(email: string): Promise<UserRow | null> {
+    // Emails are stored normalized (trimmed + lowercased on register/seed), so
+    // look them up the same way — otherwise a real login with different casing
+    // or stray whitespace fails with "invalid credentials".
+    const normalized = (email ?? '').trim().toLowerCase();
     const result = await this.pool.query(
       'SELECT id, tenant_id, outlet_id, email, password_hash, name, role, is_active FROM users WHERE email = $1 LIMIT 1',
-      [email],
+      [normalized],
     );
     return result.rows[0] ?? null;
   }

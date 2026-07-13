@@ -134,13 +134,14 @@ describe('ReportService', () => {
       await reportService.getSummary({
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
-        outletId: 'outlet-123',
+        outletIds: ['outlet-123'],
       });
 
-      // Overview, payment, business-unit, and service queries all receive outletId
+      // Overview, payment, business-unit, and service queries all receive the
+      // scoped outlet ids (passed as a single uuid[] parameter).
       expect(mockPool.query).toHaveBeenCalledTimes(4);
       for (const call of mockPool.query.mock.calls) {
-        expect(call[1]).toContain('outlet-123');
+        expect(call[1]).toContainEqual(['outlet-123']);
       }
     });
 
@@ -262,18 +263,18 @@ describe('ReportService', () => {
       expect(lines[1]).toContain('"Includes wax, polish"');
     });
 
-    it('should pass outletId filter to query when provided', async () => {
+    it('should pass outletIds filter to query when provided', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       await reportService.exportCsv({
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
-        outletId: 'outlet-456',
+        outletIds: ['outlet-456'],
       });
 
       expect(mockPool.query).toHaveBeenCalledTimes(1);
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params).toContain('outlet-456');
+      expect(params).toContainEqual(['outlet-456']);
     });
   });
 });

@@ -1,6 +1,7 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { estimateCostUsd } from './llm-cost.util';
 
 export type InvocationKind = 'tool' | 'llm' | 'chat' | 'analysis';
 
@@ -104,6 +105,19 @@ export class MonitoringService {
       [tenantId, since],
     );
 
+    // Estimated LLM spend: group llm rows by model so per-model rates apply.
+    const byModel = await this.pool.query<{ name: string; prompt_tokens: string | null; completion_tokens: string | null }>(
+      `SELECT name, SUM(prompt_tokens) AS prompt_tokens, SUM(completion_tokens) AS completion_tokens
+       FROM agent_invocations
+       WHERE tenant_id = $1 AND kind = 'llm' AND created_at > NOW() - $2::interval
+       GROUP BY name`,
+      [tenantId, since],
+    );
+    const estimatedCostUsd = byModel.rows.reduce(
+      (sum, m) => sum + estimateCostUsd(m.name, parseInt(m.prompt_tokens ?? '0', 10), parseInt(m.completion_tokens ?? '0', 10)),
+      0,
+    );
+
     const byKind = totals.rows.map((r) => ({
       kind: r.kind,
       total: parseInt(r.total, 10),
@@ -118,6 +132,7 @@ export class MonitoringService {
       totalInvocations: byKind.reduce((s, k) => s + k.total, 0),
       totalErrors: byKind.reduce((s, k) => s + k.errors, 0),
       totalTokens: byKind.reduce((s, k) => s + k.promptTokens + k.completionTokens, 0),
+      estimatedCostUsd: Math.round(estimatedCostUsd * 10000) / 10000,
       byKind,
       topTools: topTools.rows.map((r) => ({ name: r.name, count: parseInt(r.count, 10) })),
     };

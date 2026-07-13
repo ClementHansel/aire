@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Role } from '@aire/shared';
+import type { JWTPayload } from '@aire/shared';
 import { AdminController } from './admin.controller';
 import { AdminService, TenantRecord, PlatformConfig } from './admin.service';
 
@@ -41,13 +43,17 @@ describe('AdminController', () => {
       reactivateTenant: vi.fn().mockResolvedValue(mockTenant),
       getPlatformConfig: vi.fn().mockResolvedValue(mockConfig),
       updatePlatformConfig: vi.fn().mockResolvedValue(mockConfig),
+      // Slug/UUID resolver used by the :id tenant routes (identity passthrough for tests).
+      resolveTenantId: vi.fn().mockImplementation(async (id: string) => id),
     };
     controller = new AdminController(mockAdminService as unknown as AdminService);
   });
 
   describe('listTenants', () => {
     it('should return list of all tenants', async () => {
-      const result = await controller.listTenants();
+      // A super-admin sees every tenant unfiltered.
+      const superUser = { sub: 'admin-1', role: Role.PlatformSuperAdmin } as unknown as JWTPayload;
+      const result = await controller.listTenants(superUser);
 
       expect(mockAdminService.listTenants).toHaveBeenCalled();
       expect(result).toEqual([mockTenant]);

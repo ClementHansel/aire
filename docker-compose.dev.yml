@@ -1,0 +1,58 @@
+# =============================================================================
+# AIRE — DEVELOPMENT / LOCAL-TEST overlay
+# =============================================================================
+# Apply on top of the base for local work:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# What it changes vs the production-safe base:
+#   - App images build the `development` stage (hot-reload: `pnpm dev`).
+#   - Host source is bind-mounted in so edits reload without a rebuild.
+#   - NODE_ENV=development, WAHA_MOCK defaults ON (no real WhatsApp number needed).
+#   - nginx is published on a local-only port (default 58090) — never 80/443.
+#
+# Host ports are read from .env (the local .env remaps everything into a +50000
+# range so this stack coexists with anything already bound to the standard ports).
+# =============================================================================
+
+services:
+  backend:
+    build:
+      target: development
+    environment:
+      NODE_ENV: development
+      WAHA_MOCK: ${WAHA_MOCK:-true}
+    volumes:
+      - ./apps/backend/src:/app/apps/backend/src
+      - ./packages:/app/packages
+
+  frontend:
+    build:
+      target: development
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./apps/frontend/src:/app/apps/frontend/src
+      - ./packages:/app/packages
+
+  iot-gateway:
+    build:
+      target: development
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./apps/iot-gateway/src:/app/apps/iot-gateway/src
+      - ./packages:/app/packages
+
+  n8n:
+    environment:
+      # No TLS locally — talk to n8n directly on its host port.
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://localhost:55678}/
+      N8N_EDITOR_BASE_URL: ${N8N_PUBLIC_URL:-http://localhost:55678}/
+
+  nginx:
+    ports:
+      # Local-only. Reach the whole app at http://localhost:${HTTP_PORT}.
+      - "127.0.0.1:${HTTP_PORT:-58090}:80"

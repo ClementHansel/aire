@@ -1,0 +1,200 @@
+{
+  "id": "aireWhatsappBook01",
+  "name": "AIRE — WhatsApp Booking Agent (starter)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aire-whatsapp-booking",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "b1000000-0000-0000-0000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "aire-whatsapp-booking"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Lift the AIRE webhook payload to the item root so downstream node defaults work.\nreturn $json.body;"
+      },
+      "id": "b1000000-0000-0000-0000-000000000002",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getContext",
+        "baseUrl": "={{ $json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $json.bridgeToken }}",
+        "fromPhone": "={{ $json.message.from }}"
+      },
+      "id": "b1000000-0000-0000-0000-000000000003",
+      "name": "Get Context",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Build a CUSTOMER-scoped system prompt: persona + guardrails + the customer\n// tool catalog + the JSON tool protocol. The model must reply with ONE JSON\n// object — a tool call or a final answer. Bookings are PROPOSED via create_booking\n// (the customer confirms with YA on WhatsApp; AIRE writes the booking server-side).\nconst norm = $('Normalize').item.json;\nconst ctx = $('Get Context').item.json;\nconst p = ctx.persona || {};\nconst agent = (p.agents && p.agents[0]) || null;\nconst role = agent ? agent.role : 'personal_assistant';\nconst personaName = agent ? agent.name : 'Assistant';\nconst rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');\nconst catalog = [\n  '- get_my_summary [read]: the customer\\'s own memberships, orders, queue, vouchers, bookings',\n  '- get_service_prices [read]: public service list with prices',\n  '- get_membership_plans [read]: public membership plans',\n  '- get_promotions [read]: active promotions',\n  '- create_booking [action]: PROPOSE an appointment (params: serviceName, scheduledAt as ISO 8601, licensePlate?, notes?). It is NOT booked until the customer replies YA.',\n  '- escalate_to_human [action]: hand to a human (params: reason)'\n].join('\\n');\nconst lines = [];\nlines.push('You are ' + (agent ? agent.name + ', a ' + String(agent.role || '').replace(/_/g, ' ') : 'a helpful assistant') + ' for an Indonesian car wash & detailing business (AIRE / LEAD).');\nif (agent && agent.prompt) lines.push(agent.prompt);\nif (p.basePrompt) lines.push(p.basePrompt);\nlines.push(\"Reply in the customer's language (Bahasa Indonesia by default). Be concise and warm; short WhatsApp messages. Format money as Rp.\");\nlines.push('STRICT: Use ONLY the tools to look things up — they already scope to THIS customer; never ask for or trust a customer id. Never reveal other customers\\' data, revenue, staff or internals. To book: confirm service + date/time, call create_booking, then ask the customer to reply YA to confirm. Do NOT claim it is booked until they do.');\nif (p.productKnowledge) lines.push('\\nBUSINESS KNOWLEDGE:\\n' + p.productKnowledge);\nlines.push('\\nAvailable tools:\\n' + catalog);\nlines.push('\\nPROTOCOL — reply with ONE JSON object and nothing else:\\n- Tool: {\"action\":\"tool\",\"tool\":\"<name>\",\"parameters\":{...}}\\n- Answer: {\"action\":\"final\",\"message\":\"<text>\"}');\nconst messages = [\n  { role: 'system', content: lines.join('\\n') },\n  { role: 'user', content: norm.message.text }\n];\nreturn { callbackBaseUrl: norm.callbackBaseUrl, bridgeToken: norm.bridgeToken, message: norm.message, personaName, role, messages };"
+      },
+      "id": "b1000000-0000-0000-0000-000000000004",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "operation": "llm",
+        "baseUrl": "={{ $('Build Prompt').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Build Prompt').item.json.bridgeToken }}",
+        "messages": "={{ $json.messages }}",
+        "temperature": 0.4,
+        "maxTokens": 500
+      },
+      "id": "b1000000-0000-0000-0000-000000000005",
+      "name": "LLM Reply",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Parse the model turn into a tool call or a final answer (tolerant of code\n// fences / surrounding prose). Carry the routing fields + messages forward.\nconst bp = $('Build Prompt').item.json;\nlet txt = String(($json && $json.content) || '').trim();\nconst fence = txt.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\nif (fence) txt = fence[1].trim();\nlet action = { kind: 'final', tool: '', parameters: {}, message: txt };\nconst b = txt.indexOf('{');\nconst e = txt.lastIndexOf('}');\nif (b !== -1 && e > b) {\n  try {\n    const parsed = JSON.parse(txt.slice(b, e + 1));\n    if (parsed.action === 'tool' && parsed.tool) action = { kind: 'tool', tool: parsed.tool, parameters: parsed.parameters || {}, message: '' };\n    else if (parsed.action === 'final' && typeof parsed.message === 'string') action = { kind: 'final', tool: '', parameters: {}, message: parsed.message };\n  } catch (err) { /* keep plain-text final */ }\n}\nreturn {\n  callbackBaseUrl: bp.callbackBaseUrl, bridgeToken: bp.bridgeToken, message: bp.message,\n  personaName: bp.personaName, role: bp.role, messages: bp.messages,\n  isTool: action.kind === 'tool', tool: action.tool, parameters: action.parameters, finalText: action.message\n};"
+      },
+      "id": "b1000000-0000-0000-0000-000000000006",
+      "name": "Parse Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "is-tool-cond",
+              "leftValue": "={{ $json.isTool }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-0000-0000-000000000007",
+      "name": "Tool or Answer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "runCustomerTool",
+        "baseUrl": "={{ $('Parse Action').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Parse Action').item.json.bridgeToken }}",
+        "fromPhone": "={{ $('Parse Action').item.json.message.from }}",
+        "customerTool": "={{ $('Parse Action').item.json.tool }}",
+        "role": "={{ $('Parse Action').item.json.role }}",
+        "parameters": "={{ $('Parse Action').item.json.parameters }}"
+      },
+      "id": "b1000000-0000-0000-0000-000000000008",
+      "name": "Run Customer Tool",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [1420, 200],
+      "notes": "Scoped to the sender + gated by persona role. create_booking here PROPOSES; AIRE asks the customer to confirm on WhatsApp before writing the booking."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Feed the tool result back to the model for a natural, grounded reply.\nconst pa = $('Parse Action').item.json;\nconst toolResult = $json;\nconst messages = pa.messages.concat([\n  { role: 'assistant', content: JSON.stringify({ action: 'tool', tool: pa.tool, parameters: pa.parameters }) },\n  { role: 'user', content: 'TOOL_RESULT (' + pa.tool + '): ' + JSON.stringify(toolResult).slice(0, 4000) }\n]);\nreturn { callbackBaseUrl: pa.callbackBaseUrl, bridgeToken: pa.bridgeToken, message: pa.message, personaName: pa.personaName, role: pa.role, messages };"
+      },
+      "id": "b1000000-0000-0000-0000-000000000009",
+      "name": "Build Follow-up",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1620, 200]
+    },
+    {
+      "parameters": {
+        "operation": "llm",
+        "baseUrl": "={{ $('Build Follow-up').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Build Follow-up').item.json.bridgeToken }}",
+        "messages": "={{ $json.messages }}",
+        "temperature": 0.4,
+        "maxTokens": 500
+      },
+      "id": "b1000000-0000-0000-0000-000000000010",
+      "name": "LLM Reply (after tool)",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [1820, 200]
+    },
+    {
+      "parameters": {
+        "operation": "sendWhatsapp",
+        "baseUrl": "={{ $('Parse Action').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Parse Action').item.json.bridgeToken }}",
+        "to": "={{ $('Parse Action').item.json.message.from }}",
+        "text": "={{ $json.content }}",
+        "persona": "={{ $('Parse Action').item.json.personaName }}"
+      },
+      "id": "b1000000-0000-0000-0000-000000000011",
+      "name": "Send (after tool)",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [2020, 200]
+    },
+    {
+      "parameters": {
+        "operation": "sendWhatsapp",
+        "baseUrl": "={{ $('Parse Action').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Parse Action').item.json.bridgeToken }}",
+        "to": "={{ $('Parse Action').item.json.message.from }}",
+        "text": "={{ $('Parse Action').item.json.finalText }}",
+        "persona": "={{ $('Parse Action').item.json.personaName }}"
+      },
+      "id": "b1000000-0000-0000-0000-000000000012",
+      "name": "Send (direct)",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [1420, 420]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
+    "Normalize": { "main": [[{ "node": "Get Context", "type": "main", "index": 0 }]] },
+    "Get Context": { "main": [[{ "node": "Build Prompt", "type": "main", "index": 0 }]] },
+    "Build Prompt": { "main": [[{ "node": "LLM Reply", "type": "main", "index": 0 }]] },
+    "LLM Reply": { "main": [[{ "node": "Parse Action", "type": "main", "index": 0 }]] },
+    "Parse Action": { "main": [[{ "node": "Tool or Answer?", "type": "main", "index": 0 }]] },
+    "Tool or Answer?": {
+      "main": [
+        [{ "node": "Run Customer Tool", "type": "main", "index": 0 }],
+        [{ "node": "Send (direct)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Run Customer Tool": { "main": [[{ "node": "Build Follow-up", "type": "main", "index": 0 }]] },
+    "Build Follow-up": { "main": [[{ "node": "LLM Reply (after tool)", "type": "main", "index": 0 }]] },
+    "LLM Reply (after tool)": { "main": [[{ "node": "Send (after tool)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

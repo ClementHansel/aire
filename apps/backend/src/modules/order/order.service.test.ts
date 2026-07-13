@@ -62,11 +62,33 @@ describe('OrderService', () => {
     },
   ];
 
+  // The order INSERT row returned by the transaction, set per-test. The client
+  // mock routes by SQL (not call order) so it stays robust as the transaction body
+  // grows (COGS recipe lookups, queue linking, settlement, etc.).
+  let currentOrderRow: Record<string, unknown> | null;
+  let failOrderInsert: boolean;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    currentOrderRow = null;
+    failOrderInsert = false;
+    let itemSeq = 0;
 
     mockClient = {
-      query: vi.fn(),
+      query: vi.fn().mockImplementation((sql: string) => {
+        const s = String(sql);
+        if (s.includes('INSERT INTO orders')) {
+          if (failOrderInsert) return Promise.reject(new Error('DB error'));
+          return Promise.resolve({ rows: [currentOrderRow], rowCount: 1 });
+        }
+        if (s.includes('INSERT INTO order_items')) {
+          return Promise.resolve({ rows: [{ id: `item-${++itemSeq}` }], rowCount: 1 });
+        }
+        // Any other RETURNING insert (membership_usages, settlement, vouchers…).
+        if (/RETURNING/i.test(s)) return Promise.resolve({ rows: [{ id: 'gen-id', pack_id: 'pack-1' }], rowCount: 1 });
+        // BEGIN/COMMIT/ROLLBACK, recipe-component SELECTs, status logs, updates…
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }),
       release: vi.fn(),
     };
 
@@ -94,63 +116,41 @@ describe('OrderService', () => {
       // 3. generateOrderNumber - count query
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '5' }] });
 
-      // Transaction queries
-      // BEGIN
-      mockClient.query.mockResolvedValueOnce({});
-
-      // INSERT order
-      mockClient.query.mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'order-123',
-            tenant_id: 'tenant-1',
-            outlet_id: 'outlet-1',
-            operator_id: 'operator-1',
-            customer_id: null,
-            order_number: 'ORD-20250101-006',
-            status: 'ordered',
-            customer_name: 'John Doe',
-            customer_phone: '081234567890',
-            license_plate: 'B1234ABC',
-            vehicle_brand: 'Toyota',
-            vehicle_model: 'Avanza',
-            subtotal: '100000.00',
-            service_charge: '5000.00',
-            tax: '11000.00',
-            voucher_discount: '0.00',
-            promo_discount: '0.00',
-            total: '116000.00',
-            payment_method: null,
-            payment_reference: null,
-            amount_received: null,
-            change_amount: null,
-            note: 'Test order',
-            membership_id: null,
-            created_at: new Date('2025-01-01T10:00:00Z'),
-            updated_at: new Date('2025-01-01T10:00:00Z'),
-          },
-        ],
-      });
-
-      // INSERT order_items (2 items)
-      mockClient.query.mockResolvedValueOnce({
-        rows: [{ id: 'item-1' }],
-      });
-      mockClient.query.mockResolvedValueOnce({
-        rows: [{ id: 'item-2' }],
-      });
-
-      // INSERT order_status_logs
-      mockClient.query.mockResolvedValueOnce({});
-
-      // COMMIT
-      mockClient.query.mockResolvedValueOnce({});
+      // Transaction: the client mock routes by SQL; just declare the order row.
+      currentOrderRow = {
+        id: 'order-123',
+        tenant_id: 'tenant-1',
+        outlet_id: 'outlet-1',
+        operator_id: 'operator-1',
+        customer_id: null,
+        order_number: 'ORD-20250101-006',
+        status: 'ordered',
+        customer_name: 'John Doe',
+        customer_phone: '081234567890',
+        license_plate: 'B1234ABC',
+        vehicle_brand: 'Toyota',
+        vehicle_model: 'Avanza',
+        subtotal: '100000.00',
+        service_charge: '5000.00',
+        tax: '11000.00',
+        voucher_discount: '0.00',
+        promo_discount: '0.00',
+        total: '116000.00',
+        payment_method: null,
+        payment_reference: null,
+        amount_received: null,
+        change_amount: null,
+        note: 'Test order',
+        membership_id: null,
+        created_at: new Date('2025-01-01T10:00:00Z'),
+        updated_at: new Date('2025-01-01T10:00:00Z'),
+      };
     }
 
     it('should create an order successfully with valid input', async () => {
       setupSuccessfulOrderCreation();
 
-      const result = await orderService.createOrder(validRequest, mockUser);
+      const result = await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
 
       expect(result.id).toBe('order-123');
       expect(result.orderNumber).toBe('ORD-20250101-006');
@@ -165,7 +165,7 @@ describe('OrderService', () => {
     it('should calculate correct subtotal from service prices', async () => {
       setupSuccessfulOrderCreation();
 
-      const result = await orderService.createOrder(validRequest, mockUser);
+      const result = await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
 
       // Item 1: 1 * 50000 = 50000
       // Item 2: 2 * 25000 = 50000
@@ -289,44 +289,35 @@ describe('OrderService', () => {
       // generateOrderNumber
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
-      // Transaction
-      mockClient.query.mockResolvedValueOnce({}); // BEGIN
-      mockClient.query.mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'order-456',
-            tenant_id: 'tenant-1',
-            outlet_id: 'outlet-1',
-            operator_id: 'operator-1',
-            customer_id: null,
-            order_number: 'ORD-20250101-001',
-            status: 'ordered',
-            customer_name: 'John Doe',
-            customer_phone: '081234567890',
-            license_plate: 'B1234ABC',
-            vehicle_brand: 'Toyota',
-            vehicle_model: 'Avanza',
-            subtotal: '50000.00',
-            service_charge: '0.00',
-            tax: '0.00',
-            voucher_discount: '0.00',
-            promo_discount: '0.00',
-            total: '50000.00',
-            payment_method: null,
-            payment_reference: null,
-            amount_received: null,
-            change_amount: null,
-            note: null,
-            membership_id: 'mem-1',
-            created_at: new Date('2025-01-01T10:00:00Z'),
-            updated_at: new Date('2025-01-01T10:00:00Z'),
-          },
-        ],
-      });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'item-1' }] });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'item-2' }] });
-      mockClient.query.mockResolvedValueOnce({}); // status log
-      mockClient.query.mockResolvedValueOnce({}); // COMMIT
+      // Transaction: client mock routes by SQL; just declare the order row.
+      currentOrderRow = {
+        id: 'order-456',
+        tenant_id: 'tenant-1',
+        outlet_id: 'outlet-1',
+        operator_id: 'operator-1',
+        customer_id: null,
+        order_number: 'ORD-20250101-001',
+        status: 'ordered',
+        customer_name: 'John Doe',
+        customer_phone: '081234567890',
+        license_plate: 'B1234ABC',
+        vehicle_brand: 'Toyota',
+        vehicle_model: 'Avanza',
+        subtotal: '50000.00',
+        service_charge: '0.00',
+        tax: '0.00',
+        voucher_discount: '0.00',
+        promo_discount: '0.00',
+        total: '50000.00',
+        payment_method: null,
+        payment_reference: null,
+        amount_received: null,
+        change_amount: null,
+        note: null,
+        membership_id: 'mem-1',
+        created_at: new Date('2025-01-01T10:00:00Z'),
+        updated_at: new Date('2025-01-01T10:00:00Z'),
+      };
 
       const requestWithMembership: CreateOrderRequest = {
         ...validRequest,
@@ -337,6 +328,7 @@ describe('OrderService', () => {
       const result = await orderService.createOrder(
         requestWithMembership,
         mockUser,
+        { shift: { id: 'shift-1', outletId: 'outlet-1' } },
       );
 
       expect(result.id).toBe('order-456');
@@ -348,7 +340,7 @@ describe('OrderService', () => {
     it('should assign "regular" tag when no membership or voucher', async () => {
       setupSuccessfulOrderCreation();
 
-      const result = await orderService.createOrder(validRequest, mockUser);
+      const result = await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
 
       expect(result.tags).toContain('regular');
     });
@@ -387,43 +379,34 @@ describe('OrderService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // promotions
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
-      mockClient.query.mockResolvedValueOnce({}); // BEGIN
-      mockClient.query.mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'order-789',
-            tenant_id: 'tenant-1',
-            outlet_id: 'outlet-1',
-            operator_id: 'operator-1',
-            customer_id: null,
-            order_number: 'ORD-20250101-001',
-            status: 'ordered',
-            customer_name: 'John Doe',
-            customer_phone: '081234567890',
-            license_plate: 'B1234ABC',
-            vehicle_brand: 'Toyota',
-            vehicle_model: 'Avanza',
-            subtotal: '50000.00',
-            service_charge: '0.00',
-            tax: '0.00',
-            voucher_discount: '0.00',
-            promo_discount: '0.00',
-            total: '50000.00',
-            payment_method: null,
-            payment_reference: null,
-            amount_received: null,
-            change_amount: null,
-            note: null,
-            membership_id: 'mem-1',
-            created_at: new Date('2025-01-01T10:00:00Z'),
-            updated_at: new Date('2025-01-01T10:00:00Z'),
-          },
-        ],
-      });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'item-1' }] });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'item-2' }] });
-      mockClient.query.mockResolvedValueOnce({}); // status log
-      mockClient.query.mockResolvedValueOnce({}); // COMMIT
+      currentOrderRow = {
+        id: 'order-789',
+        tenant_id: 'tenant-1',
+        outlet_id: 'outlet-1',
+        operator_id: 'operator-1',
+        customer_id: null,
+        order_number: 'ORD-20250101-001',
+        status: 'ordered',
+        customer_name: 'John Doe',
+        customer_phone: '081234567890',
+        license_plate: 'B1234ABC',
+        vehicle_brand: 'Toyota',
+        vehicle_model: 'Avanza',
+        subtotal: '50000.00',
+        service_charge: '0.00',
+        tax: '0.00',
+        voucher_discount: '0.00',
+        promo_discount: '0.00',
+        total: '50000.00',
+        payment_method: null,
+        payment_reference: null,
+        amount_received: null,
+        change_amount: null,
+        note: null,
+        membership_id: 'mem-1',
+        created_at: new Date('2025-01-01T10:00:00Z'),
+        updated_at: new Date('2025-01-01T10:00:00Z'),
+      };
 
       const requestWithMembership: CreateOrderRequest = {
         ...validRequest,
@@ -434,6 +417,7 @@ describe('OrderService', () => {
       const result = await orderService.createOrder(
         requestWithMembership,
         mockUser,
+        { shift: { id: 'shift-1', outletId: 'outlet-1' } },
       );
 
       expect(result.tags).toContain('member');
@@ -458,7 +442,7 @@ describe('OrderService', () => {
       mockClient.query.mockResolvedValueOnce({}); // ROLLBACK
 
       await expect(
-        orderService.createOrder(validRequest, mockUser),
+        orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } }),
       ).rejects.toThrow('DB error');
 
       // Verify ROLLBACK was called
@@ -469,7 +453,7 @@ describe('OrderService', () => {
     it('should generate sequential order numbers per day', async () => {
       setupSuccessfulOrderCreation();
 
-      const result = await orderService.createOrder(validRequest, mockUser);
+      const result = await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
 
       // Count was 5, so next order number should be 006
       expect(result.orderNumber).toContain('-006');
@@ -508,46 +492,37 @@ describe('OrderService', () => {
       // generateOrderNumber
       mockPool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
-      // Transaction
-      mockClient.query.mockResolvedValueOnce({}); // BEGIN
-      mockClient.query.mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'order-000',
-            tenant_id: 'tenant-1',
-            outlet_id: 'outlet-1',
-            operator_id: 'operator-1',
-            customer_id: null,
-            order_number: 'ORD-20250101-001',
-            status: 'ordered',
-            customer_name: 'John Doe',
-            customer_phone: '081234567890',
-            license_plate: 'B1234ABC',
-            vehicle_brand: 'Toyota',
-            vehicle_model: 'Avanza',
-            subtotal: '100000.00',
-            service_charge: '0.00',
-            tax: '0.00',
-            voucher_discount: '0.00',
-            promo_discount: '0.00',
-            total: '100000.00',
-            payment_method: null,
-            payment_reference: null,
-            amount_received: null,
-            change_amount: null,
-            note: 'Test order',
-            membership_id: null,
-            created_at: new Date('2025-01-01T10:00:00Z'),
-            updated_at: new Date('2025-01-01T10:00:00Z'),
-          },
-        ],
-      });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'item-1' }] });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'item-2' }] });
-      mockClient.query.mockResolvedValueOnce({}); // status log
-      mockClient.query.mockResolvedValueOnce({}); // COMMIT
+      // Transaction: client mock routes by SQL; just declare the order row.
+      currentOrderRow = {
+        id: 'order-000',
+        tenant_id: 'tenant-1',
+        outlet_id: 'outlet-1',
+        operator_id: 'operator-1',
+        customer_id: null,
+        order_number: 'ORD-20250101-001',
+        status: 'ordered',
+        customer_name: 'John Doe',
+        customer_phone: '081234567890',
+        license_plate: 'B1234ABC',
+        vehicle_brand: 'Toyota',
+        vehicle_model: 'Avanza',
+        subtotal: '100000.00',
+        service_charge: '0.00',
+        tax: '0.00',
+        voucher_discount: '0.00',
+        promo_discount: '0.00',
+        total: '100000.00',
+        payment_method: null,
+        payment_reference: null,
+        amount_received: null,
+        change_amount: null,
+        note: 'Test order',
+        membership_id: null,
+        created_at: new Date('2025-01-01T10:00:00Z'),
+        updated_at: new Date('2025-01-01T10:00:00Z'),
+      };
 
-      const result = await orderService.createOrder(validRequest, mockUser);
+      const result = await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
 
       // With no service charge and tax configured, total = subtotal
       expect(result.serviceCharge).toBe(0);

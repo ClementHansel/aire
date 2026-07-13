@@ -1,12 +1,21 @@
 import { NestFactory } from '@nestjs/core';
-import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter(),
-  );
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // The app always runs behind nginx (1 hop), which forwards X-Forwarded-For.
+  // Trust that first proxy so req.ip / @Ip() resolve to the real client IP
+  // (used e.g. by the audit log) instead of the nginx container address.
+  app.set('trust proxy', 1);
+
+  // Branding + membership-card send base64 data-URL images INSIDE JSON bodies.
+  // Nest/Express default JSON limit is 100kb; a 5 MB image is ~6.7 MB base64, so
+  // raise the limit with headroom. (Binary multipart uploads go through per-route
+  // FileInterceptors, not this parser.)
+  app.useBodyParser('json', { limit: '10mb' });
+  app.useBodyParser('urlencoded', { limit: '10mb', extended: true });
 
   app.enableCors();
 

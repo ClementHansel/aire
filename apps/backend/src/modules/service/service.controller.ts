@@ -61,13 +61,17 @@ export class ServiceController {
     @Query('businessUnit') businessUnit?: string,
     @Query('outletId') outletId?: string,
     @Query('active') active?: string,
+    @Query('includeProducts') includeProducts?: string,
   ): Promise<ServiceDTO[]> {
+    // Retail products have their own API (/api/products). This endpoint returns
+    // services only unless a caller explicitly opts in with includeProducts=true.
     return this.serviceService.findAll({
       tenantId: user.tenant_id,
       category: category as ServiceCategory | undefined,
       businessUnit: businessUnit as BusinessUnit | undefined,
       outletId: outletId ?? undefined,
       active: active !== undefined ? active === 'true' : undefined,
+      excludeProducts: includeProducts !== 'true',
     });
   }
 

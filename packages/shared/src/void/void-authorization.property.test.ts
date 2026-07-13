@@ -35,7 +35,7 @@ const arbRole: fc.Arbitrary<Role> = fc.constantFrom(
 const arbNonEmptyReason: fc.Arbitrary<string> = fc
   .tuple(
     fc.string({ minLength: 0, maxLength: 10 }),
-    fc.stringOf(fc.char().filter((c) => c.trim().length > 0), { minLength: 1, maxLength: 50 }),
+    fc.string({ unit: fc.string({ unit: 'binary-ascii', minLength: 1, maxLength: 1 }).filter((c) => c.trim().length > 0), minLength: 1, maxLength: 50 }),
     fc.string({ minLength: 0, maxLength: 10 }),
   )
   .map(([prefix, core, suffix]) => `${prefix}${core}${suffix}`);

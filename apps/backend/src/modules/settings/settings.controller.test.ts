@@ -15,6 +15,7 @@ describe('SettingsController', () => {
   let controller: SettingsController;
   let mockSettingsService: {
     getSettings: ReturnType<typeof vi.fn>;
+    getPublicSettings: ReturnType<typeof vi.fn>;
     updateSettings: ReturnType<typeof vi.fn>;
     enforceOwnerRole: ReturnType<typeof vi.fn>;
   };
@@ -47,10 +48,23 @@ describe('SettingsController', () => {
     },
   };
 
+  // Client-safe view: secrets replaced by set/not-set flags.
+  const {
+    whatsapp_token_encrypted: _wt,
+    llm_api_key_encrypted: _lk,
+    ...restPublic
+  } = mockSettings;
+  const mockPublicSettings = {
+    ...restPublic,
+    whatsapp_token_set: true,
+    llm_api_key_set: false,
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockSettingsService = {
       getSettings: vi.fn().mockResolvedValue(mockSettings),
+      getPublicSettings: vi.fn().mockResolvedValue(mockPublicSettings),
       updateSettings: vi.fn().mockResolvedValue(mockSettings),
       enforceOwnerRole: vi.fn().mockResolvedValue(undefined),
     };
@@ -60,16 +74,25 @@ describe('SettingsController', () => {
   });
 
   describe('GET /api/settings/:tenantId', () => {
-    it('should retrieve decrypted settings for authorized user', async () => {
+    it('should retrieve redacted settings for authorized user', async () => {
       const result = await controller.getSettings(mockTenantId);
 
-      expect(mockSettingsService.getSettings).toHaveBeenCalledWith(mockTenantId);
-      expect(result).toEqual(mockSettings);
+      expect(mockSettingsService.getPublicSettings).toHaveBeenCalledWith(mockTenantId);
+      expect(result).toEqual(mockPublicSettings);
       expect(result.ai_enabled).toBe(true);
       expect(result.whatsapp_phone).toBe('+6281234567890');
     });
 
-    it('should return full TenantAutomationSettings structure', async () => {
+    it('should never expose plaintext secrets, only set/not-set flags', async () => {
+      const result = await controller.getSettings(mockTenantId);
+
+      expect(result).not.toHaveProperty('whatsapp_token_encrypted');
+      expect(result).not.toHaveProperty('llm_api_key_encrypted');
+      expect(result.whatsapp_token_set).toBe(true);
+      expect(result.llm_api_key_set).toBe(false);
+    });
+
+    it('should return full public settings structure', async () => {
       const result = await controller.getSettings(mockTenantId);
 
       expect(result).toHaveProperty('ai_enabled');
@@ -80,7 +103,7 @@ describe('SettingsController', () => {
     });
 
     it('should throw NotFoundException when tenant does not exist (404)', async () => {
-      mockSettingsService.getSettings.mockRejectedValue(
+      mockSettingsService.getPublicSettings.mockRejectedValue(
         new NotFoundException('Tenant nonexistent not found'),
       );
 
@@ -90,7 +113,7 @@ describe('SettingsController', () => {
     });
 
     it('should propagate InternalServerErrorException on encryption failure (500)', async () => {
-      mockSettingsService.getSettings.mockRejectedValue(
+      mockSettingsService.getPublicSettings.mockRejectedValue(
         new InternalServerErrorException('Internal configuration error'),
       );
 
@@ -107,7 +130,7 @@ describe('SettingsController', () => {
         llm_provider: 'openrouter',
       };
 
-      const result = await controller.updateSettings(mockTenantId, mockUser, patch);
+      const result = await controller.updateSettings(mockTenantId, mockUser, patch, '203.0.113.7');
 
       expect(mockSettingsService.enforceOwnerRole).toHaveBeenCalledWith(
         mockTenantId,
@@ -117,6 +140,7 @@ describe('SettingsController', () => {
         mockTenantId,
         mockUserId,
         patch,
+        '203.0.113.7',
       );
       expect(result).toEqual(mockSettings);
     });
@@ -218,7 +242,7 @@ describe('SettingsController', () => {
         exp: Math.floor(Date.now() / 1000) + 3600,
       };
 
-      await controller.updateSettings(mockTenantId, adminUser, { ai_enabled: true });
+      await controller.updateSettings(mockTenantId, adminUser, { ai_enabled: true }, '203.0.113.7');
 
       expect(mockSettingsService.enforceOwnerRole).toHaveBeenCalledWith(
         mockTenantId,
@@ -228,6 +252,7 @@ describe('SettingsController', () => {
         mockTenantId,
         'admin-999',
         { ai_enabled: true },
+        '203.0.113.7',
       );
     });
 
@@ -236,12 +261,13 @@ describe('SettingsController', () => {
         automation_toggles: { retention_offers: true },
       } as Partial<TenantAutomationSettings>;
 
-      await controller.updateSettings(mockTenantId, mockUser, patch);
+      await controller.updateSettings(mockTenantId, mockUser, patch, '203.0.113.7');
 
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         mockTenantId,
         mockUserId,
         patch,
+        '203.0.113.7',
       );
     });
 
@@ -250,12 +276,13 @@ describe('SettingsController', () => {
         approval_modes: { campaigns: 'autonomous' },
       } as Partial<TenantAutomationSettings>;
 
-      await controller.updateSettings(mockTenantId, mockUser, patch);
+      await controller.updateSettings(mockTenantId, mockUser, patch, '203.0.113.7');
 
       expect(mockSettingsService.updateSettings).toHaveBeenCalledWith(
         mockTenantId,
         mockUserId,
         patch,
+        '203.0.113.7',
       );
     });
   });

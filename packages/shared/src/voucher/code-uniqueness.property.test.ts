@@ -19,10 +19,8 @@ const SAFE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 /** Generates a valid tenant prefix (1-6 uppercase letters) */
 const arbTenantPrefix: fc.Arbitrary<string> = fc
-  .stringOf(fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')), {
-    minLength: 2,
-    maxLength: 6,
-  });
+  .string({ unit: fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')), minLength: 2,
+    maxLength: 6, });
 
 /** Generates a valid pack size (1-30, kept small for test performance) */
 const arbPackSize: fc.Arbitrary<number> = fc.integer({ min: 1, max: 30 });

@@ -11,12 +11,11 @@
     "reset": "tsx reset.ts"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "pg": "^8.13.0"
+    "bcryptjs": "^3.0.3",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/pg": "^8.11.0",
-    "tsx": "^4.19.0"
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.23.0"
   }
 }

@@ -13,7 +13,8 @@ import {
 } from '@nestjs/common';
 import { JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser } from '../../common/decorators';
+import { CurrentUser, RequirePermission } from '../../common/decorators';
+import { PermissionsGuard } from '../../common/guards';
 import { VoucherTemplateService } from './voucher-template.service';
 import { VoucherPackService } from './voucher-pack.service';
 import { VoucherRedemptionService } from './voucher-redemption.service';
@@ -41,7 +42,7 @@ interface ValidateBody {
  * Voucher pack sales + catalog.
  */
 @Controller('api/voucher-packs')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class VoucherPackController {
   constructor(
     private readonly templates: VoucherTemplateService,
@@ -56,6 +57,7 @@ export class VoucherPackController {
 
   /** POST /api/voucher-packs/sell — reserve a sale (customer + pending order). */
   @Post('sell')
+  @RequirePermission('vouchers.write')
   @HttpCode(HttpStatus.CREATED)
   async sell(@CurrentUser() user: JWTPayload, @Body() body: SellPackBody) {
     if (!body.templateId || !body.customer?.name?.trim() || !body.customer?.phone?.trim()) {
@@ -66,6 +68,7 @@ export class VoucherPackController {
 
   /** POST /api/voucher-packs/issue — generate + deliver codes after payment. */
   @Post('issue')
+  @RequirePermission('vouchers.write')
   @HttpCode(HttpStatus.CREATED)
   async issue(@CurrentUser() user: JWTPayload, @Body() body: IssuePackBody) {
     if (!body.orderId || !body.templateId) {
@@ -79,7 +82,7 @@ export class VoucherPackController {
  * Voucher template management (dashboard).
  */
 @Controller('api/voucher-templates')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class VoucherTemplateController {
   constructor(private readonly templates: VoucherTemplateService) {}
 
@@ -89,12 +92,14 @@ export class VoucherTemplateController {
   }
 
   @Post()
+  @RequirePermission('vouchers.write')
   @HttpCode(HttpStatus.CREATED)
   async create(@CurrentUser() user: JWTPayload, @Body() dto: CreateVoucherTemplateDto) {
     return this.templates.createTemplate(user.tenant_id, dto);
   }
 
   @Put(':id')
+  @RequirePermission('vouchers.write')
   async update(
     @CurrentUser() user: JWTPayload,
     @Param('id') id: string,
@@ -104,6 +109,7 @@ export class VoucherTemplateController {
   }
 
   @Delete(':id')
+  @RequirePermission('vouchers.write')
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@CurrentUser() user: JWTPayload, @Param('id') id: string): Promise<void> {
     return this.templates.deactivateTemplate(user.tenant_id, id);

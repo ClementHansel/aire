@@ -37,11 +37,20 @@ export class RlsContextGuard implements CanActivate {
 
     try {
       await client.query('BEGIN');
-      await client.query(`SET LOCAL app.tenant_id = '${user.tenant_id}'`);
-      await client.query(
-        `SET LOCAL app.outlet_id = '${user.outlet_id ?? ''}'`,
-      );
-      await client.query(`SET LOCAL app.role = '${user.role}'`);
+      // Use set_config(name, value, is_local=true) with BOUND parameters instead
+      // of interpolating JWT values into a `SET LOCAL ... = '...'` string. SET does
+      // not accept bind parameters, but set_config() does — so a crafted claim can
+      // never break out of the value and inject SQL. is_local = true makes it
+      // transaction-scoped, exactly like SET LOCAL.
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [
+        user.tenant_id ?? '',
+      ]);
+      await client.query(`SELECT set_config('app.outlet_id', $1, true)`, [
+        user.outlet_id ?? '',
+      ]);
+      await client.query(`SELECT set_config('app.role', $1, true)`, [
+        user.role ?? '',
+      ]);
 
       // Attach the client to the request so downstream services can use
       // the same connection with RLS variables already set.

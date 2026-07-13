@@ -17,10 +17,8 @@ import {
 /**
  * Generates an arbitrary service ID from a fixed pool so benefits can reference them.
  */
-const arbServiceId = fc.stringOf(fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f', '1', '2', '3'), {
-  minLength: 3,
-  maxLength: 8,
-});
+const arbServiceId = fc.string({ unit: fc.constantFrom('a', 'b', 'c', 'd', 'e', 'f', '1', '2', '3'), minLength: 3,
+  maxLength: 8, });
 
 /**
  * Generates an arbitrary CartItem with reasonable values.

@@ -23,14 +23,15 @@ import {
   PayOrderRequest,
 } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { CurrentUser, Roles } from '../../common/decorators';
-import { RolesGuard } from '../../common/guards';
+import { CurrentUser, Roles, RequirePermission, RequiresOnboarding } from '../../common/decorators';
+import { RolesGuard, PermissionsGuard, OnboardingCompleteGuard } from '../../common/guards';
 import { ScopeService } from '../../common/scope/scope.service';
 import { OrderListService } from './order-list.service';
 import { OrderService } from './order.service';
 
 @Controller('api/orders')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, OnboardingCompleteGuard)
+@RequiresOnboarding()
 export class OrderController {
   constructor(
     private readonly orderListService: OrderListService,
@@ -75,8 +76,11 @@ export class OrderController {
    * GET /api/orders
    *
    * List orders with filtering, searching, and pagination.
-   * - Cashier: scoped to own outlet via RLS (no explicit outletId filter needed)
-   * - Tenant_Owner / Outlet_Admin: can filter by outletId
+   * Tenant isolation is enforced explicitly (params.tenantId), and branch scope
+   * is resolved from the caller's role via ScopeService (this endpoint does not
+   * attach RlsContextGuard, so it must not rely on Postgres RLS).
+   * - Cashier / Outlet_Admin: restricted to their assigned branches
+   * - Tenant_Owner / Super_Admin: all branches, optionally narrowed by outletId
    *
    * Query params:
    *   status   - filter by order status
@@ -131,6 +135,7 @@ export class OrderController {
     const outletIds = await this.scope.resolveOutletIds(user, outletId);
 
     const params: OrderQueryParams = {
+      tenantId: user.tenant_id,
       status: status as OrderStatus | undefined,
       search,
       dateFrom,
@@ -149,6 +154,7 @@ export class OrderController {
   @Patch(':id')
   @UseGuards(RolesGuard)
   @Roles(Role.OutletAdmin)
+  @RequirePermission('transactions.write')
   async editOrder(
     @CurrentUser() user: JWTPayload,
     @Param('id') id: string,
@@ -163,8 +169,26 @@ export class OrderController {
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles(Role.OutletAdmin)
+  @RequirePermission('transactions.delete')
   async deleteOrder(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
     return this.orderService.deleteOrder(id, user);
+  }
+
+  /**
+   * POST /api/orders/:id/void — cashier-facing void. Authorization (reason /
+   * free-window / admin PIN) is enforced inside the service via the shared
+   * void-authorization rules, so no fixed role gate here (any signed-in operator
+   * may attempt it; the rules decide). On a 400 with { requiresPin: true } the
+   * POS should reveal the admin-PIN field and retry.
+   */
+  @Post(':id/void')
+  @HttpCode(HttpStatus.OK)
+  async voidOrder(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { reason?: string; adminPin?: string },
+  ) {
+    return this.orderService.voidOrder(id, user, { reason: body?.reason ?? '', adminPin: body?.adminPin });
   }
 
   /**

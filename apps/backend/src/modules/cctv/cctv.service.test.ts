@@ -1,147 +1,328 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { NotFoundException } from '@nestjs/common';
-import { CctvService, CameraStream } from './cctv.service';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NotFoundException, ConflictException } from '@nestjs/common';
+import { Readable } from 'node:stream';
+import { CctvService, CameraDTO } from './cctv.service';
+import { BridgeEvents } from '../bridge/bridge.events';
+import type { BridgeDispatchService } from '../bridge/bridge-dispatch.service';
+import type { StorageService } from '../storage/storage.service';
 
-describe('CctvService', () => {
-  let service: CctvService;
-
-  const mockCamera: CameraStream = {
+/** A raw `cameras` row as pg would return it. */
+function cameraRow(overrides: Record<string, unknown> = {}) {
+  return {
     id: 'cam-001',
-    outletId: 'outlet-001',
-    name: 'Entrance Camera',
-    rtspUrl: 'rtsp://192.168.1.100:554/stream1',
-    location: 'Main entrance',
-    isActive: true,
+    tenant_id: 'tenant-1',
+    outlet_id: 'outlet-1',
+    bridge_id: 'bridge-1',
+    name: 'Entrance',
+    rtsp_url: 'rtsp://192.168.1.100:554/stream',
+    location: 'Front',
+    device_id: null,
+    is_active: true,
+    is_streaming: false,
+    last_frame_at: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+    ...overrides,
   };
+}
 
-  const mockCamera2: CameraStream = {
-    id: 'cam-002',
-    outletId: 'outlet-001',
-    name: 'Bay 1 Camera',
-    rtspUrl: 'rtsp://192.168.1.101:554/stream1',
-    location: 'Wash bay 1',
-    isActive: true,
+function recordingRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'rec-001',
+    tenant_id: 'tenant-1',
+    outlet_id: 'outlet-1',
+    camera_id: 'cam-001',
+    order_id: 'order-1',
+    status: 'recording',
+    storage_prefix: 'recordings/cam-001/rec-001/',
+    segment_count: 0,
+    duration_seconds: null,
+    started_at: '2026-01-01T00:00:00.000Z',
+    stopped_at: null,
+    ...overrides,
   };
+}
 
-  const mockCameraInactive: CameraStream = {
-    id: 'cam-003',
-    outletId: 'outlet-001',
-    name: 'Inactive Camera',
-    rtspUrl: 'rtsp://192.168.1.102:554/stream1',
-    location: 'Back entrance',
-    isActive: false,
-  };
+const cameraDto: CameraDTO = {
+  id: 'cam-001',
+  tenantId: 'tenant-1',
+  outletId: 'outlet-1',
+  bridgeId: 'bridge-1',
+  name: 'Entrance',
+  rtspUrl: 'rtsp://192.168.1.100:554/stream',
+  location: 'Front',
+  deviceId: null,
+  isActive: true,
+  isStreaming: false,
+  lastFrameAt: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
 
-  const mockCameraOtherOutlet: CameraStream = {
-    id: 'cam-004',
-    outletId: 'outlet-002',
-    name: 'Other Outlet Camera',
-    rtspUrl: 'rtsp://192.168.1.200:554/stream1',
-    location: 'Other outlet entrance',
-    isActive: true,
-  };
+function makeService(opts: {
+  query?: ReturnType<typeof vi.fn>;
+  storageEnabled?: boolean;
+  storagePut?: ReturnType<typeof vi.fn>;
+  storageGet?: ReturnType<typeof vi.fn>;
+  dispatch?: Partial<BridgeDispatchService>;
+} = {}) {
+  const query = opts.query ?? vi.fn().mockResolvedValue({ rows: [] });
+  const pool = { query } as never;
 
-  beforeEach(() => {
-    service = new CctvService();
-    service.registerCamera(mockCamera);
-    service.registerCamera(mockCamera2);
-    service.registerCamera(mockCameraInactive);
-    service.registerCamera(mockCameraOtherOutlet);
+  const put = opts.storagePut ?? vi.fn().mockResolvedValue(undefined);
+  const get = opts.storageGet ?? vi.fn().mockResolvedValue(null);
+  const storage = {
+    isEnabled: () => opts.storageEnabled ?? false,
+    put,
+    get,
+  } as unknown as StorageService;
+
+  const dispatch = (opts.dispatch ?? {
+    dispatchStreamStart: vi.fn().mockReturnValue(true),
+    dispatchStreamStop: vi.fn().mockReturnValue(true),
+  }) as unknown as BridgeDispatchService;
+
+  const bridgeEvents = new BridgeEvents();
+  const service = new CctvService(pool, storage, dispatch, bridgeEvents);
+  service.subscribeToBridge();
+  return { service, query, put, get, dispatch, bridgeEvents };
+}
+
+describe('CctvService - live relay', () => {
+  it('buffers a relayed segment and serves it by name', () => {
+    const { service, bridgeEvents } = makeService();
+    bridgeEvents.emit('hls:segment', {
+      bridgeId: 'b',
+      tenantId: 't',
+      outletId: 'o',
+      cameraId: 'cam-001',
+      name: 'seg0.ts',
+      dataB64: Buffer.from('hello').toString('base64'),
+      durationSec: 4,
+      seq: 0,
+    });
+
+    const seg = service.getLiveSegment('cam-001', 'seg0.ts');
+    expect(seg).not.toBeNull();
+    expect(seg!.toString()).toBe('hello');
   });
 
-  describe('getStreams', () => {
-    it('should return active cameras for a given outlet', () => {
-      const result = service.getStreams('outlet-001');
+  it('caps the live ring buffer at 6 segments', () => {
+    const { service, bridgeEvents } = makeService();
+    for (let i = 0; i < 8; i++) {
+      bridgeEvents.emit('hls:segment', {
+        bridgeId: 'b',
+        tenantId: 't',
+        outletId: 'o',
+        cameraId: 'cam-001',
+        name: `seg${i}.ts`,
+        dataB64: Buffer.from(`s${i}`).toString('base64'),
+        durationSec: 4,
+        seq: i,
+      });
+    }
+    // First two aged out; last six retained.
+    expect(service.getLiveSegment('cam-001', 'seg0.ts')).toBeNull();
+    expect(service.getLiveSegment('cam-001', 'seg1.ts')).toBeNull();
+    expect(service.getLiveSegment('cam-001', 'seg7.ts')).not.toBeNull();
+  });
 
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('cam-001');
-      expect(result[1].id).toBe('cam-002');
+  it('returns the agent playlist when present and starts streaming', async () => {
+    const { service, bridgeEvents, dispatch } = makeService();
+    bridgeEvents.emit('hls:playlist', {
+      bridgeId: 'b',
+      tenantId: 't',
+      outletId: 'o',
+      cameraId: 'cam-001',
+      m3u8: '#EXTM3U\n#EXT-X-VERSION:3\n',
     });
 
-    it('should not include inactive cameras', () => {
-      const result = service.getStreams('outlet-001');
-
-      const ids = result.map((c) => c.id);
-      expect(ids).not.toContain('cam-003');
-    });
-
-    it('should not include cameras from other outlets', () => {
-      const result = service.getStreams('outlet-001');
-
-      const ids = result.map((c) => c.id);
-      expect(ids).not.toContain('cam-004');
-    });
-
-    it('should return empty array for outlet with no cameras', () => {
-      const result = service.getStreams('outlet-nonexistent');
-
-      expect(result).toEqual([]);
+    const playlist = await service.getLivePlaylist(cameraDto);
+    expect(playlist).toContain('#EXTM3U');
+    expect(dispatch.dispatchStreamStart).toHaveBeenCalledWith('outlet-1', {
+      cameraId: 'cam-001',
+      rtspUrl: cameraDto.rtspUrl,
     });
   });
 
-  describe('getStreamUrl', () => {
-    it('should return HLS URL for a valid camera', () => {
-      const result = service.getStreamUrl('cam-001');
-
-      expect(result.hlsUrl).toBe('/streams/cam-001/index.m3u8');
+  it('synthesises a playlist from the ring buffer when the agent sent none', async () => {
+    const { service, bridgeEvents } = makeService();
+    bridgeEvents.emit('hls:segment', {
+      bridgeId: 'b',
+      tenantId: 't',
+      outletId: 'o',
+      cameraId: 'cam-001',
+      name: 'seg5.ts',
+      dataB64: Buffer.from('x').toString('base64'),
+      durationSec: 4,
+      seq: 5,
     });
+    const playlist = await service.getLivePlaylist(cameraDto);
+    expect(playlist).toContain('#EXTM3U');
+    expect(playlist).toContain('#EXT-X-MEDIA-SEQUENCE:5');
+    expect(playlist).toContain('seg5.ts');
+  });
+});
 
-    it('should throw NotFoundException for non-existent camera', () => {
-      expect(() => service.getStreamUrl('cam-nonexistent')).toThrow(NotFoundException);
-    });
+describe('CctvService - camera CRUD', () => {
+  it('lists cameras for an outlet', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [cameraRow()] });
+    const { service } = makeService({ query });
+
+    const cameras = await service.listByOutlet('tenant-1', 'outlet-1');
+    expect(cameras).toHaveLength(1);
+    expect(cameras[0]!.id).toBe('cam-001');
+    expect(cameras[0]!.rtspUrl).toBe('rtsp://192.168.1.100:554/stream');
   });
 
-  describe('startRecording', () => {
-    it('should start a recording session linked to an order', () => {
-      const result = service.startRecording('cam-001', 'order-123');
-
-      expect(result.id).toBeDefined();
-      expect(result.cameraId).toBe('cam-001');
-      expect(result.orderId).toBe('order-123');
-      expect(result.status).toBe('recording');
-      expect(result.startedAt).toBeDefined();
-    });
-
-    it('should generate a unique session id', () => {
-      const session1 = service.startRecording('cam-001', 'order-001');
-      const session2 = service.startRecording('cam-001', 'order-002');
-
-      expect(session1.id).not.toBe(session2.id);
-    });
-
-    it('should throw NotFoundException for non-existent camera', () => {
-      expect(() => service.startRecording('cam-nonexistent', 'order-123')).toThrow(
-        NotFoundException,
-      );
-    });
+  it('throws NotFound when a camera does not exist', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const { service } = makeService({ query });
+    await expect(service.getCamera('tenant-1', 'nope')).rejects.toThrow(NotFoundException);
   });
 
-  describe('stopRecording', () => {
-    it('should stop an active recording and return the result', () => {
-      const session = service.startRecording('cam-001', 'order-123');
-
-      const result = service.stopRecording(session.id);
-
-      expect(result.id).toBe(session.id);
-      expect(result.cameraId).toBe('cam-001');
-      expect(result.orderId).toBe('order-123');
-      expect(result.startedAt).toBe(session.startedAt);
-      expect(result.stoppedAt).toBeDefined();
-      expect(result.storagePath).toContain('recordings/cam-001/order-123/');
-      expect(result.storagePath).toContain('.mp4');
-      expect(result.durationSeconds).toBeGreaterThanOrEqual(0);
-      expect(result.status).toBe('completed');
+  it('creates a camera', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [cameraRow()] });
+    const { service } = makeService({ query });
+    const created = await service.createCamera('tenant-1', {
+      outletId: 'outlet-1',
+      name: 'Entrance',
+      rtspUrl: 'rtsp://192.168.1.100:554/stream',
     });
+    expect(created.name).toBe('Entrance');
+  });
+});
 
-    it('should throw NotFoundException for non-existent session', () => {
-      expect(() => service.stopRecording('session-nonexistent')).toThrow(NotFoundException);
+describe('CctvService - recording', () => {
+  it('starts a recording, inserting a camera_recordings row', async () => {
+    const query = vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes('FROM cameras')) return Promise.resolve({ rows: [cameraRow()] });
+      if (sql.includes('INSERT INTO camera_recordings')) {
+        return Promise.resolve({ rows: [recordingRow()] });
+      }
+      return Promise.resolve({ rows: [] });
     });
+    const { service, dispatch } = makeService({ query });
 
-    it('should throw NotFoundException when stopping an already stopped session', () => {
-      const session = service.startRecording('cam-001', 'order-123');
-      service.stopRecording(session.id);
+    const rec = await service.startRecording('tenant-1', 'cam-001', 'order-1');
+    expect(rec.status).toBe('recording');
+    expect(rec.cameraId).toBe('cam-001');
+    expect(dispatch.dispatchStreamStart).toHaveBeenCalled();
+  });
 
-      expect(() => service.stopRecording(session.id)).toThrow(NotFoundException);
+  it('rejects a second concurrent recording for the same camera', async () => {
+    const query = vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes('FROM cameras')) return Promise.resolve({ rows: [cameraRow()] });
+      if (sql.includes('INSERT INTO camera_recordings')) {
+        return Promise.resolve({ rows: [recordingRow()] });
+      }
+      return Promise.resolve({ rows: [] });
     });
+    const { service } = makeService({ query });
+    await service.startRecording('tenant-1', 'cam-001');
+    await expect(service.startRecording('tenant-1', 'cam-001')).rejects.toThrow(ConflictException);
+  });
+
+  it('persists incoming segments to storage while recording', async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    const query = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes('FROM cameras')) return Promise.resolve({ rows: [cameraRow()] });
+      if (sql.includes('INSERT INTO camera_recordings')) {
+        return Promise.resolve({
+          rows: [recordingRow({ id: params[0], storage_prefix: params[5] })],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const { service, bridgeEvents } = makeService({ query, storageEnabled: true, storagePut: put });
+
+    const rec = await service.startRecording('tenant-1', 'cam-001', 'order-1');
+    bridgeEvents.emit('hls:segment', {
+      bridgeId: 'b',
+      tenantId: 't',
+      outletId: 'o',
+      cameraId: 'cam-001',
+      name: 'seg0.ts',
+      dataB64: Buffer.from('data').toString('base64'),
+      durationSec: 4,
+      seq: 0,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(put).toHaveBeenCalledWith(`${rec.storagePrefix}seg0.ts`, expect.any(Buffer), 'video/mp2t');
+  });
+
+  it('stops a recording, writing a VOD index and finalising the row', async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    const query = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes('FROM cameras')) return Promise.resolve({ rows: [cameraRow()] });
+      if (sql.includes('INSERT INTO camera_recordings')) {
+        return Promise.resolve({
+          rows: [recordingRow({ id: params[0], storage_prefix: params[5] })],
+        });
+      }
+      if (sql.includes('UPDATE camera_recordings')) {
+        return Promise.resolve({
+          rows: [
+            recordingRow({
+              id: params[0],
+              status: 'completed',
+              segment_count: 1,
+              duration_seconds: 4,
+            }),
+          ],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const { service, bridgeEvents } = makeService({ query, storageEnabled: true, storagePut: put });
+
+    const rec = await service.startRecording('tenant-1', 'cam-001', 'order-1');
+    bridgeEvents.emit('hls:segment', {
+      bridgeId: 'b',
+      tenantId: 't',
+      outletId: 'o',
+      cameraId: 'cam-001',
+      name: 'seg0.ts',
+      dataB64: Buffer.from('data').toString('base64'),
+      durationSec: 4,
+      seq: 0,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const stopped = await service.stopRecording('tenant-1', rec.id);
+    expect(stopped.status).toBe('completed');
+    expect(put).toHaveBeenCalledWith(
+      `${rec.storagePrefix}index.m3u8`,
+      expect.any(Buffer),
+      'application/vnd.apple.mpegurl',
+    );
+  });
+
+  it('lists recordings with optional filters', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [recordingRow({ status: 'completed' })] });
+    const { service } = makeService({ query });
+    const recs = await service.listRecordings('tenant-1', { cameraId: 'cam-001' });
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.cameraId).toBe('cam-001');
+    // camera filter should be part of the WHERE clause params
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('camera_id ='),
+      expect.arrayContaining(['tenant-1', 'cam-001']),
+    );
+  });
+
+  it('reads a VOD playlist from storage', async () => {
+    const get = vi.fn().mockImplementation((key: string) => {
+      if (key.endsWith('index.m3u8')) {
+        return Promise.resolve({ body: Readable.from(['#EXTM3U\n#EXT-X-ENDLIST\n']), contentType: 'x' });
+      }
+      return Promise.resolve(null);
+    });
+    const query = vi.fn().mockResolvedValue({ rows: [{ storage_prefix: 'recordings/cam-001/rec-001/' }] });
+    const { service } = makeService({ query, storageEnabled: true, storageGet: get });
+
+    const playlist = await service.getRecordingPlaylist('tenant-1', 'rec-001');
+    expect(playlist).toContain('#EXT-X-ENDLIST');
   });
 });

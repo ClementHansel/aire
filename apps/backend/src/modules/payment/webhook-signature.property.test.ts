@@ -39,7 +39,7 @@ const payloadArbitrary = fc.dictionary(
 const secretArbitrary = fc.string({ minLength: 8, maxLength: 64 }).filter((s) => s.length >= 8);
 
 /** Arbitrary signatures that will NOT match (random hex-like strings) */
-const invalidSignatureArbitrary = fc.hexaString({ minLength: 32, maxLength: 128 });
+const invalidSignatureArbitrary = fc.string({ unit: fc.constantFrom(...'0123456789abcdef'), minLength: 32, maxLength: 128 });
 
 /** Arbitrary empty or null-like signatures */
 const emptySignatureArbitrary = fc.constantFrom('', undefined as unknown as string, null as unknown as string);

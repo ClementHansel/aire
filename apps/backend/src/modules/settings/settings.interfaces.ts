@@ -88,15 +88,37 @@ export interface TenantAutomationSettings {
 }
 
 /**
+ * Client-safe view of tenant settings. Sensitive secrets are never sent to the
+ * browser as plaintext — they are replaced by boolean "is set" flags. Returned
+ * by GET /api/settings/:tenantId.
+ */
+export type PublicTenantSettings = Omit<
+  TenantAutomationSettings,
+  'whatsapp_token_encrypted' | 'llm_api_key_encrypted'
+> & {
+  whatsapp_token_set: boolean;
+  llm_api_key_set: boolean;
+};
+
+/**
  * Default automation settings applied to newly created tenants.
- * All toggles OFF, all approval modes set to "approval_required".
+ *
+ * The master AI switch (`ai_enabled`) defaults ON so the assistant + fluid
+ * WhatsApp replies work out-of-the-box. This is safe because it only turns the
+ * *brain* on: with no LLM key set the brain gracefully falls back to templates
+ * (and the UI surfaces an "add your key" notice). Every ACTION automation toggle
+ * still defaults OFF with approval_required, so nothing acts autonomously until
+ * the owner opts in per capability.
  */
 export const DEFAULT_AUTOMATION_SETTINGS: TenantAutomationSettings = {
   whatsapp_phone: null,
   whatsapp_token_encrypted: null,
-  llm_provider: 'hermes_ai',
+  // Default to OpenRouter so a fresh tenant's misconfiguration is an explicit
+  // "add your API key" (surfaced in the UI) rather than a silent attempt to
+  // reach a local Ollama that doesn't exist in production.
+  llm_provider: 'openrouter',
   llm_api_key_encrypted: null,
-  ai_enabled: false,
+  ai_enabled: true,
   automation_toggles: {
     campaigns: false,
     retention_offers: false,

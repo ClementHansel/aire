@@ -1,7 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { SummaryResponse } from '@aire/shared';
-import PdfPrinter from 'pdfmake';
-import type { TDocumentDefinitions, Content, ContentTable } from 'pdfmake/interfaces';
+import type { TDocumentDefinitions, Content, ContentTable, TFontDictionary } from 'pdfmake/interfaces';
+
+// pdfmake is pinned to the stable 0.2.x line: its CommonJS main IS the Node server
+// PdfPrinter constructor and createPdfKitDocument returns a PDFKit stream (consumed
+// via data/end/error). (0.3 is a breaking rewrite — async API + relocated server
+// entry — that this code is not written for; do not bump without porting the API.)
+// The server printer isn't in @types/pdfmake's surface, so type it locally.
+interface PdfKitStream {
+  on(event: 'data', cb: (chunk: Buffer) => void): void;
+  on(event: 'end', cb: () => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
+  end(): void;
+}
+interface PdfPrinter {
+  createPdfKitDocument(def: TDocumentDefinitions): PdfKitStream;
+}
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const PdfPrinter: new (fonts: TFontDictionary) => PdfPrinter = require('pdfmake');
 
 /* eslint-disable @typescript-eslint/no-var-requires, @typescript-eslint/no-explicit-any */
 
@@ -43,6 +59,15 @@ export interface ReportPdfInput {
   summary: SummaryResponse;
   daily: DailyRow[];
   shifts: ShiftRow[];
+  /**
+   * Optional per-section visibility from the tenant's report template
+   * (settings.reportTemplate.reportSections). A section is shown unless its key
+   * is explicitly false. Keys: kpis, businessUnit, revenueChart, paymentMix,
+   * topServices, dailySales, shifts.
+   */
+  sections?: Record<string, boolean>;
+  /** Tenant logo as a base64 data URL, rendered in the masthead when present. */
+  logoDataUrl?: string;
 }
 
 // ── Brand palette (matches the web app) ──────────────────────────────────────
@@ -241,103 +266,129 @@ export class ReportPdfService {
 
     const bu = (k: 'AIRE' | 'LEAD') => s.byBusinessUnit?.[k] ?? { revenue: 0, count: 0 };
 
+    // A section prints unless the tenant's report template explicitly disabled it.
+    const on = (key: string) => input.sections?.[key] !== false;
+
+    // Masthead columns: optional logo · title/company · period/scope.
+    // Typed loosely: pdfmake columns mix images and width-bearing stacks.
+    const titleColumns: any[] = [];
+    if (input.logoDataUrl) {
+      titleColumns.push({ image: input.logoDataUrl, fit: [120, 44] });
+    }
+    titleColumns.push(
+      {
+        stack: [
+          { text: 'Business Report', fontSize: 20, bold: true, color: INK },
+          { text: input.tenantName, fontSize: 10, color: MUTED, margin: [0, 2, 0, 0] },
+        ],
+      },
+      {
+        width: 'auto',
+        stack: [
+          { text: periodLabel, fontSize: 10, bold: true, color: BRAND_DARK, alignment: 'right' },
+          { text: scope, fontSize: 9, color: SLATE, alignment: 'right', margin: [0, 2, 0, 0] },
+          { text: unit, fontSize: 9, color: MUTED, alignment: 'right' },
+        ],
+      },
+    );
+
     const content: Content[] = [
-      // Title block
-      {
-        columns: [
-          {
-            stack: [
-              { text: 'Business Report', fontSize: 20, bold: true, color: INK },
-              { text: input.tenantName, fontSize: 10, color: MUTED, margin: [0, 2, 0, 0] },
-            ],
-          },
-          {
-            width: 'auto',
-            stack: [
-              { text: periodLabel, fontSize: 10, bold: true, color: BRAND_DARK, alignment: 'right' },
-              { text: scope, fontSize: 9, color: SLATE, alignment: 'right', margin: [0, 2, 0, 0] },
-              { text: unit, fontSize: 9, color: MUTED, alignment: 'right' },
-            ],
-          },
-        ],
-        margin: [0, 0, 0, 4],
-      },
+      // Title block (always shown)
+      { columns: titleColumns, columnGap: 12, margin: [0, 0, 0, 4] },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: BRAND }], margin: [0, 0, 0, 16] },
-
-      this.kpiBand(s),
-
-      // Business unit P&L
-      this.sectionTitle('Revenue by business unit'),
-      {
-        columns: [
-          this.buCard('AIRE · Car Wash', bu('AIRE'), '#0369a1'),
-          { width: 12, text: '' },
-          this.buCard('LEAD · Detailing', bu('LEAD'), '#7c3aed'),
-        ],
-        margin: [0, 0, 0, 16],
-      },
-
-      // Charts (stacked full-width so value labels never wrap)
-      this.sectionTitle(revenueChart.length > 31 ? 'Revenue trend (monthly)' : 'Revenue trend (daily)'),
-      this.hBarChart(revenueChart, BRAND, 320),
-      this.sectionTitle('Payment mix (by revenue)'),
-      this.hBarChart(paymentChart, '#0369a1', 320),
-      { text: '', margin: [0, 0, 0, 8] },
-
-      // Payment methods table
-      this.sectionTitle('Payment methods'),
-      this.dataTable(
-        [{ text: 'Method' }, { text: 'Count', align: 'right' }, { text: 'Revenue', align: 'right' }],
-        payments.map(([k, v]) => [this.cap(k.replace(/_/g, ' ')), String(v.count), this.rp(v.revenue)]),
-        ['*', 80, 130],
-        'No payments in this period.',
-      ),
-
-      // Top services table
-      this.sectionTitle('Top services'),
-      this.dataTable(
-        [{ text: 'Service' }, { text: 'Qty', align: 'right' }, { text: 'Revenue', align: 'right' }],
-        (s.byService ?? []).map((sv) => [sv.name, String(sv.quantity), this.rp(sv.revenue)]),
-        ['*', 80, 130],
-        'No service data in this period.',
-      ),
-
-      // Daily sales table
-      this.sectionTitle('Daily sales'),
-      this.dataTable(
-        [{ text: 'Date' }, { text: 'Orders', align: 'right' }, { text: 'Paid', align: 'right' }, { text: 'Revenue', align: 'right' }],
-        input.daily.map((d) => [d.date, String(d.orders), String(d.paidOrders), this.rp(d.revenue)]),
-        ['*', 70, 70, 130],
-        'No sales in this period.',
-      ),
-
-      // Shifts table
-      this.sectionTitle('Shifts (register sessions)'),
-      this.dataTable(
-        [
-          { text: 'Operator' },
-          { text: 'Opened' },
-          { text: 'Status' },
-          { text: 'Sales', align: 'right' },
-          { text: 'Expected', align: 'right' },
-          { text: 'Counted', align: 'right' },
-          { text: 'Variance', align: 'right' },
-        ],
-        input.shifts.map((sh) => [
-          (sh.operator as string) ?? '—',
-          sh.openedAt ? this.fmtDate(sh.openedAt as string) : '—',
-          this.cap((sh.status as string) ?? '—'),
-          sh.totalSales != null ? this.rp(sh.totalSales) : '—',
-          sh.expected != null ? this.rp(sh.expected) : '—',
-          sh.counted != null ? this.rp(sh.counted) : '—',
-          sh.variance != null
-            ? { text: this.rp(sh.variance), color: sh.variance < 0 ? RED : sh.variance > 0 ? GREEN : SLATE }
-            : '—',
-        ]),
-        ['*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
-        'No shifts in this period.',
-      ),
     ];
+
+    if (on('kpis')) content.push(this.kpiBand(s));
+
+    if (on('businessUnit')) {
+      content.push(
+        this.sectionTitle('Revenue by business unit'),
+        {
+          columns: [
+            this.buCard('AIRE · Car Wash', bu('AIRE'), '#0369a1'),
+            { width: 12, text: '' },
+            this.buCard('LEAD · Detailing', bu('LEAD'), '#7c3aed'),
+          ],
+          margin: [0, 0, 0, 16],
+        },
+      );
+    }
+
+    if (on('revenueChart')) {
+      content.push(
+        this.sectionTitle(revenueChart.length > 31 ? 'Revenue trend (monthly)' : 'Revenue trend (daily)'),
+        this.hBarChart(revenueChart, BRAND, 320),
+      );
+    }
+
+    if (on('paymentMix')) {
+      content.push(
+        this.sectionTitle('Payment mix (by revenue)'),
+        this.hBarChart(paymentChart, '#0369a1', 320),
+        { text: '', margin: [0, 0, 0, 8] },
+        this.sectionTitle('Payment methods'),
+        this.dataTable(
+          [{ text: 'Method' }, { text: 'Count', align: 'right' }, { text: 'Revenue', align: 'right' }],
+          payments.map(([k, v]) => [this.cap(k.replace(/_/g, ' ')), String(v.count), this.rp(v.revenue)]),
+          ['*', 80, 130],
+          'No payments in this period.',
+        ),
+      );
+    }
+
+    if (on('topServices')) {
+      content.push(
+        this.sectionTitle('Top services'),
+        this.dataTable(
+          [{ text: 'Service' }, { text: 'Qty', align: 'right' }, { text: 'Revenue', align: 'right' }],
+          (s.byService ?? []).map((sv) => [sv.name, String(sv.quantity), this.rp(sv.revenue)]),
+          ['*', 80, 130],
+          'No service data in this period.',
+        ),
+      );
+    }
+
+    if (on('dailySales')) {
+      content.push(
+        this.sectionTitle('Daily sales'),
+        this.dataTable(
+          [{ text: 'Date' }, { text: 'Orders', align: 'right' }, { text: 'Paid', align: 'right' }, { text: 'Revenue', align: 'right' }],
+          input.daily.map((d) => [d.date, String(d.orders), String(d.paidOrders), this.rp(d.revenue)]),
+          ['*', 70, 70, 130],
+          'No sales in this period.',
+        ),
+      );
+    }
+
+    if (on('shifts')) {
+      content.push(
+        this.sectionTitle('Shifts (register sessions)'),
+        this.dataTable(
+          [
+            { text: 'Operator' },
+            { text: 'Opened' },
+            { text: 'Status' },
+            { text: 'Sales', align: 'right' },
+            { text: 'Expected', align: 'right' },
+            { text: 'Counted', align: 'right' },
+            { text: 'Variance', align: 'right' },
+          ],
+          input.shifts.map((sh) => [
+            (sh.operator as string) ?? '—',
+            sh.openedAt ? this.fmtDate(sh.openedAt as string) : '—',
+            this.cap((sh.status as string) ?? '—'),
+            sh.totalSales != null ? this.rp(sh.totalSales) : '—',
+            sh.expected != null ? this.rp(sh.expected) : '—',
+            sh.counted != null ? this.rp(sh.counted) : '—',
+            sh.variance != null
+              ? { text: this.rp(sh.variance), color: sh.variance < 0 ? RED : sh.variance > 0 ? GREEN : SLATE }
+              : '—',
+          ]),
+          ['*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
+          'No shifts in this period.',
+        ),
+      );
+    }
 
     return {
       pageSize: 'A4',

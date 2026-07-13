@@ -121,16 +121,17 @@ export class CustomerService {
    *
    * Requirements: 34.1
    */
-  async getProfile(customerId: string): Promise<CustomerProfile> {
-    // Fetch customer base info
+  async getProfile(tenantId: string, customerId: string): Promise<CustomerProfile> {
+    // Fetch customer base info — tenant-scoped so a customer id from another
+    // tenant cannot be read (returns 404 rather than leaking PII).
     const customerResult = await this.pool.query<{
       id: string;
       name: string;
       phone: string;
       created_at: string;
     }>(
-      `SELECT id, name, phone, created_at::text FROM customers WHERE id = $1`,
-      [customerId],
+      `SELECT id, name, phone, created_at::text FROM customers WHERE id = $1 AND tenant_id = $2`,
+      [customerId, tenantId],
     );
 
     if (customerResult.rows.length === 0) {
@@ -309,11 +310,11 @@ export class CustomerService {
    * Get customer analytics: visit frequency, spending patterns, service preferences, segmentation.
    * Requirements: 34.1, 34.2
    */
-  async getAnalytics(customerId: string): Promise<CustomerAnalytics> {
-    // Verify customer exists
+  async getAnalytics(tenantId: string, customerId: string): Promise<CustomerAnalytics> {
+    // Verify customer exists AND belongs to the caller's tenant (no cross-tenant read).
     const customerCheck = await this.pool.query(
-      `SELECT id FROM customers WHERE id = $1`,
-      [customerId],
+      `SELECT id FROM customers WHERE id = $1 AND tenant_id = $2`,
+      [customerId, tenantId],
     );
     if (customerCheck.rows.length === 0) {
       throw new NotFoundException(`Customer not found: ${customerId}`);
@@ -442,6 +443,7 @@ export class CustomerService {
    * Scoped to tenant via RLS.
    */
   async searchCustomers(
+    tenantId: string,
     search: string,
     page = 1,
     pageSize = 20,
@@ -450,11 +452,12 @@ export class CustomerService {
     const effectivePageSize = Math.min(pageSize, 100);
     const searchPattern = `%${search.trim()}%`;
 
+    // tenant_id predicate keeps the search within the caller's own customers.
     const countResult = await this.pool.query<{ total: number }>(
       `SELECT COUNT(*)::int AS total
       FROM customers
-      WHERE name ILIKE $1 OR phone ILIKE $1`,
-      [searchPattern],
+      WHERE tenant_id = $2 AND (name ILIKE $1 OR phone ILIKE $1)`,
+      [searchPattern, tenantId],
     );
 
     const total = countResult.rows[0]?.total ?? 0;
@@ -479,10 +482,10 @@ export class CustomerService {
         (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits,
         (SELECT MAX(o.created_at)::text FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS last_visit_date
       FROM customers c
-      WHERE c.name ILIKE $1 OR c.phone ILIKE $1
+      WHERE c.tenant_id = $4 AND (c.name ILIKE $1 OR c.phone ILIKE $1)
       ORDER BY c.name ASC
       LIMIT $2 OFFSET $3`,
-      [searchPattern, effectivePageSize, offset],
+      [searchPattern, effectivePageSize, offset, tenantId],
     );
 
     return {
@@ -576,7 +579,8 @@ export class CustomerService {
     pageSize = 50,
     search?: string,
     outletIds?: string[] | null,
-  ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; totalVisits: number }[]; total: number }> {
+    segment?: 'members' | 'non',
+  ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; totalVisits: number; membershipStatus: string | null }[]; total: number }> {
     const effectivePageSize = Math.min(Math.max(pageSize, 1), 200);
     const offset = (Math.max(page, 1) - 1) * effectivePageSize;
     // Columns are qualified with the `c` alias so the same WHERE works for both
@@ -594,22 +598,38 @@ export class CustomerService {
       );
       params.push(outletIds);
     }
+    // Segment filter: a "member" is any customer with a membership record (any status);
+    // "non" is a customer with none. Applied server-side so it spans all pages.
+    if (segment === 'members') {
+      where.push(`EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id)`);
+    } else if (segment === 'non') {
+      where.push(`NOT EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id)`);
+    }
     const whereSql = where.join(' AND ');
     const countRes = await this.pool.query<{ total: number }>(
       `SELECT COUNT(*)::int AS total FROM customers c WHERE ${whereSql}`,
       params,
     );
     const total = countRes.rows[0]?.total ?? 0;
-    const rowsRes = await this.pool.query<{ id: string; name: string; phone: string; created_at: string; total_visits: number }>(
+    const rowsRes = await this.pool.query<{ id: string; name: string; phone: string; created_at: string; total_visits: number; membership_status: string | null }>(
       `SELECT c.id, c.name, c.phone, c.created_at::text,
-              (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits
+              (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits,
+              -- Derived member indicator: a date-expired-but-still-'active' row does NOT count as active
+              -- (mirrors the benefit-read lifecycle rule). NULL = never a member.
+              (CASE
+                 WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'active' AND m.end_date >= CURRENT_DATE) THEN 'active'
+                 WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'suspended') THEN 'suspended'
+                 WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'grace') THEN 'grace'
+                 WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id) THEN 'inactive'
+                 ELSE NULL
+               END) AS membership_status
        FROM customers c WHERE ${whereSql}
        ORDER BY c.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, effectivePageSize, offset],
     );
     return {
-      customers: rowsRes.rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, createdAt: r.created_at, totalVisits: r.total_visits })),
+      customers: rowsRes.rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, createdAt: r.created_at, totalVisits: r.total_visits, membershipStatus: r.membership_status })),
       total,
     };
   }

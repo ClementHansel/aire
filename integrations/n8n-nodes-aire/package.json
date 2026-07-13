@@ -1,0 +1,34 @@
+{
+  "name": "n8n-nodes-aire",
+  "version": "0.1.0",
+  "description": "AIRE bridge nodes for n8n — scoped context, tenant-keyed LLM, gated tools, and WhatsApp send. Lets you build drag-and-drop AIRE agents.",
+  "keywords": [
+    "n8n-community-node-package",
+    "aire",
+    "whatsapp",
+    "agent"
+  ],
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Aire/Aire.node.js"
+    ]
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "devDependencies": {
+    "n8n-workflow": "^2.16.0",
+    "typescript": "^6.0.3"
+  }
+}

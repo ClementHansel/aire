@@ -5,7 +5,7 @@
   "description": "AIRE Operations Platform - Multi-tenant POS and operations management system",
   "packageManager": "pnpm@9.15.4",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "pnpm --filter @aire/backend dev & pnpm --filter @aire/frontend dev",
@@ -19,13 +19,22 @@
     "db:migrate:status": "pnpm --filter @aire/database migrate:status",
     "db:seed": "pnpm --filter @aire/database seed",
     "db:seed:history": "pnpm --filter @aire/database seed:history",
-    "db:reset": "pnpm --filter @aire/database reset"
+    "db:reset": "pnpm --filter @aire/database reset",
+    "demo:cctv": "bash scripts/demo-cctv.sh",
+    "demo:cctv:down": "bash scripts/demo-cctv.sh down"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.6.0",
+    "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.9.1",
-    "typescript-eslint": "^8.62.0"
+    "prettier": "^3.9.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10",
+      "ip": "npm:neoip@^3.1.0"
+    }
   }
 }

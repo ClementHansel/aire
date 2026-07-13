@@ -2,6 +2,10 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { Pool } from 'pg';
 import { ServiceDTO, CreateServiceRequest, ServiceCategory, BusinessUnit } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { generateInStoreBarcode } from '../barcode/barcode.util';
+
+/** Postgres unique-violation error code. */
+const PG_UNIQUE_VIOLATION = '23505';
 
 /**
  * Query parameters for listing services.
@@ -12,6 +16,8 @@ export interface ServiceQueryParams {
   businessUnit?: BusinessUnit;
   outletId?: string;
   active?: boolean;
+  /** Exclude retail products (category='product'); they have their own API. */
+  excludeProducts?: boolean;
 }
 
 /**
@@ -51,27 +57,122 @@ export class ServiceService {
         ? dto.isMainService
         : dto.category === ServiceCategory.CarWash;
 
-    const result = await this.pool.query(
-      `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, created_at`,
-      [
-        tenantId,
-        dto.outletId ?? null,
-        dto.name,
-        dto.category,
-        businessUnit,
-        dto.price,
-        dto.isActive ?? true,
-        isMainService,
-        dto.sortOrder ?? 0,
-        dto.categoryId ?? null,
-        dto.brandId ?? null,
-        dto.outletIds && dto.outletIds.length > 0 ? dto.outletIds : null,
-      ],
-    );
+    const barcode = await this.resolveBarcodeOnCreate(tenantId, dto);
 
-    return this.mapRow(result.rows[0]);
+    try {
+      const result = await this.pool.query(
+        `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, created_at`,
+        [
+          tenantId,
+          dto.outletId ?? null,
+          dto.name,
+          dto.category,
+          businessUnit,
+          dto.price,
+          dto.isActive ?? true,
+          isMainService,
+          dto.sortOrder ?? 0,
+          dto.categoryId ?? null,
+          dto.brandId ?? null,
+          dto.outletIds && dto.outletIds.length > 0 ? dto.outletIds : null,
+          barcode,
+        ],
+      );
+
+      return this.mapRow(result.rows[0]);
+    } catch (err) {
+      throw this.mapBarcodeError(err);
+    }
+  }
+
+  /**
+   * Determine the barcode for a new row: use the provided one (trimmed, or null
+   * when blank); if none was given and the feature's autoGenerate is on for a
+   * product, mint a unique EAN-13 in-store barcode. When the feature is off this
+   * is a no-op, so existing product creation is unaffected.
+   */
+  private async resolveBarcodeOnCreate(tenantId: string, dto: CreateServiceRequest): Promise<string | null> {
+    const provided = this.cleanBarcode(dto.barcode);
+    if (provided) return provided;
+    if (dto.category !== ServiceCategory.Product) return null;
+
+    const cfg = await this.getBarcodeConfig(tenantId);
+    if (!cfg.enabled || !cfg.autoGenerate) return null;
+
+    // Base the sequence on how many services already carry a barcode, then walk
+    // forward until we find one free of collision (defends against gaps/races).
+    const countRes = await this.pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM services WHERE tenant_id = $1 AND barcode IS NOT NULL`,
+      [tenantId],
+    );
+    let seq = parseInt(countRes.rows[0]?.n ?? '0', 10);
+    for (let attempt = 0; attempt < 1000; attempt++) {
+      const candidate = generateInStoreBarcode(seq + attempt);
+      const exists = await this.pool.query(
+        `SELECT 1 FROM services WHERE tenant_id = $1 AND barcode = $2 LIMIT 1`,
+        [tenantId, candidate],
+      );
+      if (exists.rows.length === 0) return candidate;
+    }
+    return null;
+  }
+
+  private cleanBarcode(value: string | null | undefined): string | null {
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  /** Read the tenant's barcode feature config (defaults OFF) without a hard dep. */
+  private async getBarcodeConfig(tenantId: string): Promise<{ enabled: boolean; autoGenerate: boolean }> {
+    const r = await this.pool.query<{ cfg: { enabled?: boolean; autoGenerate?: boolean } | null }>(
+      `SELECT settings->'barcode' AS cfg FROM tenants WHERE id = $1`,
+      [tenantId],
+    );
+    const cfg = r.rows[0]?.cfg;
+    return { enabled: cfg?.enabled ?? false, autoGenerate: cfg?.autoGenerate ?? false };
+  }
+
+  /** Turn a Postgres unique-barcode violation into a friendly 400. */
+  private mapBarcodeError(err: unknown): unknown {
+    if (
+      err && typeof err === 'object' && 'code' in err &&
+      (err as { code?: string }).code === PG_UNIQUE_VIOLATION &&
+      String((err as { constraint?: string }).constraint ?? '').includes('barcode')
+    ) {
+      return new BadRequestException('Barcode already in use');
+    }
+    return err;
+  }
+
+  /**
+   * Resolve a product/service by its barcode within a tenant. Optionally scope to
+   * an outlet, honoring the same outlet visibility rules as findAll. Returns null
+   * when nothing matches.
+   */
+  async findByBarcode(tenantId: string, code: string, outletId?: string): Promise<ServiceDTO | null> {
+    const barcode = this.cleanBarcode(code);
+    if (!barcode) return null;
+
+    const conditions = ['tenant_id = $1', 'barcode = $2', 'is_active = true'];
+    const values: unknown[] = [tenantId, barcode];
+    if (outletId) {
+      conditions.push(
+        `(outlet_id = $3 OR (outlet_id IS NULL AND (outlet_ids IS NULL OR outlet_ids = '{}')) OR $3 = ANY(outlet_ids))`,
+      );
+      values.push(outletId);
+    }
+    const result = await this.pool.query(
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode
+       FROM services
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY category, sort_order, name
+       LIMIT 1`,
+      values,
+    );
+    return result.rows.length > 0 ? this.mapRow(result.rows[0]) : null;
   }
 
   /**
@@ -89,6 +190,10 @@ export class ServiceService {
     if (params.category) {
       conditions.push(`category = $${paramIndex}`);
       values.push(params.category);
+      paramIndex++;
+    } else if (params.excludeProducts) {
+      conditions.push(`category <> $${paramIndex}`);
+      values.push(ServiceCategory.Product);
       paramIndex++;
     }
 
@@ -116,7 +221,7 @@ export class ServiceService {
     const whereClause = conditions.join(' AND ');
 
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode
        FROM services
        WHERE ${whereClause}
        ORDER BY category, sort_order, name`,
@@ -133,7 +238,7 @@ export class ServiceService {
    */
   async findOne(tenantId: string, id: string): Promise<ServiceDTO> {
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode
        FROM services
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -236,19 +341,30 @@ export class ServiceService {
       paramIndex++;
     }
 
+    if (dto.barcode !== undefined) {
+      setClauses.push(`barcode = $${paramIndex}`);
+      values.push(this.cleanBarcode(dto.barcode));
+      paramIndex++;
+    }
+
     if (setClauses.length === 0) {
       return this.findOne(tenantId, id);
     }
 
     setClauses.push(`updated_at = NOW()`);
 
-    const result = await this.pool.query(
-      `UPDATE services
-       SET ${setClauses.join(', ')}
-       WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-       RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids`,
-      [...values, id, tenantId],
-    );
+    let result;
+    try {
+      result = await this.pool.query(
+        `UPDATE services
+         SET ${setClauses.join(', ')}
+         WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
+         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode`,
+        [...values, id, tenantId],
+      );
+    } catch (err) {
+      throw this.mapBarcodeError(err);
+    }
 
     return this.mapRow(result.rows[0]);
   }
@@ -333,6 +449,7 @@ export class ServiceService {
       isActive: row.is_active,
       isMainService: row.is_main_service,
       sortOrder: row.sort_order,
+      barcode: row.barcode ?? null,
     };
   }
 }

@@ -28,9 +28,12 @@ const mockRedis = {
   set: vi.fn(),
   del: vi.fn(),
 };
-vi.mock('ioredis', () => ({
-  default: vi.fn(() => mockRedis),
-}));
+// A regular function (not an arrow) so `new Redis()` is constructable under
+// vitest 4; returning an object from the constructor yields the mock.
+vi.mock('ioredis', () => {
+  const Redis = vi.fn(function () { return mockRedis; });
+  return { default: Redis, Redis };
+});
 
 describe('AuthService', () => {
   let authService: AuthService;

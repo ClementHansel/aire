@@ -45,8 +45,13 @@ interface OrderItemRow {
  * - Status filtering
  * - Text search (order_number, customer_name, customer_phone via ILIKE)
  * - Date range filtering
- * - Outlet filtering (for Tenant_Owner use case; Cashier scoping is handled by RLS)
+ * - Tenant scoping (always applied, from params.tenantId)
+ * - Outlet filtering (role-resolved set from ScopeService; null = all branches)
  * - Pagination
+ *
+ * Isolation note: callers reach this only through OrderController, which uses
+ * JwtAuthGuard (not RlsContextGuard). Tenant/branch scoping is therefore enforced
+ * in buildWhereClause(), NOT by Postgres RLS.
  *
  * Requirements: 20.2, 20.3, 20.4, 20.5, 20.6
  */
@@ -164,6 +169,14 @@ export class OrderListService {
     const conditions: string[] = [];
     const queryParams: unknown[] = [];
     let paramIdx = 1;
+
+    // Tenant scope — ALWAYS applied. This endpoint uses only JwtAuthGuard (no
+    // RlsContextGuard), so tenant isolation is enforced here explicitly rather
+    // than by Postgres RLS. Without this, an owner/super-admin with no outletId
+    // filter would list across tenants.
+    conditions.push(`o.tenant_id = $${paramIdx}`);
+    queryParams.push(params.tenantId);
+    paramIdx++;
 
     // Status filter
     if (params.status) {

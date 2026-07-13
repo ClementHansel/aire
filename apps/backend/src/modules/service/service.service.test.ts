@@ -21,6 +21,7 @@ describe('ServiceService', () => {
     category_id: null,
     brand_id: null,
     outlet_ids: null,
+    barcode: null,
     created_at: new Date('2024-06-15T10:00:00.000Z'),
   };
 
@@ -57,6 +58,7 @@ describe('ServiceService', () => {
         categoryId: null,
         brandId: null,
         outletIds: null,
+        barcode: null,
       });
 
       expect(mockPool.query).toHaveBeenCalledTimes(1);
@@ -88,6 +90,8 @@ describe('ServiceService', () => {
 
     it('should default is_main_service to false for product category', async () => {
       const productRow = { ...mockServiceRow, category: 'product', is_main_service: false };
+      // Product create reads the barcode feature config first (feature off → cfg null).
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cfg: null }] });
       mockPool.query.mockResolvedValueOnce({ rows: [productRow] });
 
       await service.create('tenant-001', {
@@ -96,8 +100,8 @@ describe('ServiceService', () => {
         price: 15000,
       });
 
-      const [, params] = mockPool.query.mock.calls[0];
-      expect(params[7]).toBe(false); // is_main_service defaults to false for product
+      const insertCall = mockPool.query.mock.calls.find((c: unknown[]) => String(c[0]).includes('INSERT INTO services'))!;
+      expect(insertCall[1][7]).toBe(false); // is_main_service defaults to false for product
     });
 
     it('should default is_main_service to false for add_on category', async () => {
@@ -131,6 +135,8 @@ describe('ServiceService', () => {
 
     it('should set outlet_id when provided', async () => {
       const row = { ...mockServiceRow, outlet_id: 'outlet-001' };
+      // Product create reads the barcode feature config first (feature off → cfg null).
+      mockPool.query.mockResolvedValueOnce({ rows: [{ cfg: null }] });
       mockPool.query.mockResolvedValueOnce({ rows: [row] });
 
       await service.create('tenant-001', {
@@ -140,8 +146,8 @@ describe('ServiceService', () => {
         outletId: 'outlet-001',
       });
 
-      const [, params] = mockPool.query.mock.calls[0];
-      expect(params[1]).toBe('outlet-001');
+      const insertCall = mockPool.query.mock.calls.find((c: unknown[]) => String(c[0]).includes('INSERT INTO services'))!;
+      expect(insertCall[1][1]).toBe('outlet-001');
     });
 
     it('should throw BadRequestException for invalid category', async () => {

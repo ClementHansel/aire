@@ -75,7 +75,8 @@ describe('SettingsService', () => {
 
       const result = await service.getSettings('tenant-001');
 
-      expect(result.llm_provider).toBe('hermes_ai');
+      // Default provider is 'openrouter' (see DEFAULT_AUTOMATION_SETTINGS).
+      expect(result.llm_provider).toBe('openrouter');
       expect(result.whatsapp_phone).toBeNull();
       expect(result.automation_toggles.campaigns).toBe(false);
       expect(result.approval_modes.campaigns).toBe('approval_required');
@@ -95,7 +96,7 @@ describe('SettingsService', () => {
 
       const result = await service.getSettings('tenant-001');
 
-      expect(result.ai_enabled).toBe(false);
+      expect(result.ai_enabled).toBe(true); // brain on by default (graceful fallback)
       expect(result.automation_toggles.campaigns).toBe(false);
     });
   });
@@ -284,7 +285,7 @@ describe('SettingsService', () => {
 
       const result = await service.initializeDefaults('tenant-001');
 
-      expect(result.ai_enabled).toBe(false);
+      expect(result.ai_enabled).toBe(true); // brain on by default; action toggles stay off
       expect(result.automation_toggles.campaigns).toBe(false);
       expect(result.automation_toggles.retention_offers).toBe(false);
       expect(result.automation_toggles.pricing_suggestions).toBe(false);

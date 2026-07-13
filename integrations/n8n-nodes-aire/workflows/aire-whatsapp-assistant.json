@@ -1,0 +1,155 @@
+{
+  "id": "aireWhatsappRef01",
+  "name": "AIRE — WhatsApp Assistant (reference)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aire-whatsapp",
+        "responseMode": "onReceived",
+        "responseCode": 200,
+        "options": {}
+      },
+      "id": "a1000000-0000-0000-0000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "aire-whatsapp"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Lift the AIRE webhook payload to the item root so downstream node defaults work.\nreturn $json.body;"
+      },
+      "id": "a1000000-0000-0000-0000-000000000002",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getContext",
+        "baseUrl": "={{ $json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $json.bridgeToken }}",
+        "fromPhone": "={{ $json.message.from }}"
+      },
+      "id": "a1000000-0000-0000-0000-000000000003",
+      "name": "Get Context",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "runTool",
+        "baseUrl": "={{ $('Normalize').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Normalize').item.json.bridgeToken }}",
+        "toolName": "get_queue_status",
+        "parameters": "={}"
+      },
+      "id": "a1000000-0000-0000-0000-000000000004",
+      "name": "Queue Snapshot",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [660, 300],
+      "notes": "Example tool call: pulls the live queue via the gated bridge tool API. Swap for any AIRE tool (find_customer, list_services, …)."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Assemble the system prompt from the tenant persona + scoped context + the live\n// queue snapshot, then carry the routing fields forward for the LLM, Route, Send\n// and Escalate nodes.\nconst norm = $('Normalize').item.json;\nconst ctx = $('Get Context').item.json;\nconst queue = ($json && $json.data) || null; // Queue Snapshot tool result\nconst p = ctx.persona || {};\nconst agent = (p.agents && p.agents[0]) || null;\nconst personaName = agent ? agent.name : 'Assistant';\nconst rupiah = (n) => 'Rp ' + Number(n || 0).toLocaleString('id-ID');\nconst lines = [];\nlines.push('You are ' + (agent ? agent.name + ', a ' + String(agent.role || '').replace(/_/g, ' ') : 'a helpful assistant') + ' for an Indonesian car wash & detailing business.');\nif (agent && agent.prompt) lines.push(agent.prompt);\nif (p.basePrompt) lines.push(p.basePrompt);\nlines.push(\"Reply in the customer's language (Bahasa Indonesia by default). Be concise and warm. Use only the data provided below; never invent prices, order numbers or membership details.\");\nlines.push('IF you cannot help, the customer is angry, asks to speak with a human, or requests something outside your knowledge or another person\\'s data: reply with EXACTLY the token [[ESCALATE]] and nothing else.');\nif (p.productKnowledge) lines.push('\\nBUSINESS KNOWLEDGE:\\n' + p.productKnowledge);\nconst pub = ctx.publicInfo || {};\nif (pub.services && pub.services.length) lines.push('\\nSERVICES & PRICES:\\n' + pub.services.slice(0, 40).map((s) => '- [' + s.unit + '] ' + s.name + ': ' + rupiah(s.price)).join('\\n'));\nif (pub.plans && pub.plans.length) lines.push('\\nMEMBERSHIP PLANS:\\n' + pub.plans.map((m) => '- ' + m.name + ': ' + rupiah(m.price) + ' (' + m.durationMonths + ' mo)').join('\\n'));\nif (queue && typeof queue.ordersWaitingToday === 'number') lines.push('\\nLIVE QUEUE: ' + queue.ordersWaitingToday + ' order(s) waiting today.');\nif (ctx.customer && ctx.context) {\n  const c = ctx.context;\n  lines.push('\\nCUSTOMER: ' + ctx.customer.name + '.');\n  if (c.memberships && c.memberships.length) lines.push('Memberships: ' + c.memberships.map((m) => m.plan + ' (' + m.status + ', ends ' + m.endDate + ')').join('; '));\n  if (c.activeQueue) lines.push('Current queue: order ' + c.activeQueue.orderNumber + ', position ' + c.activeQueue.position + ', status ' + c.activeQueue.status + '.');\n  if (c.recentOrders && c.recentOrders.length) lines.push('Recent orders: ' + c.recentOrders.map((o) => o.orderNumber + ' (' + o.status + ')').join('; '));\n} else {\n  lines.push('\\nThe sender is not a registered customer yet — share only public info and invite them to visit or register.');\n}\nconst messages = [\n  { role: 'system', content: lines.join('\\n') },\n  { role: 'user', content: norm.message.text },\n];\nreturn { callbackBaseUrl: norm.callbackBaseUrl, bridgeToken: norm.bridgeToken, message: norm.message, personaName, messages };"
+      },
+      "id": "a1000000-0000-0000-0000-000000000005",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "llm",
+        "baseUrl": "={{ $('Build Prompt').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Build Prompt').item.json.bridgeToken }}",
+        "messages": "={{ $json.messages }}",
+        "temperature": 0.4,
+        "maxTokens": 500
+      },
+      "id": "a1000000-0000-0000-0000-000000000006",
+      "name": "LLM Reply",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "escalate-cond",
+              "leftValue": "={{ $json.content }}",
+              "rightValue": "[[ESCALATE]]",
+              "operator": { "type": "string", "operation": "contains" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-0000-0000-000000000007",
+      "name": "Route (escalate?)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "escalate",
+        "baseUrl": "={{ $('Build Prompt').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Build Prompt').item.json.bridgeToken }}",
+        "fromPhone": "={{ $('Build Prompt').item.json.message.from }}",
+        "reason": "AI could not resolve the request — handed to a human."
+      },
+      "id": "a1000000-0000-0000-0000-000000000008",
+      "name": "Escalate",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [1560, 180]
+    },
+    {
+      "parameters": {
+        "operation": "sendWhatsapp",
+        "baseUrl": "={{ $('Build Prompt').item.json.callbackBaseUrl }}",
+        "bridgeToken": "={{ $('Build Prompt').item.json.bridgeToken }}",
+        "to": "={{ $('Build Prompt').item.json.message.from }}",
+        "text": "={{ $json.content }}",
+        "persona": "={{ $('Build Prompt').item.json.personaName }}"
+      },
+      "id": "a1000000-0000-0000-0000-000000000009",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-aire.aire",
+      "typeVersion": 1,
+      "position": [1560, 420]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
+    "Normalize": { "main": [[{ "node": "Get Context", "type": "main", "index": 0 }]] },
+    "Get Context": { "main": [[{ "node": "Queue Snapshot", "type": "main", "index": 0 }]] },
+    "Queue Snapshot": { "main": [[{ "node": "Build Prompt", "type": "main", "index": 0 }]] },
+    "Build Prompt": { "main": [[{ "node": "LLM Reply", "type": "main", "index": 0 }]] },
+    "LLM Reply": { "main": [[{ "node": "Route (escalate?)", "type": "main", "index": 0 }]] },
+    "Route (escalate?)": {
+      "main": [
+        [{ "node": "Escalate", "type": "main", "index": 0 }],
+        [{ "node": "Send WhatsApp", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

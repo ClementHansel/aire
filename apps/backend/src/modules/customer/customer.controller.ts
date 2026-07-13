@@ -10,9 +10,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JWTPayload, Role } from '@aire/shared';
-import { Roles, CurrentUser } from '../../common/decorators';
+import { Roles, CurrentUser, RequirePermission } from '../../common/decorators';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { RolesGuard } from '../../common/guards';
+import { RolesGuard, PermissionsGuard } from '../../common/guards';
 import { CustomerService } from './customer.service';
 import { ScopeService } from '../../common/scope/scope.service';
 
@@ -26,7 +26,13 @@ import { ScopeService } from '../../common/scope/scope.service';
  *
  * Requirements: 34.1, 34.2, 34.3
  */
+// Class-level guards ensure NO route is reachable without authentication + a role
+// check. Previously the search/profile/analytics routes carried only a @Roles()
+// decorator with no guard attached, so the decorator was inert and those endpoints
+// were unauthenticated. Per-method @Roles() still sets the minimum role.
 @Controller('api/customers')
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+@RequirePermission('customers.read')
 export class CustomerController {
   constructor(
     private readonly customerService: CustomerService,
@@ -37,7 +43,6 @@ export class CustomerController {
    * GET /api/customers/list — paginated CRM customer list (tenant-scoped).
    */
   @Get('list')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.OutletAdmin)
   async list(
     @CurrentUser() user: JWTPayload,
@@ -45,6 +50,7 @@ export class CustomerController {
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('outletId') outletId?: string,
+    @Query('segment') segment?: string,
   ) {
     const ids = await this.scope.resolveOutletIds(user, outletId);
     return this.customerService.listCustomers(
@@ -53,6 +59,7 @@ export class CustomerController {
       pageSizeStr ? parseInt(pageSizeStr, 10) : 50,
       search,
       ids,
+      segment === 'members' || segment === 'non' ? segment : undefined,
     );
   }
 
@@ -60,8 +67,8 @@ export class CustomerController {
    * PUT /api/customers/:id — edit a customer (CRM).
    */
   @Put(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.OutletAdmin)
+  @RequirePermission('customers.write')
   async update(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { name?: string; phone?: string }) {
     return this.customerService.updateCustomer(user.tenant_id, id, body);
   }
@@ -70,8 +77,8 @@ export class CustomerController {
    * DELETE /api/customers/:id — remove a customer (CRM).
    */
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TenantOwner)
+  @RequirePermission('customers.write')
   async remove(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
     await this.customerService.deleteCustomer(user.tenant_id, id);
     return { ok: true };
@@ -83,8 +90,9 @@ export class CustomerController {
    * Accessible by Tenant_Owner and Outlet_Admin.
    */
   @Get()
-  @Roles(Role.PlatformSuperAdmin, Role.TenantOwner, Role.OutletAdmin)
+  @Roles(Role.OutletAdmin)
   async searchCustomers(
+    @CurrentUser() user: JWTPayload,
     @Query('search') search?: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
@@ -103,7 +111,7 @@ export class CustomerController {
       throw new BadRequestException('pageSize must be a positive integer');
     }
 
-    return this.customerService.searchCustomers(search.trim(), page, pageSize);
+    return this.customerService.searchCustomers(user.tenant_id, search.trim(), page, pageSize);
   }
 
   /**
@@ -112,12 +120,12 @@ export class CustomerController {
    * Accessible by Tenant_Owner and Outlet_Admin.
    */
   @Get(':id/profile')
-  @Roles(Role.PlatformSuperAdmin, Role.TenantOwner, Role.OutletAdmin)
-  async getProfile(@Param('id') id: string) {
+  @Roles(Role.OutletAdmin)
+  async getProfile(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
     if (!id || id.trim().length === 0) {
       throw new BadRequestException('Customer ID is required');
     }
-    return this.customerService.getProfile(id);
+    return this.customerService.getProfile(user.tenant_id, id);
   }
 
   /**
@@ -126,11 +134,11 @@ export class CustomerController {
    * Accessible by Tenant_Owner and Outlet_Admin.
    */
   @Get(':id/analytics')
-  @Roles(Role.PlatformSuperAdmin, Role.TenantOwner, Role.OutletAdmin)
-  async getAnalytics(@Param('id') id: string) {
+  @Roles(Role.OutletAdmin)
+  async getAnalytics(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
     if (!id || id.trim().length === 0) {
       throw new BadRequestException('Customer ID is required');
     }
-    return this.customerService.getAnalytics(id);
+    return this.customerService.getAnalytics(user.tenant_id, id);
   }
 }

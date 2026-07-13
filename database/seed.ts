@@ -31,7 +31,7 @@ async function seed(): Promise<void> {
       INSERT INTO tenants (id, name, slug, plan, status, settings)
       VALUES (
         '11111111-1111-1111-1111-111111111111',
-        'Demo Car Wash',
+        'Airin Demo',
         'demo-car-wash',
         'standard',
         'active',
@@ -126,6 +126,23 @@ async function seed(): Promise<void> {
       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_active = true;
     `, [tenantId, demoPasswordHash, demoPinHash]);
     console.log('  ✓ Users created (4) — owner@demo.com / cashier1@sudirman.demo.com / superadmin@aire.com (all password123)');
+
+    // HR employees linked to login accounts, so the employee self-service
+    // dashboard (/employee) works out of the box for the demo cashier & admin.
+    await client.query(`
+      INSERT INTO employees (id, tenant_id, outlet_id, name, role, phone, email, salary, status, hired_at, employment_type, user_id)
+      VALUES
+        ('eeeeeeee-0000-0000-0000-000000000001', $1, '22222222-2222-2222-2222-222222222201', 'Cashier Budi', 'Cashier', '081200000003', 'cashier1@sudirman.demo.com', 4500000, 'active', '2025-01-15', 'permanent', '33333333-3333-3333-3333-333333333303'),
+        ('eeeeeeee-0000-0000-0000-000000000002', $1, '22222222-2222-2222-2222-222222222201', 'Admin Sudirman', 'Outlet Admin', '081200000002', 'admin@sudirman.demo.com', 7000000, 'active', '2024-09-01', 'permanent', '33333333-3333-3333-3333-333333333302')
+      ON CONFLICT (id) DO NOTHING;
+    `, [tenantId]);
+    // Give the cashier a shift today so "Today's shift" + clock in/out demo works.
+    await client.query(`
+      INSERT INTO employee_schedules (tenant_id, employee_id, outlet_id, work_date, start_time, end_time)
+      VALUES ($1, 'eeeeeeee-0000-0000-0000-000000000001', '22222222-2222-2222-2222-222222222201', CURRENT_DATE, '08:00', '17:00')
+      ON CONFLICT (employee_id, work_date) DO NOTHING;
+    `, [tenantId]);
+    console.log('  ✓ Employees linked to logins (2) + today shift for cashier');
 
     // Services
     await client.query(`

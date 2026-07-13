@@ -1,9 +1,11 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
+import { JWTPayload, MembershipStatus } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { MembershipStatus } from '@aire/shared';
 import { Membership, MembershipRow } from './interfaces';
 import { MembershipPlanService } from './membership-plan.service';
+import { MembershipLifecycleService } from './membership-lifecycle.service';
+import { PosCheckoutService } from '../order/pos-checkout.service';
 
 export interface RenewalResult {
   type: 'extension' | 'new_parallel';
@@ -15,12 +17,105 @@ export class MembershipRenewalService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly planService: MembershipPlanService,
+    private readonly lifecycle: MembershipLifecycleService,
+    private readonly checkout: PosCheckoutService,
   ) {}
+
+  /** All of a customer's memberships (for the extend-vs-new decision). */
+  async getCustomerMemberships(tenantId: string, customerId: string): Promise<Membership[]> {
+    const r = await this.pool.query<MembershipRow>(
+      `SELECT * FROM memberships WHERE tenant_id = $1 AND customer_id = $2 ORDER BY created_at DESC`,
+      [tenantId, customerId],
+    );
+    return r.rows.map((row) => this.mapRowToEntity(row));
+  }
+
+  /**
+   * Orchestrated renewal from a membership id: creates a renewal pack order
+   * (the fee) and applies the renewal (extend if active/grace, new if revoked).
+   * Returns the unpaid order for the caller to collect payment on.
+   */
+  async renewByMembershipId(user: JWTPayload, membershipId: string, planId: string) {
+    const m = await this.pool.query<{ customer_id: string }>(
+      `SELECT customer_id FROM memberships WHERE id = $1 AND tenant_id = $2`,
+      [membershipId, user.tenant_id],
+    );
+    if (m.rows.length === 0) throw new NotFoundException('Membership not found');
+    const customerId = m.rows[0]!.customer_id;
+
+    const cust = await this.pool.query<{ name: string; phone: string }>(
+      `SELECT name, phone FROM customers WHERE id = $1 AND tenant_id = $2`,
+      [customerId, user.tenant_id],
+    );
+    const plan = await this.planService.getPlan(planId);
+
+    // Create the renewal fee order + a PENDING renewal. The membership is NOT
+    // extended here — that happens in applyRenewal() once the order is paid.
+    const client = await this.checkout.db.connect();
+    let order: { id: string; orderNumber: string; total: number };
+    try {
+      await client.query('BEGIN');
+      order = await this.checkout.createPackOrder(client, user, {
+        customerId,
+        customerName: cust.rows[0]?.name ?? 'Member',
+        customerPhone: cust.rows[0]?.phone ?? '',
+        total: plan.price,
+        note: `Renewal: ${plan.name}`,
+      });
+      await client.query(
+        `INSERT INTO membership_renewals (tenant_id, order_id, membership_id, plan_id)
+         VALUES ($1, $2, $3, $4) ON CONFLICT (order_id) DO NOTHING`,
+        [user.tenant_id, order.id, membershipId, planId],
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return { order, membershipId };
+  }
+
+  /**
+   * Apply a pending renewal once its fee order is paid — extends (active/grace)
+   * or creates a new membership (revoked). Idempotent; refuses if unpaid.
+   */
+  async applyRenewal(tenantId: string, orderId: string) {
+    const ren = await this.pool.query<{ id: string; membership_id: string; plan_id: string; applied: boolean }>(
+      `SELECT id, membership_id, plan_id, applied FROM membership_renewals WHERE order_id = $1 AND tenant_id = $2`,
+      [orderId, tenantId],
+    );
+    const row = ren.rows[0];
+    if (!row) throw new NotFoundException('No renewal found for this order');
+    if (row.applied) return { alreadyApplied: true };
+
+    const ord = await this.pool.query<{ status: string; customer_id: string | null }>(
+      `SELECT o.status, m.customer_id
+       FROM orders o
+       JOIN memberships m ON m.id = $2
+       WHERE o.id = $1 AND o.tenant_id = $3`,
+      [orderId, row.membership_id, tenantId],
+    );
+    const o = ord.rows[0];
+    if (!o) throw new NotFoundException('Order not found');
+    if (!['paid', 'confirmed', 'completed'].includes(o.status)) {
+      throw new BadRequestException('Renewal payment is not confirmed yet.');
+    }
+
+    const existing = await this.getCustomerMemberships(tenantId, o.customer_id!);
+    const result = await this.renewMembership(o.customer_id!, row.plan_id, orderId, existing);
+    await this.pool.query(`UPDATE membership_renewals SET applied = true, applied_at = NOW() WHERE id = $1`, [row.id]);
+    return { type: result.type, membershipId: result.membership.id };
+  }
 
   /**
    * Processes a membership renewal/purchase for an existing member.
-   * - Same plan → extends end_date from current expiry, retains start_date
-   * - Different plan → creates new independent parallel membership
+   * - Same plan, still renewable (active or within the grace window) → extend
+   *   end_date from current expiry and return the row to active.
+   * - Different plan, or a revoked/absent membership → new independent membership
+   *   (a revoked membership is past the renewable window, so it cannot be extended).
    */
   async renewMembership(
     customerId: string,
@@ -30,26 +125,28 @@ export class MembershipRenewalService {
   ): Promise<RenewalResult> {
     const plan = await this.planService.getPlan(planId);
 
-    // Find an existing ACTIVE membership with the same plan_id
+    // Renewable = same plan AND still active or in the grace window (not revoked).
     const samePlanMembership = existingMemberships.find(
-      (m) => m.planId === planId && m.status === 'active',
+      (m) => m.planId === planId && (m.status === 'active' || m.status === 'grace'),
     );
 
     if (samePlanMembership) {
-      // Same plan renewal: extend end_date from current expiry
+      // Extend end_date from current expiry and clear any grace/revoked markers.
       const newEndDate = this.addMonths(new Date(samePlanMembership.endDate), plan.durationMonths);
 
       const result = await this.pool.query<MembershipRow>(
         `UPDATE memberships
-         SET end_date = $1, updated_at = NOW()
+         SET end_date = $1, status = 'active', grace_until = NULL, revoked_at = NULL, updated_at = NOW()
          WHERE id = $2
          RETURNING *`,
         [newEndDate, samePlanMembership.id],
       );
+      const row = result.rows[0]!;
+      await this.lifecycle.recordEvent(this.pool, row.tenant_id, row.id, 'renewed', { orderId, planId, type: 'extension' }, null);
 
       return {
         type: 'extension',
-        membership: this.mapRowToEntity(result.rows[0]!),
+        membership: this.mapRowToEntity(row),
       };
     }
 
@@ -67,10 +164,12 @@ export class MembershipRenewalService {
        RETURNING *`,
       [customerId, planId, startDate, endDate, plan.maxUses, plan.dailyLimit, orderId],
     );
+    const row = result.rows[0]!;
+    await this.lifecycle.recordEvent(this.pool, row.tenant_id, row.id, 'renewed', { orderId, planId, type: 'new_parallel' }, null);
 
     return {
       type: 'new_parallel',
-      membership: this.mapRowToEntity(result.rows[0]!),
+      membership: this.mapRowToEntity(row),
     };
   }
 

@@ -1,11 +1,12 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { LLMRouterService, ChatMessage, LLMErrorResponse } from './llm-router.service';
+import { LLMRouterService, ChatMessage } from './llm-router.service';
 import { AgentService } from './agent.service';
 import { MonitoringService } from '../monitoring/monitoring.service';
 import { SettingsService } from '../settings/settings.service';
 import type { ToolDefinition } from './agent.types';
+import { runToolLoop, renderToolCatalog, TOOL_PROTOCOL, type ToolCatalogEntry } from './tool-loop';
 
 export interface ChatTurnResult {
   sessionId: string;
@@ -100,46 +101,29 @@ export class AgentChatService {
       })),
     ];
 
-    const toolsUsed: { tool: string; ok: boolean }[] = [];
-    let finalReply = '';
-
-    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-      const res = await this.llm.chat(tenantId, messages, { temperature: 0.4, max_tokens: 1200, outletId: outletId ?? null });
-      if ('error' in res && (res as LLMErrorResponse).error === true) {
-        finalReply = `I could not reach the AI model. Please check the AI connection in Settings. (${(res as LLMErrorResponse).errorMessage})`;
-        break;
-      }
-
-      const action = this.parseAction(res.content);
-
-      if (action.kind === 'final') {
-        finalReply = action.message;
-        break;
-      }
-
-      // Tool call
-      messages.push({ role: 'assistant', content: res.content });
-      const invocation = {
-        toolName: action.tool,
-        tenantId,
-        outletId: outletId ?? '',
-        parameters: action.parameters ?? {},
-        reasoning: action.reasoning ?? 'Requested during chat',
-        confidence: 0.7,
-      };
-      const result = await this.agent.executeTool(invocation);
-      toolsUsed.push({ tool: action.tool, ok: result.success });
-      await this.saveMessage(sid, 'tool', JSON.stringify(result).slice(0, 8000), action.tool);
-      messages.push({
-        role: 'user',
-        content: `TOOL_RESULT (${action.tool}): ${JSON.stringify(result).slice(0, 8000)}`,
-      });
-
-      if (iter === MAX_TOOL_ITERATIONS - 1) {
-        finalReply = 'I gathered the information but ran out of reasoning steps. Please ask me to continue.';
-      }
-    }
-
+    // Drive the shared brain loop with the FULL business tool registry.
+    const loop = await runToolLoop({
+      llm: this.llm,
+      tenantId,
+      outletId: outletId ?? null,
+      messages,
+      maxIterations: MAX_TOOL_ITERATIONS,
+      temperature: 0.4,
+      maxTokens: 1200,
+      execute: (tool, parameters, reasoning) =>
+        this.agent.executeTool({
+          toolName: tool,
+          tenantId,
+          outletId: outletId ?? '',
+          parameters,
+          reasoning: reasoning ?? 'Requested during chat',
+          confidence: 0.7,
+        }),
+      onToolResult: (tool, result) => this.saveMessage(sid, 'tool', JSON.stringify(result).slice(0, 8000), tool),
+    });
+    const toolsUsed = loop.toolsUsed;
+    let finalReply = loop.reply ?? '';
+    if (loop.llmError) finalReply = 'I could not reach the AI model. Please check the AI connection in Settings.';
     if (!finalReply) finalReply = 'Sorry, I was unable to produce a response.';
 
     await this.saveMessage(sid, 'assistant', finalReply);
@@ -160,69 +144,20 @@ export class AgentChatService {
   // ─── Internals ────────────────────────────────────────────────────────────
 
   private systemPrompt(tools: ToolDefinition[]): string {
-    const catalog = tools
-      .map((t) => {
-        const props = (t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
-        const params = Object.keys(props).join(', ') || 'none';
-        const tag = t.readOnly ? '[read]' : '[action]';
-        return `- ${t.name} ${tag}: ${t.description} (params: ${params})`;
-      })
-      .join('\n');
+    const catalog: ToolCatalogEntry[] = tools.map((t) => {
+      const props = (t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+      return { name: t.name, description: t.description, params: Object.keys(props), readOnly: t.readOnly };
+    });
 
     return `You are AIRE Assistant, an AI operations co-pilot for a car wash / service business.
 You can SEE the business through read tools and OPERATE it through action tools.
 Action tools may require owner approval depending on settings; if a tool returns "proposal_created", tell the user it is awaiting approval.
+Format currency as Rp.
 
 Available tools:
-${catalog}
+${renderToolCatalog(catalog)}
 
-PROTOCOL — you MUST reply with a single JSON object and nothing else:
-- To call a tool: {"action":"tool","tool":"<name>","parameters":{...},"reasoning":"<why>"}
-- To answer the user: {"action":"final","message":"<your answer in the user's language>"}
-
-Rules:
-- Prefer read tools to ground answers in real data before responding.
-- Use at most a few tool calls, then give a clear, concise final answer.
-- Never invent numbers; rely on tool results. Format currency as Rp.
-- When a TOOL_RESULT message is provided, use it to decide the next step.`;
-  }
-
-  private parseAction(content: string): {
-    kind: 'tool' | 'final';
-    tool: string;
-    parameters?: Record<string, unknown>;
-    reasoning?: string;
-    message: string;
-  } {
-    let txt = (content ?? '').trim();
-    // Strip markdown code fences
-    const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fence) txt = fence[1]!.trim();
-    // Extract the first {...} block
-    const brace = txt.indexOf('{');
-    const lastBrace = txt.lastIndexOf('}');
-    if (brace !== -1 && lastBrace > brace) {
-      const candidate = txt.slice(brace, lastBrace + 1);
-      try {
-        const parsed = JSON.parse(candidate);
-        if (parsed.action === 'tool' && typeof parsed.tool === 'string') {
-          return {
-            kind: 'tool',
-            tool: parsed.tool,
-            parameters: parsed.parameters ?? {},
-            reasoning: parsed.reasoning,
-            message: '',
-          };
-        }
-        if (parsed.action === 'final' && typeof parsed.message === 'string') {
-          return { kind: 'final', tool: '', message: parsed.message };
-        }
-      } catch {
-        /* fall through to plain text */
-      }
-    }
-    // Not JSON — treat the whole content as the final answer.
-    return { kind: 'final', tool: '', message: txt || 'OK' };
+${TOOL_PROTOCOL}`;
   }
 
   private async createSession(tenantId: string, userId: string | null, firstMessage: string): Promise<string> {
