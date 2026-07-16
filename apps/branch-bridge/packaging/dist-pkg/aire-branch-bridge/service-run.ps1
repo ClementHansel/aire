@@ -21,6 +21,7 @@ $env:AIRE_SIMULATE    = if ($cfg.simulate) { 'true' } else { 'false' }
 if ($cfg.mqttUrl)   { $env:AIRE_MQTT_URL = $cfg.mqttUrl }
 if ($cfg.ffmpegPath) { $env:FFMPEG_PATH = $cfg.ffmpegPath }
 if ($cfg.healthPort) { $env:BRIDGE_HEALTH_PORT = "$($cfg.healthPort)" }
+if ($cfg.webcamDevice) { $env:AIRE_WEBCAM_DEVICE = $cfg.webcamDevice }
 
 # Prefer the node bundled/pinned at install time; fall back to PATH.
 $node = if ($cfg.nodePath -and (Test-Path $cfg.nodePath)) { $cfg.nodePath } else { 'node' }
@@ -29,10 +30,11 @@ $logDir = Join-Path $Root 'logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log = Join-Path $logDir 'agent.log'
 
-"$(Get-Date -Format o) [service-run] starting agent (simulate=$($env:AIRE_SIMULATE))" | Add-Content $log
+Add-Content -Path $log -Encoding utf8 -Value "$(Get-Date -Format o) [service-run] starting agent (simulate=$($env:AIRE_SIMULATE))"
 
 # Run in the foreground; the Scheduled Task's restart policy handles crashes.
-& $node (Join-Path $Root 'dist\index.js') *>> $log
+# Merge all streams and append as UTF-8 so the log stays human-readable.
+& $node (Join-Path $Root 'dist\index.js') 2>&1 | Out-File -FilePath $log -Append -Encoding utf8
 $code = $LASTEXITCODE
-"$(Get-Date -Format o) [service-run] agent exited with code $code" | Add-Content $log
+Add-Content -Path $log -Encoding utf8 -Value "$(Get-Date -Format o) [service-run] agent exited with code $code"
 exit $code

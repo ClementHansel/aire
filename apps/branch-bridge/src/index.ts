@@ -1,7 +1,8 @@
 import http from 'node:http';
 import { loadConfig, type BridgeConfig } from './config';
 import { CloudClient } from './cloud-client';
-import { runScan, enumerateNvrChannels, injectRtspCreds, detectNvrVendor } from './scanner';
+import { runScan, injectRtspCreds, detectNvrVendor } from './scanner';
+import { resolveNvrChannels } from './nvr-provision';
 import { Streamer } from './streamer';
 import { MqttBridge } from './mqtt-bridge';
 import type {
@@ -145,30 +146,33 @@ async function main(): Promise<void> {
             (cp.ip_address as string) ||
             (cp.ip as string) ||
             '';
-          const username = (cp.username as string) || '';
-          const password = (cp.password as string) || '';
           const ffprobePath = config.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
-          let channels: unknown[] = [];
-          if (host && username) {
-            channels = await enumerateNvrChannels({
-              host,
-              port: typeof cp.onvif_port === 'number' ? cp.onvif_port : 80,
-              rtspPort: typeof cp.rtsp_port === 'number' ? cp.rtsp_port : 554,
-              username,
-              password,
-              vendor: detectNvrVendor((cp.vendor as string) || (cp.manufacturer as string)),
-              ffprobePath,
-            });
-          }
+          const vendor = detectNvrVendor((cp.vendor as string) || (cp.manufacturer as string));
+          // Tries the provided creds + common defaults, and (if nothing streams)
+          // best-effort enables RTSP/ONVIF over ISAPI/CGI, then re-enumerates.
+          const res = host
+            ? await resolveNvrChannels({
+                host,
+                port: typeof cp.onvif_port === 'number' ? cp.onvif_port : 80,
+                rtspPort: typeof cp.rtsp_port === 'number' ? cp.rtsp_port : 554,
+                vendor,
+                provided: { username: cp.username as string, password: cp.password as string },
+                ffprobePath,
+              })
+            : { channels: [], username: '', password: '', autoEnabled: false };
           cloud.emit('configure:result', {
             deviceId: req.deviceId,
             ok: true,
-            // Never echo the password back to the cloud.
+            // Return the WORKING credential so the cloud stores the right one
+            // (it is encrypted at rest and never returned to the browser after).
             connection_params: {
               ...cp,
-              password: undefined,
-              channels,
-              channel_count: channels.length,
+              vendor,
+              username: res.username || undefined,
+              password: res.password || undefined,
+              channels: res.channels,
+              channel_count: res.channels.length,
+              auto_enabled: res.autoEnabled,
             },
           });
         } else {

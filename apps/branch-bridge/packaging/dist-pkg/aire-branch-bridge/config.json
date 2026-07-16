@@ -1,1 +1,0 @@
-{ "cloudUrl":"http://localhost:54000", "token":"fe80dc27c83ad4a00f751c058843e5c38f82a8b9bc88c417", "simulate":true, "mqttUrl":"mqtt://localhost:1883", "ffmpegPath":"ffmpeg", "healthPort":4010, "nodePath":"node" }

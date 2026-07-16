@@ -8,17 +8,24 @@
 #   .\install.ps1 -Token "<pairing-token>" -CloudUrl "https://app.useairin.id"
 #
 # Options:
-#   -Token       (required) the branch bridge pairing token from the dashboard
-#   -CloudUrl    the Aire cloud URL (default https://app.useairin.id)
-#   -Simulate    install in hardware-free demo mode (ffmpeg test source)
-#   -MqttUrl     local MQTT broker for bay controllers (default mqtt://localhost:1883)
-#   -InstallDir  install location (default %ProgramData%\AireBranchBridge)
+#   -Token        (required) the branch bridge pairing token from the dashboard
+#   -CloudUrl     the Aire cloud URL (default https://app.useairin.id)
+#   -Simulate     install in hardware-free demo mode (ffmpeg test source)
+#   -Webcam       demo mode: relay THIS PC's built-in webcam as a camera. Makes
+#                 ffmpeg mandatory. Pair with the "Use this PC's webcam" toggle in
+#                 the dashboard (which registers a `webcam:` camera on this bridge).
+#   -WebcamDevice pin the capture device name (else auto-detected). Windows dshow
+#                 name, e.g. "Integrated Camera".
+#   -MqttUrl      local MQTT broker for bay controllers (default mqtt://localhost:1883)
+#   -InstallDir   install location (default %ProgramData%\AireBranchBridge)
 # =============================================================================
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$Token,
   [string]$CloudUrl = 'https://app.useairin.id',
   [switch]$Simulate,
+  [switch]$Webcam,
+  [string]$WebcamDevice = '',
   [string]$MqttUrl = 'mqtt://localhost:1883',
   [int]$HealthPort = 4010,
   [string]$InstallDir = (Join-Path $env:ProgramData 'AireBranchBridge')
@@ -51,6 +58,10 @@ function Resolve-Ffmpeg {
   if (Test-Path $bundled) { return $bundled }
   $onPath = Get-Command ffmpeg -ErrorAction SilentlyContinue
   if ($onPath) { return $onPath.Source }
+  # -Webcam relies on ffmpeg to capture the camera, so make it a hard requirement.
+  if ($Webcam) {
+    throw "ffmpeg is required for -Webcam but was not found. Install it (winget install Gyan.FFmpeg), then re-run."
+  }
   Write-Warning "ffmpeg not found. Live/recorded CCTV will not work until it is installed (winget install Gyan.FFmpeg). IoT bay sensors work without it."
   return 'ffmpeg'
 }
@@ -83,16 +94,17 @@ if (-not (Test-Path (Join-Path $InstallDir 'node_modules'))) {
 
 # --- Write config.json ---
 $config = [ordered]@{
-  cloudUrl   = $CloudUrl
-  token      = $Token
-  simulate   = [bool]$Simulate
-  mqttUrl    = $MqttUrl
-  ffmpegPath = $ffmpegPath
-  healthPort = $HealthPort
-  nodePath   = $nodePath
+  cloudUrl     = $CloudUrl
+  token        = $Token
+  simulate     = [bool]$Simulate
+  mqttUrl      = $MqttUrl
+  ffmpegPath   = $ffmpegPath
+  healthPort   = $HealthPort
+  nodePath     = $nodePath
+  webcamDevice = $WebcamDevice
 }
 $config | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir 'config.json') -Encoding UTF8
-Write-Host "Wrote config.json (cloud=$CloudUrl simulate=$([bool]$Simulate))."
+Write-Host "Wrote config.json (cloud=$CloudUrl simulate=$([bool]$Simulate) webcam=$([bool]$Webcam))."
 
 # --- Register the auto-start / auto-restart Scheduled Task (runs as SYSTEM) ---
 $runner = Join-Path $InstallDir 'service-run.ps1'

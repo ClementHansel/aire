@@ -70,6 +70,8 @@ export class MqttBridge {
   private client: MqttClient | null = null;
   private connected = false;
   private simTimer: NodeJS.Timeout | null = null;
+  /** Suppress repeated connect-error spam when no local broker is present. */
+  private errorLogged = false;
   /** Last tenant/outlet observed from a sensor topic, used as a publish fallback. */
   private lastScope: { tenantId: string; outletId: string } | null = null;
 
@@ -97,6 +99,7 @@ export class MqttBridge {
 
       client.on('connect', () => {
         this.connected = true;
+        this.errorLogged = false;
         console.log(`[MqttBridge] connected to ${this.options.mqttUrl}`);
         client.subscribe(SENSOR_SUBSCRIPTION, { qos: 1 }, (err) => {
           if (err) {
@@ -113,7 +116,16 @@ export class MqttBridge {
       });
 
       client.on('error', (err) => {
-        console.error('[MqttBridge] error:', err.message);
+        // Local MQTT is OPTIONAL (bay IoT only; ESP32s can publish straight to
+        // the cloud instead). Log the first failure once, then stay quiet so a
+        // branch with no local broker isn't flooded every reconnect.
+        if (!this.errorLogged) {
+          this.errorLogged = true;
+          console.warn(
+            `[MqttBridge] no local broker at ${this.options.mqttUrl} (${err.message}). ` +
+              `This is fine unless this branch has MQTT bay sensors — continuing without it.`,
+          );
+        }
         if (!this.connected) reject(err);
       });
 

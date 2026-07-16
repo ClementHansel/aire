@@ -174,8 +174,10 @@ export function DeviceScanWizard({ tenantId, outlets, initialOutletId, onClose, 
       await api.post(`/discovery/${tenantId}/devices/${device.device_id}/confirm`, {
         assigned_outlet_id: a.outletId,
         ...(a.bayId ? { assigned_bay_id: a.bayId } : {}),
-        // NVR channels are enumerated over ONVIF using these credentials.
-        ...(device.device_type === 'nvr' && c?.username ? { credentials: c } : {}),
+        // NVR channels / authenticated IP cameras use these credentials.
+        ...((device.device_type === 'nvr' || device.device_type === 'camera') && c?.username
+          ? { credentials: c }
+          : {}),
       });
       setResults((r) => ({ ...r, [device.device_id]: 'ok' }));
     } catch (err) {
@@ -347,6 +349,10 @@ export function DeviceScanWizard({ tenantId, outlets, initialOutletId, onClose, 
       {/* ── Step 4 ── */}
       {step === 4 && (
         <div className="space-y-4" data-testid="wizard-step-4">
+          <p className="rounded-lg border border-border bg-surface-sunken/40 px-3 py-2 text-xs text-text-muted">
+            Tip: an NVR loads all its cameras once you enter its login. Cloud-only cameras
+            (Ring, Nest, Wyze) can&apos;t be added — they have no local stream to relay.
+          </p>
           <div className="max-h-72 space-y-2 overflow-y-auto">
             {scanned.map((d) => {
               const a = assign[d.device_id] ?? { outletId, bayId: '' };
@@ -381,9 +387,11 @@ export function DeviceScanWizard({ tenantId, outlets, initialOutletId, onClose, 
                       {res === 'ok' ? 'Configured' : 'Configure'}
                     </button>
                   </div>
-                  {d.device_type === 'nvr' && (
+                  {(d.device_type === 'nvr' || d.device_type === 'camera') && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className="text-[11px] text-text-muted">NVR login (to load its cameras):</span>
+                      <span className="text-[11px] text-text-muted">
+                        {d.device_type === 'nvr' ? 'NVR login (to load its cameras):' : 'Camera login (if required):'}
+                      </span>
                       <input
                         className="input-field w-28 py-1.5 text-xs"
                         placeholder="username"

@@ -45,6 +45,13 @@ sudo ./install.sh --token "<pairing-token>" --cloud-url "https://app.useairin.id
 Add `-Simulate` / `--simulate` to run a hardware-free demo (ffmpeg test pattern,
 fake devices) to validate connectivity before real cameras are wired.
 
+**Demo with this PC's built-in webcam** (no IP camera): tick *"Use this PC's
+built-in webcam as a camera"* when adding the bridge in the dashboard, then add
+`-Webcam` / `--webcam` to the install command. The agent captures its own webcam
+(auto-detects the device; pin one with `-WebcamDevice "Integrated Camera"` /
+`--webcam-device /dev/video0`). Requires ffmpeg. Great for a 2-laptop demo where
+one laptop plays the branch.
+
 Within ~15 seconds the branch shows **Online** in the dashboard. Then use
 **Search devices** to discover + configure cameras and controllers, and the
 **CCTV** page to view live / recorded video.

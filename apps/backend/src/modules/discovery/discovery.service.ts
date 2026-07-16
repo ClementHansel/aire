@@ -500,12 +500,30 @@ export class DiscoveryService implements OnModuleInit {
   ): Promise<string | null> {
     if (!this.pool || !device.assigned_outlet_id) return null;
 
-    const rtspUrl = String(device.connection_params.rtsp_url ?? '');
+    const rawUrl = String(device.connection_params.rtsp_url ?? '');
     const bridgeId = await this.resolveBridgeId(device.assigned_outlet_id);
 
+    // An authenticated IP/WiFi camera: keep creds OUT of the stored URL and
+    // encrypt them into playback_meta (same as NVR channels) so the relay can
+    // re-authenticate on reconnect without the password living in the DB.
+    const username = (device.connection_params.username as string) || '';
+    const password = (device.connection_params.password as string) || '';
+    const rtspUrl = username ? rawUrl.replace(/^(rtsp:\/\/)(?:[^@/]*@)/i, '$1') : rawUrl;
+    let playbackMeta = '{}';
+    if (username) {
+      try {
+        playbackMeta = JSON.stringify({
+          host: device.ip_address,
+          cred_enc: encrypt(JSON.stringify({ username, password })),
+        });
+      } catch {
+        /* SETTINGS_ENCRYPTION_KEY missing — fall back to creds in the URL below */
+      }
+    }
+
     const inserted = await this.pool.query<{ id: string }>(
-      `INSERT INTO cameras (tenant_id, outlet_id, bridge_id, name, rtsp_url, device_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO cameras (tenant_id, outlet_id, bridge_id, name, rtsp_url, device_id, playback_meta)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         tenantId,
@@ -514,12 +532,18 @@ export class DiscoveryService implements OnModuleInit {
         device.suggested_label,
         rtspUrl,
         device.device_id,
+        playbackMeta,
       ],
     );
     const cameraId = inserted.rows[0]!.id;
 
     if (this.bridgeDispatch && rtspUrl) {
-      this.bridgeDispatch.dispatchStreamStart(device.assigned_outlet_id, { cameraId, rtspUrl });
+      this.bridgeDispatch.dispatchStreamStart(device.assigned_outlet_id, {
+        cameraId,
+        rtspUrl,
+        username: username || undefined,
+        password: password || undefined,
+      });
     }
     this.logger.log(`Registered camera ${cameraId} from device ${device.device_id}`);
     return cameraId;
