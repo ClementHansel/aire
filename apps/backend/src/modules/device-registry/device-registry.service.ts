@@ -464,10 +464,14 @@ export class DeviceRegistryService implements OnModuleInit, OnModuleDestroy {
   async setStatusForBridge(bridgeId: string, status: DeviceStatus): Promise<void> {
     if (!bridgeId) return;
     try {
+      // $2 is cast explicitly: it's used both as the assigned value and in a
+      // comparison, and without a cast Postgres can't deduce one type for the
+      // param ("inconsistent types deduced for parameter $2") — the UPDATE then
+      // errors and device status never flips.
       await this.pool.query(
         `UPDATE branch_devices
-         SET status = $2,
-             last_seen_at = CASE WHEN $2 = 'online' THEN NOW() ELSE last_seen_at END,
+         SET status = $2::varchar,
+             last_seen_at = CASE WHEN $2::varchar = 'online' THEN NOW() ELSE last_seen_at END,
              updated_at = NOW()
          WHERE bridge_id = $1`,
         [bridgeId, status],
