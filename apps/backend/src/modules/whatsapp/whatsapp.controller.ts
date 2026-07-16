@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, UseGuards, HttpCode, HttpStatus,
+  Controller, Get, Post, Patch, Body, Param, Query, UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
@@ -36,12 +36,14 @@ export class WhatsappWebhookController {
 export class WhatsappController {
   constructor(private readonly service: WhatsappService) {}
 
-  @Get('status') async status(@CurrentUser() u: JWTPayload) {
-    const s = await this.service.status(u.tenant_id);
-    return { ...s, mock: this.service.isMock() };
+  // outletId (optional) targets a specific branch line when per-branch WhatsApp
+  // is on; omit it for the tenant central line.
+  @Get('status') async status(@CurrentUser() u: JWTPayload, @Query('outletId') outletId?: string) {
+    const s = await this.service.status(u.tenant_id, outletId || null);
+    return { ...s, mock: await this.service.isMockEnabled(u.tenant_id) };
   }
-  @Post('connect') @HttpCode(HttpStatus.OK) connect(@CurrentUser() u: JWTPayload) { return this.service.ensureSession(u.tenant_id); }
-  @Get('qr') qr(@CurrentUser() u: JWTPayload) { return this.service.qr(u.tenant_id); }
+  @Post('connect') @HttpCode(HttpStatus.OK) connect(@CurrentUser() u: JWTPayload, @Body() body: { outletId?: string }) { return this.service.ensureSession(u.tenant_id, body?.outletId || null); }
+  @Get('qr') qr(@CurrentUser() u: JWTPayload, @Query('outletId') outletId?: string) { return this.service.qr(u.tenant_id, outletId || null); }
 
   /** Simulation bypass: outbound sends captured while WAHA_MOCK is on. */
   @Get('mock-outbox') mockOutbox(@CurrentUser() u: JWTPayload) { return this.service.listMockOutbox(u.tenant_id); }
@@ -83,8 +85,8 @@ export class WhatsappController {
   /** Demo helper: inject a simulated inbound message (so the log works without a live phone). */
   @Post('simulate-inbound')
   @HttpCode(HttpStatus.OK)
-  async simulate(@CurrentUser() u: JWTPayload, @Body() body: { from: string; name?: string; text: string }) {
-    await this.service.handleInbound({ tenantId: u.tenant_id, from: body.from, name: body.name, text: body.text });
+  async simulate(@CurrentUser() u: JWTPayload, @Body() body: { from: string; name?: string; text: string; outletId?: string }) {
+    await this.service.handleInbound({ tenantId: u.tenant_id, outletId: body.outletId || null, from: body.from, name: body.name, text: body.text });
     return { ok: true };
   }
 }

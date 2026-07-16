@@ -8,8 +8,14 @@ interface AgentConfig {
   basePrompt: string | null; productKnowledge: string | null; skills: string | null;
   escalationNumber: string | null; maxMessagesPerDay: number;
   waProvider: 'waha' | 'kapso'; waNumber: string | null; wahaSession: string | null;
-  kapsoConfigured: boolean; aiReplyEnabled: boolean;
+  kapsoConfigured: boolean; aiReplyEnabled: boolean; perBranchWaEnabled: boolean; wahaMockEnabled: boolean;
   aiEnabled: boolean; llmProvider: 'openrouter' | 'hermes_ai'; llmKeyConfigured: boolean;
+}
+
+interface BranchWaConfig {
+  outletId: string; name: string;
+  waProvider: 'waha' | 'kapso'; waNumber: string | null; wahaSession: string | null;
+  kapsoConfigured: boolean; configured: boolean;
 }
 
 export default function AiAgentPage() {
@@ -40,7 +46,7 @@ export default function AiAgentPage() {
         basePrompt: cfg.basePrompt, productKnowledge: cfg.productKnowledge, skills: cfg.skills,
         escalationNumber: cfg.escalationNumber, maxMessagesPerDay: cfg.maxMessagesPerDay,
         waProvider: cfg.waProvider, waNumber: cfg.waNumber, wahaSession: cfg.wahaSession,
-        aiReplyEnabled: cfg.aiReplyEnabled, ...(kapsoApiKey ? { kapsoApiKey } : {}),
+        aiReplyEnabled: cfg.aiReplyEnabled, perBranchWaEnabled: cfg.perBranchWaEnabled, wahaMockEnabled: cfg.wahaMockEnabled, ...(kapsoApiKey ? { kapsoApiKey } : {}),
         aiEnabled: cfg.aiEnabled, llmProvider: cfg.llmProvider, ...(llmApiKey ? { llmApiKey } : {}),
       });
       setCfg(updated); setKapsoApiKey(''); setLlmApiKey(''); setSaved(true);
@@ -129,6 +135,18 @@ export default function AiAgentPage() {
         {/* Connection */}
         <div className="card">
           <h2 className="section-title mb-3">{t('dash.aiAgent.connection', 'WhatsApp connection')}</h2>
+
+          {/* Simulation mode (per-tenant WAHA mock) */}
+          <div className="flex items-center justify-between rounded-lg bg-surface-sunken p-3 mb-4">
+            <div className="pr-3">
+              <p className="text-sm font-medium text-text-primary">{t('dash.aiAgent.mockMode', 'Simulation mode')}</p>
+              <p className="text-xs text-text-muted mt-0.5">{t('dash.aiAgent.mockModeDesc', 'Test the WhatsApp flow without a real number: outgoing messages are captured (see the Conversation Log “Mock outbox”) instead of being sent. Turn off to use the real connection.')}</p>
+            </div>
+            <button onClick={() => set('wahaMockEnabled', !cfg.wahaMockEnabled)} className={`relative shrink-0 w-12 h-7 rounded-full transition-colors ${cfg.wahaMockEnabled ? 'bg-amber-500' : 'bg-gray-300'}`} title={t('dash.aiAgent.mockModeToggle', 'Toggle simulation mode')}>
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform ${cfg.wahaMockEnabled ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+
           <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-4">
             {(['waha', 'kapso'] as const).map((p) => (
               <button key={p} onClick={() => set('waProvider', p)} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${cfg.waProvider === p ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
@@ -149,6 +167,23 @@ export default function AiAgentPage() {
               <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.waNumber', 'WhatsApp number')}</label><input className="input-field" value={cfg.waNumber ?? ''} onChange={(e) => set('waNumber', e.target.value)} placeholder="628xxxx" /></div>
               <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kapsoApiKey', 'Kapso API key')} {cfg.kapsoConfigured && <span className="text-xs text-green-600">({t('dash.aiAgent.configured', 'configured')})</span>}</label><input className="input-field" type="password" value={kapsoApiKey} onChange={(e) => setKapsoApiKey(e.target.value)} placeholder={cfg.kapsoConfigured ? t('dash.aiAgent.kapsoKeep', '•••••••• (leave blank to keep)') : t('dash.aiAgent.kapsoEnter', 'Enter Kapso API key')} /></div>
             </div>
+          )}
+        </div>
+
+        {/* Per-branch WhatsApp */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="section-title">{t('dash.aiAgent.perBranch', 'Separate WhatsApp per branch')}</h2>
+            <button onClick={() => set('perBranchWaEnabled', !cfg.perBranchWaEnabled)} className={`relative w-12 h-7 rounded-full transition-colors ${cfg.perBranchWaEnabled ? 'bg-primary-500' : 'bg-gray-300'}`} title={t('dash.aiAgent.perBranchToggle', 'Enable per-branch WhatsApp')}>
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform ${cfg.perBranchWaEnabled ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          <p className="section-description">{t('dash.aiAgent.perBranchDesc', 'Give each branch its own WhatsApp number & QR. Escalation number, AI model, prompt, knowledge and the daily cap stay shared across the whole business. A branch with no number set is simply not connected — it does not fall back to the main line. The built-in agent uses the branch line; n8n flows and broadcasts use the main line.')}</p>
+          {cfg.perBranchWaEnabled && (
+            <>
+              <p className="text-xs text-text-muted mt-2 mb-3">{t('dash.aiAgent.perBranchSaveHint', 'Save this page first to turn the feature on, then configure each branch below.')}</p>
+              <PerBranchWhatsApp />
+            </>
           )}
         </div>
 
@@ -189,22 +224,23 @@ export default function AiAgentPage() {
   );
 }
 
-function WahaConnect() {
+function WahaConnect({ outletId }: { outletId?: string }) {
   const { t } = useI18n();
   const [status, setStatus] = useState('');
   const [qr, setQr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const suffix = outletId ? `?outletId=${encodeURIComponent(outletId)}` : '';
 
   const refresh = async () => {
-    try { const s = await api.get<{ status: string }>('/whatsapp/status'); setStatus(s.status); } catch { setStatus('unreachable'); }
+    try { const s = await api.get<{ status: string }>(`/whatsapp/status${suffix}`); setStatus(s.status); } catch { setStatus('unreachable'); }
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [outletId]);
 
   const connect = async () => {
     setLoading(true);
     try {
-      await api.post('/whatsapp/connect', {});
-      const res = await api.get<{ qr: string | null; status: string }>('/whatsapp/qr');
+      await api.post('/whatsapp/connect', outletId ? { outletId } : {});
+      const res = await api.get<{ qr: string | null; status: string }>(`/whatsapp/qr${suffix}`);
       setQr(res.qr); setStatus(res.status);
     } catch { setStatus('unreachable'); }
     finally { setLoading(false); }
@@ -226,6 +262,111 @@ function WahaConnect() {
         </div>
       )}
       <p className="text-xs text-text-muted mt-2">{t('dash.aiAgent.wahaHint', 'Save your number & session above first. The QR comes from your WAHA service; once scanned, the agent is live.')}</p>
+    </div>
+  );
+}
+
+/**
+ * Lists each branch and lets the owner give it its own WhatsApp line. Only
+ * shown when the tenant toggle (perBranchWaEnabled) is on. Each branch saves its
+ * own connection via PUT /agent-config/branches/:outletId, independent of the
+ * main "Save changes" button.
+ */
+function PerBranchWhatsApp() {
+  const { t } = useI18n();
+  const [branches, setBranches] = useState<BranchWaConfig[] | null>(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setError('');
+    try { setBranches(await api.get<BranchWaConfig[]>('/agent-config/branches')); }
+    catch (e) { setError(e instanceof Error ? e.message : t('dash.aiAgent.failedToLoad', 'Failed to load')); }
+  }, [t]);
+  useEffect(() => { load(); }, [load]);
+
+  if (error) return <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>;
+  if (!branches) return <p className="text-sm text-text-muted">{t('dash.aiAgent.loading', 'Loading…')}</p>;
+  if (branches.length === 0) return <p className="text-sm text-text-muted">{t('dash.aiAgent.noBranches', 'No branches yet. Add branches first, then set a WhatsApp line for each.')}</p>;
+
+  return (
+    <div className="space-y-3">
+      {branches.map((b) => <BranchWaCard key={b.outletId} branch={b} onSaved={load} />)}
+    </div>
+  );
+}
+
+function BranchWaCard({ branch, onSaved }: { branch: BranchWaConfig; onSaved: () => void }) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<BranchWaConfig>(branch);
+  const [kapsoApiKey, setKapsoApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const set = <K extends keyof BranchWaConfig>(k: K, v: BranchWaConfig[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      const updated = await api.put<BranchWaConfig>(`/agent-config/branches/${branch.outletId}`, {
+        waProvider: draft.waProvider, waNumber: draft.waNumber, wahaSession: draft.wahaSession,
+        ...(kapsoApiKey ? { kapsoApiKey } : {}),
+      });
+      setDraft(updated); setKapsoApiKey(''); setMsg({ ok: true, text: t('dash.aiAgent.savedMsg', 'Saved.') });
+      onSaved();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : t('dash.aiAgent.saveFailed', 'Save failed') });
+    } finally { setSaving(false); }
+  };
+
+  const remove = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      await api.delete(`/agent-config/branches/${branch.outletId}`);
+      setDraft({ ...branch, waProvider: 'waha', waNumber: null, wahaSession: null, kapsoConfigured: false, configured: false });
+      setKapsoApiKey(''); onSaved();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : t('dash.aiAgent.saveFailed', 'Save failed') });
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-text-primary">{draft.name}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${branch.configured ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-text-muted'}`}>
+            {branch.configured ? t('dash.aiAgent.branchConnected', 'has own line') : t('dash.aiAgent.branchNotConnected', 'not connected')}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          {branch.configured && <button type="button" className="btn-ghost text-xs text-red-600" onClick={remove} disabled={saving}>{t('dash.aiAgent.branchRemove', 'Remove')}</button>}
+          <button type="button" className="btn-primary text-xs py-1" onClick={save} disabled={saving}>{saving ? t('dash.aiAgent.saving', 'Saving…') : t('dash.aiAgent.saveChanges', 'Save changes')}</button>
+        </div>
+      </div>
+
+      <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-3">
+        {(['waha', 'kapso'] as const).map((p) => (
+          <button key={p} onClick={() => set('waProvider', p)} className={`px-3 py-1 text-xs font-semibold rounded-md ${draft.waProvider === p ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
+            {p === 'waha' ? t('dash.aiAgent.wahaOption', 'WAHA (QR scan)') : 'Kapso.com'}
+          </button>
+        ))}
+      </div>
+
+      {draft.waProvider === 'waha' ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.waNumber', 'WhatsApp number')}</label><input className="input-field" value={draft.waNumber ?? ''} onChange={(e) => set('waNumber', e.target.value)} placeholder="628xxxx" /></div>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.wahaSession', 'WAHA session name')}</label><input className="input-field" value={draft.wahaSession ?? ''} onChange={(e) => set('wahaSession', e.target.value)} placeholder={`${branch.name.toLowerCase().replace(/\s+/g, '-')}`} /></div>
+          </div>
+          {branch.configured && draft.wahaSession && <WahaConnect outletId={branch.outletId} />}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.waNumber', 'WhatsApp number')}</label><input className="input-field" value={draft.waNumber ?? ''} onChange={(e) => set('waNumber', e.target.value)} placeholder="628xxxx" /></div>
+          <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kapsoApiKey', 'Kapso API key')} {draft.kapsoConfigured && <span className="text-xs text-green-600">({t('dash.aiAgent.configured', 'configured')})</span>}</label><input className="input-field" type="password" value={kapsoApiKey} onChange={(e) => setKapsoApiKey(e.target.value)} placeholder={draft.kapsoConfigured ? t('dash.aiAgent.kapsoKeep', '•••••••• (leave blank to keep)') : t('dash.aiAgent.kapsoEnter', 'Enter Kapso API key')} /></div>
+        </div>
+      )}
+      {msg && <p className={`text-xs mt-2 ${msg.ok ? 'text-green-600' : 'text-red-600'}`}>{msg.text}</p>}
     </div>
   );
 }

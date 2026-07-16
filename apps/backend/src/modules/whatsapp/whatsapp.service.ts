@@ -11,8 +11,17 @@ interface AgentCfgRow {
   escalation_number: string | null; max_messages_per_day: number;
   wa_provider: 'waha' | 'kapso'; wa_number: string | null; waha_session: string | null;
   kapso_api_key: string | null; ai_reply_enabled: boolean;
+  // Per-tenant simulation toggle (migration 068). Effective mock = env global OR this.
+  waha_mock?: boolean;
   // n8n agent-builder routing (migration 038). Present because config() does SELECT *.
   routing_mode?: 'builtin' | 'n8n'; n8n_flow_id?: string | null; bridge_token?: string | null;
+  // Per-branch WhatsApp opt-in (migration 067). When true, config(tenantId, outletId)
+  // overlays the branch's own connection from outlet_agent_configs.
+  per_branch_wa_enabled?: boolean;
+  // Transient (not a DB column): set by config() when per-branch is on for a
+  // branch that has NO connection of its own — so sends become a no-op and
+  // status reports not_configured, rather than falling back to the tenant line.
+  wa_connection_missing?: boolean;
 }
 
 /**
@@ -34,18 +43,35 @@ export class WhatsappService implements OnModuleInit {
   private readonly bridgeCallbackBase = process.env.BRIDGE_CALLBACK_BASE || 'http://backend:4000';
 
   /**
-   * Simulation bypass. When WAHA_MOCK=true, the three seams that touch the
-   * third-party gateway — outbound send, session status, and QR — are stubbed:
-   * outbound is recorded to wa_mock_outbox instead of hitting WAHA/Kapso, and
-   * status/QR report "connected". This exercises the ENTIRE pipeline (webhook
-   * parse → tenant resolve → cap → n8n/built-in AI → conversation log → send)
-   * without a real WhatsApp number. Turn it off in production; if messages then
-   * stop flowing, the fault is provably in the WAHA↔WhatsApp segment.
+   * Simulation bypass. When active, the three seams that touch the third-party
+   * gateway — outbound send, session status, and QR — are stubbed: outbound is
+   * recorded to wa_mock_outbox instead of hitting WAHA/Kapso, and status/QR
+   * report "connected". This exercises the ENTIRE pipeline (webhook parse →
+   * tenant resolve → cap → n8n/built-in AI → conversation log → send) without a
+   * real WhatsApp number.
+   *
+   * It can be turned on TWO ways:
+   *  - env `WAHA_MOCK=true` — a process-wide force (dev/local); mocks every tenant.
+   *  - per-tenant `agent_configs.waha_mock` — lets a demo tenant simulate while
+   *    other tenants on the same server use the real connection (migration 068).
+   * Effective mock = env global OR the tenant flag.
    */
   private readonly wahaMock = process.env.WAHA_MOCK === 'true';
 
-  /** Whether the simulation bypass is active (surfaced to the UI). */
+  /** Global (env) simulation force. True → every tenant is mocked. */
   isMock(): boolean { return this.wahaMock; }
+
+  /** Effective mock for a resolved config row: env global OR the tenant flag. */
+  private isMockActive(cfg?: { waha_mock?: boolean } | null): boolean {
+    return this.wahaMock || !!cfg?.waha_mock;
+  }
+
+  /** Effective mock for a tenant (surfaced to the UI status endpoint). */
+  async isMockEnabled(tenantId: string): Promise<boolean> {
+    if (this.wahaMock) return true;
+    const cfg = await this.config(tenantId);
+    return !!cfg?.waha_mock;
+  }
 
   /** Headers for WAHA requests. Recent WAHA images require the API key as X-Api-Key. */
   private wahaHeaders(json = false): Record<string, string> {
@@ -97,21 +123,59 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
-  private async config(tenantId: string): Promise<AgentCfgRow | null> {
+  /**
+   * The tenant's WhatsApp + AI config, optionally with a branch's connection
+   * overlaid. Behaviour fields (escalation, daily cap, AI flags, prompt,
+   * knowledge, n8n routing) always come from the tenant row. The CONNECTION
+   * fields (provider, number, session, Kapso key) are overlaid from
+   * outlet_agent_configs when per-branch WhatsApp is on and an outletId is given:
+   *  - branch has its own row → use the branch connection.
+   *  - branch has no row ("require own number") → connection is nulled so sends
+   *    become a no-op and status reports not_configured; we do NOT silently fall
+   *    back to the tenant line.
+   * With per-branch off, or no outletId, the tenant connection is used unchanged.
+   */
+  private async config(tenantId: string, outletId?: string | null): Promise<AgentCfgRow | null> {
     const r = await this.pool.query('SELECT * FROM agent_configs WHERE tenant_id = $1', [tenantId]);
-    return r.rows[0] ?? null;
+    const cfg: AgentCfgRow | undefined = r.rows[0];
+    if (!cfg) return null;
+    if (!outletId || !cfg.per_branch_wa_enabled) return cfg;
+    const b = await this.pool.query(
+      'SELECT wa_provider, wa_number, waha_session, kapso_api_key FROM outlet_agent_configs WHERE outlet_id = $1 AND tenant_id = $2',
+      [outletId, tenantId],
+    );
+    const branch = b.rows[0];
+    if (branch) {
+      const hasConnection = !!(branch.waha_session || branch.kapso_api_key);
+      return { ...cfg, wa_provider: branch.wa_provider, wa_number: branch.wa_number, waha_session: branch.waha_session, kapso_api_key: branch.kapso_api_key, wa_connection_missing: !hasConnection };
+    }
+    // per-branch on but this branch isn't wired: no fallback to the tenant line.
+    return { ...cfg, wa_number: null, waha_session: null, kapso_api_key: null, wa_connection_missing: true };
   }
 
-  /** Resolve the tenant that owns a given WAHA session (single-pilot friendly). */
-  private async tenantBySession(session: string): Promise<string | null> {
+  /**
+   * Resolve which tenant + branch owns a given WAHA session. Branch sessions
+   * (outlet_agent_configs) win over the tenant session (agent_configs), so an
+   * inbound message on a branch line is scoped to that outlet.
+   */
+  private async resolveBySession(session: string): Promise<{ tenantId: string; outletId: string | null } | null> {
+    const b = await this.pool.query(
+      'SELECT tenant_id, outlet_id FROM outlet_agent_configs WHERE waha_session = $1 LIMIT 1',
+      [session],
+    );
+    if (b.rows[0]) return { tenantId: b.rows[0].tenant_id, outletId: b.rows[0].outlet_id };
     const r = await this.pool.query('SELECT tenant_id FROM agent_configs WHERE waha_session = $1 LIMIT 1', [session]);
-    return r.rows[0]?.tenant_id ?? null;
+    return r.rows[0] ? { tenantId: r.rows[0].tenant_id, outletId: null } : null;
   }
 
   // ── WAHA session management (for the QR-connect UI) ─────────────────────────
-  async ensureSession(tenantId: string): Promise<{ status: string }> {
-    if (this.wahaMock) return { status: 'WORKING' };
-    const cfg = await this.config(tenantId);
+  // outletId targets a specific branch line when per-branch WhatsApp is on;
+  // omit it for the tenant central line.
+  async ensureSession(tenantId: string, outletId?: string | null): Promise<{ status: string }> {
+    const cfg = await this.config(tenantId, outletId);
+    if (this.isMockActive(cfg)) return { status: 'WORKING' };
+    // Per-branch on but this branch has no line of its own yet.
+    if (cfg?.wa_connection_missing) return { status: 'not_configured' };
     const session = cfg?.waha_session || 'default';
     try {
       await fetch(`${this.wahaUrl}/api/sessions/start`, {
@@ -119,12 +183,13 @@ export class WhatsappService implements OnModuleInit {
         body: JSON.stringify({ name: session }),
       });
     } catch (e) { this.logger.warn(`WAHA start session failed: ${String(e)}`); }
-    return this.status(tenantId);
+    return this.status(tenantId, outletId);
   }
 
-  async status(tenantId: string): Promise<{ status: string }> {
-    if (this.wahaMock) return { status: 'WORKING' };
-    const cfg = await this.config(tenantId);
+  async status(tenantId: string, outletId?: string | null): Promise<{ status: string }> {
+    const cfg = await this.config(tenantId, outletId);
+    if (this.isMockActive(cfg)) return { status: 'WORKING' };
+    if (cfg?.wa_connection_missing) return { status: 'not_configured' };
     if (cfg?.wa_provider === 'kapso') return { status: cfg.kapso_api_key ? 'configured' : 'not_configured' };
     const session = cfg?.waha_session || 'default';
     try {
@@ -136,12 +201,13 @@ export class WhatsappService implements OnModuleInit {
   }
 
   /** Returns a data-URL QR for the WAHA session (to scan in the UI). */
-  async qr(tenantId: string): Promise<{ qr: string | null; status: string }> {
-    if (this.wahaMock) return { qr: null, status: 'WORKING' };
-    const cfg = await this.config(tenantId);
+  async qr(tenantId: string, outletId?: string | null): Promise<{ qr: string | null; status: string }> {
+    const cfg = await this.config(tenantId, outletId);
+    if (this.isMockActive(cfg)) return { qr: null, status: 'WORKING' };
+    if (cfg?.wa_connection_missing) return { qr: null, status: 'not_configured' };
     if (cfg?.wa_provider === 'kapso') return { qr: null, status: 'kapso' };
     const session = cfg?.waha_session || 'default';
-    await this.ensureSession(tenantId);
+    await this.ensureSession(tenantId, outletId);
     try {
       const res = await fetch(`${this.wahaUrl}/api/${encodeURIComponent(session)}/auth/qr?format=image`, { headers: this.wahaHeaders() });
       if (!res.ok) return { qr: null, status: 'no_qr' };
@@ -151,11 +217,14 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Outbound ────────────────────────────────────────────────────────────────
-  async sendText(tenantId: string, to: string, text: string): Promise<boolean> {
-    const cfg = await this.config(tenantId);
+  // outletId selects the branch line (per-branch WhatsApp); omit for the tenant line.
+  async sendText(tenantId: string, to: string, text: string, outletId?: string | null): Promise<boolean> {
+    const cfg = await this.config(tenantId, outletId);
     if (!cfg) return false;
+    // Per-branch on but this branch has no line of its own: no-op (require own number).
+    if (cfg.wa_connection_missing) return false;
     // Simulation bypass: record what WOULD be sent, skip the gateway entirely.
-    if (this.wahaMock) return this.recordMockOutbox(tenantId, cfg, to, text);
+    if (this.isMockActive(cfg)) return this.recordMockOutbox(tenantId, cfg, to, text);
     try {
       if (cfg.wa_provider === 'kapso') {
         if (!cfg.kapso_api_key) return false;
@@ -184,11 +253,12 @@ export class WhatsappService implements OnModuleInit {
    * returns its title as a normal inbound message — so downstream keyword gates
    * (booking confirm YA/BATAL, staff TERIMA/TOLAK) resolve it identically.
    */
-  async sendButtons(tenantId: string, to: string, body: string, buttons: { id: string; title: string }[]): Promise<boolean> {
-    const cfg = await this.config(tenantId);
+  async sendButtons(tenantId: string, to: string, body: string, buttons: { id: string; title: string }[], outletId?: string | null): Promise<boolean> {
+    const cfg = await this.config(tenantId, outletId);
     if (!cfg) return false;
+    if (cfg.wa_connection_missing) return false;
     const textFallback = `${body}\n\n${buttons.map((b) => `• ${b.title}`).join('\n')}`;
-    if (this.wahaMock) return this.recordMockOutbox(tenantId, cfg, to, textFallback);
+    if (this.isMockActive(cfg)) return this.recordMockOutbox(tenantId, cfg, to, textFallback);
     try {
       if (cfg.wa_provider === 'kapso') {
         if (!cfg.kapso_api_key) return false;
@@ -206,13 +276,13 @@ export class WhatsappService implements OnModuleInit {
         });
         if (res.ok) return true;
         this.logger.warn(`Kapso interactive send failed (HTTP ${res.status}); text fallback`);
-        return this.sendText(tenantId, to, textFallback);
+        return this.sendText(tenantId, to, textFallback, outletId);
       }
       // WAHA / WhatsApp Web: buttons unreliable — send the text prompt.
-      return this.sendText(tenantId, to, textFallback);
+      return this.sendText(tenantId, to, textFallback, outletId);
     } catch (e) {
       this.logger.warn(`sendButtons failed: ${String(e)}; text fallback`);
-      return this.sendText(tenantId, to, textFallback);
+      return this.sendText(tenantId, to, textFallback, outletId);
     }
   }
 
@@ -252,28 +322,36 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Inbound (from WAHA/Kapso webhook) ────────────────────────────────────────
-  async handleInbound(params: { tenantId?: string; session?: string; from: string; name?: string; text: string }): Promise<void> {
-    const tenantId = params.tenantId ?? (params.session ? await this.tenantBySession(params.session) : null);
+  async handleInbound(params: { tenantId?: string; outletId?: string | null; session?: string; from: string; name?: string; text: string }): Promise<void> {
+    // Resolve tenant + branch. A session on a branch line scopes to that outlet;
+    // simulate-inbound may pass tenantId (+optional outletId) directly.
+    let tenantId = params.tenantId ?? null;
+    let outletId: string | null = params.outletId ?? null;
+    if (!tenantId && params.session) {
+      const resolved = await this.resolveBySession(params.session);
+      if (resolved) { tenantId = resolved.tenantId; outletId = resolved.outletId; }
+    }
     if (!tenantId || !params.from || !params.text) return;
-    const cfg = await this.config(tenantId);
-    const conv = await this.upsertConversation(tenantId, params.from, params.name);
+    const cfg = await this.config(tenantId, outletId);
+    const conv = await this.upsertConversation(tenantId, params.from, params.name, outletId);
     await this.addMessage(tenantId, conv.id, 'inbound', params.text, false);
 
     // Staff-acknowledgement branch: a reply FROM the tenant's escalation number
     // resolving a booking awaiting staff approval (TERIMA → confirm, TOLAK →
     // cancel). Runs regardless of the AI reply switch so approvals always resolve,
-    // and notifies the original customer of the decision.
+    // and notifies the original customer of the decision. Replies go out on the
+    // same (branch or tenant) line the message arrived on.
     if (this.pendingBooking && cfg?.escalation_number && this.sameNumber(params.from, cfg.escalation_number)) {
       const ack = await this.pendingBooking.tryStaffAck(tenantId, params.from, params.text);
       if (ack.handled) {
         if (ack.reply) {
           await this.addMessage(tenantId, conv.id, 'outbound', ack.reply, true, 'Booking');
-          await this.sendText(tenantId, params.from, ack.reply);
+          await this.sendText(tenantId, params.from, ack.reply, outletId);
         }
         if (ack.notifyCustomer) {
-          const custConv = await this.upsertConversation(tenantId, ack.notifyCustomer.phone);
+          const custConv = await this.upsertConversation(tenantId, ack.notifyCustomer.phone, undefined, outletId);
           await this.addMessage(tenantId, custConv.id, 'outbound', ack.notifyCustomer.text, true, 'Booking');
-          await this.sendText(tenantId, ack.notifyCustomer.phone, ack.notifyCustomer.text);
+          await this.sendText(tenantId, ack.notifyCustomer.phone, ack.notifyCustomer.text, outletId);
         }
         return;
       }
@@ -292,23 +370,24 @@ export class WhatsappService implements OnModuleInit {
       const outcome = await this.pendingBooking.tryConfirm(tenantId, params.from, params.text);
       if (outcome.handled && outcome.reply) {
         await this.addMessage(tenantId, conv.id, 'outbound', outcome.reply, true, 'Booking');
-        await this.sendText(tenantId, params.from, outcome.reply);
+        await this.sendText(tenantId, params.from, outcome.reply, outletId);
         // Two-sided approval: ask the tenant's staff to accept/reject the booking.
         if (outcome.committed && outcome.staffApproval && cfg.escalation_number) {
-          await this.requestStaffApproval(tenantId, cfg.escalation_number, outcome.staffApproval);
+          await this.requestStaffApproval(tenantId, cfg.escalation_number, outcome.staffApproval, outletId);
         }
         return;
       }
     }
     const used = conv.messages_day === today ? conv.messages_today : 0;
     if (used >= (cfg.max_messages_per_day ?? 50)) {
-      await this.escalate(tenantId, conv.id, cfg, params.from, 'Daily message cap reached');
+      await this.escalate(tenantId, conv.id, cfg, params.from, 'Daily message cap reached', outletId);
       return;
     }
 
     // n8n routing: if this tenant points their assistant at an n8n flow, hand the
     // message off to it. n8n calls back through the bridge (send + log + cap), so
     // we stop here on success. Any failure falls through to the built-in runtime.
+    // (n8n replies via agentSend use the tenant line; branch-scoped n8n is future work.)
     if (cfg.routing_mode === 'n8n' && cfg.n8n_flow_id && cfg.bridge_token) {
       const dispatched = await this.dispatchToN8n(tenantId, cfg, {
         conversationId: conv.id, from: params.from, name: params.name, text: params.text,
@@ -321,14 +400,14 @@ export class WhatsappService implements OnModuleInit {
     const result = await this.runtime.generate({
       tenantId,
       fromPhone: params.from,
-      outletId: null,
+      outletId,
       text: params.text,
       basePrompt: cfg.base_prompt,
       knowledge: cfg.product_knowledge,
       history,
     });
     if (result.escalate || !result.text) {
-      await this.escalate(tenantId, conv.id, cfg, params.from, params.text);
+      await this.escalate(tenantId, conv.id, cfg, params.from, params.text, outletId);
       return;
     }
     await this.addMessage(tenantId, conv.id, 'outbound', result.text, true, result.agentName);
@@ -340,9 +419,9 @@ export class WhatsappService implements OnModuleInit {
     // (falls back to a text prompt where buttons aren't supported). Tapping a
     // button sends its title back, which the confirmation gate resolves next turn.
     if (result.proposedBooking) {
-      await this.sendButtons(tenantId, params.from, result.text, [{ id: 'YA', title: 'YA' }, { id: 'BATAL', title: 'BATAL' }]);
+      await this.sendButtons(tenantId, params.from, result.text, [{ id: 'YA', title: 'YA' }, { id: 'BATAL', title: 'BATAL' }], outletId);
     } else {
-      await this.sendText(tenantId, params.from, result.text);
+      await this.sendText(tenantId, params.from, result.text, outletId);
     }
   }
 
@@ -361,15 +440,16 @@ export class WhatsappService implements OnModuleInit {
     tenantId: string,
     staffNumber: string,
     approval: { bookingId: string; summary: string; customerPhone: string },
+    outletId?: string | null,
   ): Promise<void> {
     if (!this.pendingBooking) return;
-    const staffConv = await this.upsertConversation(tenantId, staffNumber);
+    const staffConv = await this.upsertConversation(tenantId, staffNumber, undefined, outletId);
     // Short code lets staff disambiguate when several bookings are pending at once.
     const ref = PendingBookingService.refFor(approval.bookingId);
     await this.pendingBooking.setStaffAck(staffConv.id, { ...approval, ref });
     const text = `🆕 Booking baru menunggu persetujuan [${ref}]:\n${approval.summary}\nPelanggan: ${approval.customerPhone}\n\nBalas TERIMA ${ref} untuk konfirmasi atau TOLAK ${ref} untuk menolak.`;
     await this.addMessage(tenantId, staffConv.id, 'outbound', text, true, 'Booking');
-    await this.sendButtons(tenantId, staffNumber, text, [{ id: `TERIMA ${ref}`, title: `TERIMA ${ref}` }, { id: `TOLAK ${ref}`, title: `TOLAK ${ref}` }]);
+    await this.sendButtons(tenantId, staffNumber, text, [{ id: `TERIMA ${ref}`, title: `TERIMA ${ref}` }, { id: `TOLAK ${ref}`, title: `TOLAK ${ref}` }], outletId);
   }
 
   /** Last few turns of the conversation, mapped to LLM chat roles. */
@@ -445,11 +525,11 @@ export class WhatsappService implements OnModuleInit {
     return this.sendText(tenantId, to, text);
   }
 
-  private async escalate(tenantId: string, convId: string, cfg: AgentCfgRow | null, from: string, reason: string): Promise<void> {
+  private async escalate(tenantId: string, convId: string, cfg: AgentCfgRow | null, from: string, reason: string, outletId?: string | null): Promise<void> {
     await this.pool.query(`UPDATE wa_conversations SET status = 'escalated' WHERE id = $1`, [convId]);
     const ack = 'Mohon menunggu, pertanyaan Anda kami teruskan ke tim kami.';
     await this.addMessage(tenantId, convId, 'outbound', ack, true, 'Escalation');
-    await this.sendText(tenantId, from, ack);
+    await this.sendText(tenantId, from, ack, outletId);
     if (cfg?.escalation_number && this.notifications) {
       try {
         await this.notifications.sendWhatsApp({ to: cfg.escalation_number, templateName: 'escalation', params: { from, reason } } as never);
@@ -471,15 +551,18 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Conversation store ───────────────────────────────────────────────────────
-  private async upsertConversation(tenantId: string, chatId: string, name?: string): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null }> {
+  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null }> {
     const phone = chatId.replace(/@.*/, '');
+    // Conflict target matches uq_wa_conv_tenant_outlet_chat (migration 067): a
+    // NULL outlet_id (tenant line) coalesces to the all-zero UUID sentinel, so
+    // branch and tenant lines get distinct conversation rows for the same phone.
     const res = await this.pool.query(
-      `INSERT INTO wa_conversations (tenant_id, chat_id, customer_phone, customer_name, last_message_at)
-       VALUES ($1,$2,$3,$4,NOW())
-       ON CONFLICT (tenant_id, chat_id) DO UPDATE SET last_message_at = NOW(),
+      `INSERT INTO wa_conversations (tenant_id, chat_id, customer_phone, customer_name, outlet_id, last_message_at)
+       VALUES ($1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (tenant_id, chat_id, (COALESCE(outlet_id, '00000000-0000-0000-0000-000000000000'::uuid))) DO UPDATE SET last_message_at = NOW(),
          customer_name = COALESCE(wa_conversations.customer_name, EXCLUDED.customer_name)
        RETURNING id, ai_enabled, messages_today, messages_day::text`,
-      [tenantId, chatId, phone, name ?? null],
+      [tenantId, chatId, phone, name ?? null, outletId ?? null],
     );
     return res.rows[0];
   }
@@ -495,13 +578,17 @@ export class WhatsappService implements OnModuleInit {
   // ── Read/admin APIs for the Conversation Log ──────────────────────────────────
   async listConversations(tenantId: string): Promise<Record<string, unknown>[]> {
     const r = await this.pool.query(
-      `SELECT id, chat_id, customer_name, customer_phone, ai_enabled, status, summary, last_message_at
-       FROM wa_conversations WHERE tenant_id = $1 ORDER BY last_message_at DESC NULLS LAST LIMIT 200`,
+      `SELECT c.id, c.chat_id, c.customer_name, c.customer_phone, c.ai_enabled, c.status, c.summary,
+              c.last_message_at, c.outlet_id, o.name AS outlet_name
+       FROM wa_conversations c
+       LEFT JOIN outlets o ON o.id = c.outlet_id
+       WHERE c.tenant_id = $1 ORDER BY c.last_message_at DESC NULLS LAST LIMIT 200`,
       [tenantId],
     );
     return r.rows.map((c) => ({
       id: c.id, chatId: c.chat_id, customerName: c.customer_name, customerPhone: c.customer_phone,
       aiEnabled: c.ai_enabled, status: c.status, summary: c.summary, lastMessageAt: c.last_message_at,
+      outletId: c.outlet_id ?? null, outletName: c.outlet_name ?? null,
     }));
   }
 

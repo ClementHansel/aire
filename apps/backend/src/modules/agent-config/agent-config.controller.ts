@@ -1,9 +1,9 @@
-import { Controller, Get, Put, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Body, Param, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
-import { AgentConfigService, UpdateAgentConfigDto } from './agent-config.service';
+import { AgentConfigService, UpdateAgentConfigDto, UpdateBranchWaConfigDto } from './agent-config.service';
 
 @Controller('api/agent-config')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -19,5 +19,22 @@ export class AgentConfigController {
   @Put()
   update(@CurrentUser() user: JWTPayload, @Body() dto: UpdateAgentConfigDto) {
     return this.service.update(user.tenant_id, dto, user.sub);
+  }
+
+  // ── Per-branch WhatsApp lines (only meaningful when perBranchWaEnabled) ──────
+  @Get('branches')
+  listBranches(@CurrentUser() user: JWTPayload) {
+    return this.service.listBranchConfigs(user.tenant_id);
+  }
+
+  @Put('branches/:outletId')
+  updateBranch(@CurrentUser() user: JWTPayload, @Param('outletId') outletId: string, @Body() dto: UpdateBranchWaConfigDto) {
+    return this.service.updateBranchConfig(user.tenant_id, outletId, dto);
+  }
+
+  @Delete('branches/:outletId')
+  @HttpCode(HttpStatus.OK)
+  deleteBranch(@CurrentUser() user: JWTPayload, @Param('outletId') outletId: string) {
+    return this.service.deleteBranchConfig(user.tenant_id, outletId);
   }
 }
