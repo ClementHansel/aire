@@ -6,7 +6,7 @@ import { Bonjour } from 'bonjour-service';
 
 const execFileAsync = promisify(execFile);
 import { Client as SsdpClient } from 'node-ssdp';
-import { Discovery, type OnvifProbeMatch } from 'onvif';
+import { Discovery, Cam, type OnvifProbeMatch } from 'onvif';
 import type {
   DeviceType,
   DiscoveredDeviceInput,
@@ -168,27 +168,58 @@ export function hostsInSubnet(cidr: string): string[] {
   return hosts;
 }
 
+/**
+ * Single TCP connect attempt. 'open' = accepted, 'closed' = actively refused
+ * (RST — a definitive answer), 'timeout' = no response (could be a dropped SYN
+ * on flaky wifi OR a filtered port — ambiguous, worth one retry).
+ */
+export function probePortStatus(
+  ip: string,
+  port: number,
+  timeoutMs: number,
+): Promise<'open' | 'closed' | 'timeout'> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const done = (r: 'open' | 'closed' | 'timeout') => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(r);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => done('open'));
+    socket.once('timeout', () => done('timeout'));
+    // A refused connection (ECONNREFUSED) is a fast, definitive "closed"; any
+    // other socket error we treat as closed too.
+    socket.once('error', () => done('closed'));
+    socket.connect(port, ip);
+  });
+}
+
 /** Attempt a TCP connect to ip:port; resolves true if the port accepts. */
 export function probePort(
   ip: string,
   port: number,
   timeoutMs = 400,
 ): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    let settled = false;
-    const done = (open: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(open);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once('connect', () => done(true));
-    socket.once('timeout', () => done(false));
-    socket.once('error', () => done(false));
-    socket.connect(port, ip);
-  });
+  return probePortStatus(ip, port, timeoutMs).then((r) => r === 'open');
+}
+
+/**
+ * Probe with one retry: only a 'timeout' is retried (a dropped SYN on wifi is
+ * the main false-negative). 'closed' (RST) is definitive and never retried.
+ */
+async function probePortReliable(
+  ip: string,
+  port: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const first = await probePortStatus(ip, port, timeoutMs);
+  if (first === 'open') return true;
+  if (first === 'closed') return false;
+  // timeout → one retry
+  return (await probePortStatus(ip, port, timeoutMs)) === 'open';
 }
 
 /** Run an async mapper over items with a bounded concurrency. */
@@ -311,6 +342,90 @@ const OUI_VENDORS: Record<string, { vendor: string; hint?: DeviceType }> = {
   'f4:6d:2f': { vendor: 'Ubiquiti', hint: 'router' },
 };
 
+/** One camera channel behind an NVR/DVR, resolved via ONVIF. */
+export interface NvrChannel {
+  name: string;
+  token: string;
+  rtsp_url: string;
+}
+
+/**
+ * Enumerate the camera channels behind an NVR/DVR over ONVIF (requires the
+ * device's credentials). Returns one entry per media profile with its concrete
+ * RTSP stream URI, so the cloud can create a `cameras` row per channel. Any
+ * failure (wrong creds, non-ONVIF NVR, timeout) resolves to [] — never throws —
+ * so confirming the NVR still succeeds (registry-only) when channels can't be read.
+ */
+export async function enumerateNvrChannels(opts: {
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  timeoutMs?: number;
+}): Promise<NvrChannel[]> {
+  const { host, username, password } = opts;
+  const port = opts.port ?? 80;
+  return new Promise<NvrChannel[]>((resolve) => {
+    const timer = setTimeout(() => resolve([]), opts.timeoutMs ?? 8000);
+    try {
+      // The onvif types are loose; use a permissive alias for the callback API.
+      const CamAny = Cam as unknown as new (
+        o: Record<string, unknown>,
+        cb: (err: Error | null) => void,
+      ) => Record<string, (...a: unknown[]) => void>;
+      const cam = new CamAny(
+        { hostname: host, port, username, password, timeout: opts.timeoutMs ?? 8000 },
+        (err: Error | null) => {
+          if (err) {
+            clearTimeout(timer);
+            resolve([]);
+            return;
+          }
+          cam.getProfiles((pErr: unknown, profiles: unknown) => {
+            const list = Array.isArray(profiles) ? profiles : [];
+            if (pErr || list.length === 0) {
+              clearTimeout(timer);
+              resolve([]);
+              return;
+            }
+            const channels: NvrChannel[] = [];
+            let pending = list.length;
+            list.forEach((p: Record<string, unknown>, idx: number) => {
+              const token =
+                (p?.$ as Record<string, unknown>)?.token ??
+                p?.token ??
+                `profile-${idx + 1}`;
+              const name = (p?.name as string) ?? `Channel ${idx + 1}`;
+              cam.getStreamUri(
+                { protocol: 'RTSP', profileToken: token },
+                (sErr: unknown, stream: unknown) => {
+                  const uri = (stream as { uri?: string })?.uri;
+                  if (!sErr && uri) {
+                    // Embed creds so the relay can pull without a separate auth step.
+                    const withAuth = uri.replace(
+                      /^rtsp:\/\//i,
+                      `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password)}@`,
+                    );
+                    channels.push({ name, token: String(token), rtsp_url: withAuth });
+                  }
+                  pending -= 1;
+                  if (pending === 0) {
+                    clearTimeout(timer);
+                    resolve(channels);
+                  }
+                },
+              );
+            });
+          });
+        },
+      );
+    } catch {
+      clearTimeout(timer);
+      resolve([]);
+    }
+  });
+}
+
 /** Look up a MAC's vendor + device-type hint from the built-in OUI table. */
 export function vendorFromMac(
   mac: string | null | undefined,
@@ -318,6 +433,112 @@ export function vendorFromMac(
   if (!mac) return null;
   const oui = mac.toLowerCase().split(':').slice(0, 3).join(':');
   return OUI_VENDORS[oui] ?? null;
+}
+
+/** USB VendorIDs for the peripherals a branch actually uses. */
+const USB_SCANNER_VIDS = new Set([
+  '05e0', // Symbol / Zebra scanners
+  '0c2e', // Honeywell / Metrologic
+  '05f9', // Datalogic
+  '1eab', // Newland
+  '0536', // Hand Held Products
+  '1a86', // QinHeng (common cheap HID scanners)
+]);
+const USB_PRINTER_VIDS = new Set([
+  '04b8', // Epson
+  '0519', // Star Micronics
+  '1504', // Bixolon
+  '0416', // Winbond (many POS58/80 clones)
+  '0483', // STMicro (thermal clones)
+  '20d1', // Rongta
+  '0dd4', // Custom / SNBC
+]);
+
+/**
+ * Classify a USB peripheral from its name + vendor id. Only returns the two
+ * peripheral kinds a branch cares about (barcode/QR scanners, receipt/thermal
+ * printers); everything else (keyboards, mice, hubs, storage) → null (ignored).
+ */
+export function classifyUsb(
+  name: string,
+  vid: string | null,
+): DeviceType | null {
+  const n = name.toLowerCase();
+  const v = (vid ?? '').toLowerCase();
+  if (
+    USB_SCANNER_VIDS.has(v) ||
+    /\b(barcode|qr[\s-]?code|scanner|symbol|honeywell|datalogic|newland|zebra.*scan)\b/.test(n)
+  ) {
+    return 'barcode_scanner';
+  }
+  if (
+    USB_PRINTER_VIDS.has(v) ||
+    /\b(printer|receipt|thermal|pos-?58|pos-?80|epson tm|tm-[a-z]|star tsp|bixolon|rongta)\b/.test(n)
+  ) {
+    return 'printer';
+  }
+  return null;
+}
+
+/**
+ * Enumerate locally-attached USB peripherals on the branch PC. Barcode/QR
+ * scanners and USB/serial thermal printers are NOT on the LAN, so the network
+ * sweep can never see them — this covers them. Windows uses PnP (CIM), Linux
+ * `lsusb`; mac is best-effort (skipped). ip_address is a synthetic stable
+ * `usb:<vid>:<pid>` key so the cloud can dedupe/track them like any device.
+ */
+async function scanUsb(): Promise<ProtocolResult> {
+  const protocol = 'usb';
+  const devices: DiscoveredDeviceInput[] = [];
+  const add = (
+    name: string,
+    vid: string | null,
+    pid: string | null,
+    extra: Record<string, unknown> = {},
+  ) => {
+    const type = classifyUsb(name, vid);
+    if (!type) return;
+    const key = `usb:${vid ?? 'xxxx'}:${pid ?? 'xxxx'}`;
+    devices.push({
+      ip_address: key,
+      device_type: type,
+      manufacturer: null,
+      model: name.trim() || null,
+      connection_params: { bus: 'usb', vid, pid, usb_name: name, ...extra },
+    });
+  };
+  try {
+    if (process.platform === 'win32') {
+      const { stdout } = await execFileAsync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -like 'USB*' } | Select-Object Name,PNPClass,PNPDeviceID | ConvertTo-Json -Compress",
+        ],
+        { timeout: 8000, maxBuffer: 4 * 1024 * 1024 },
+      );
+      const parsed = JSON.parse(stdout || '[]');
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      for (const r of rows) {
+        const id: string = r?.PNPDeviceID ?? '';
+        const vid = /VID_([0-9A-Fa-f]{4})/.exec(id)?.[1]?.toLowerCase() ?? null;
+        const pid = /PID_([0-9A-Fa-f]{4})/.exec(id)?.[1]?.toLowerCase() ?? null;
+        add(r?.Name ?? '', vid, pid, { pnp_class: r?.PNPClass ?? null });
+      }
+    } else if (process.platform === 'linux') {
+      const { stdout } = await execFileAsync('lsusb', [], { timeout: 6000 });
+      // "Bus 001 Device 004: ID 05e0:1200 Symbol Technologies Bar Code Scanner"
+      const re = /ID\s+([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\s+(.*)$/gm;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(stdout)) !== null) {
+        add(m[3] ?? '', m[1]!.toLowerCase(), m[2]!.toLowerCase());
+      }
+    }
+    return { protocol, devices };
+  } catch (e) {
+    return { protocol, devices, error: { protocol, message: (e as Error).message } };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -469,11 +690,14 @@ async function scanTcpSubnet(
       };
     }
     const devices: DiscoveredDeviceInput[] = [];
-    await mapWithConcurrency(hosts, 64, async (ip) => {
+    // Concurrency 24 (not 64): a car-wash branch is on wifi, and hammering it
+    // with hundreds of simultaneous sockets causes dropped SYNs (false
+    // negatives) and saturates the link. Slower but far more reliable.
+    await mapWithConcurrency(hosts, 24, async (ip) => {
       const openPorts: number[] = [];
       for (const port of PROBE_PORTS) {
         // eslint-disable-next-line no-await-in-loop
-        if (await probePort(ip, port, timeoutMs)) openPorts.push(port);
+        if (await probePortReliable(ip, port, timeoutMs)) openPorts.push(port);
       }
       const type = classifyByPorts(openPorts);
       if (type) {
@@ -537,6 +761,7 @@ export function dedupeByIp(
       camera: 9,
       nvr: 9,
       printer: 8,
+      barcode_scanner: 8,
       iot_controller: 7,
       pos_terminal: 6,
       kiosk: 6,
@@ -630,6 +855,7 @@ export async function runScan(
   if (want('onvif')) tasks.push(scanOnvif(timeoutMs));
   if (want('mdns')) tasks.push(scanMdns(timeoutMs));
   if (want('ssdp')) tasks.push(scanSsdp(timeoutMs));
+  if (want('usb')) tasks.push(scanUsb());
   if (want('tcp')) {
     if (subnets.length > 0) {
       for (const subnet of subnets) tasks.push(scanTcpSubnet(subnet, 800));

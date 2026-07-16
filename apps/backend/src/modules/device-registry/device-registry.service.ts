@@ -29,6 +29,7 @@ export type DeviceCategory =
   | 'nvr'
   | 'controller'
   | 'printer'
+  | 'scanner'
   | 'kiosk'
   | 'pos_terminal'
   | 'tablet'
@@ -123,6 +124,7 @@ const DEVICE_TYPE_TO_CATEGORY: Record<
   camera: 'camera',
   nvr: 'nvr',
   printer: 'printer',
+  barcode_scanner: 'scanner',
   iot_controller: 'controller',
   router: 'router',
   pos_terminal: 'pos_terminal',

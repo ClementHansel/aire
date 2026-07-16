@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { loadConfig, type BridgeConfig } from './config';
 import { CloudClient } from './cloud-client';
-import { runScan } from './scanner';
+import { runScan, enumerateNvrChannels } from './scanner';
 import { Streamer } from './streamer';
 import { MqttBridge } from './mqtt-bridge';
 import type {
@@ -132,8 +132,42 @@ async function main(): Promise<void> {
               rtsp_url: rtspUrl ?? `test:${req.deviceId}`,
             },
           });
+        } else if (req.device_type === 'nvr') {
+          // Enumerate the camera channels behind the NVR over ONVIF (needs the
+          // device credentials, passed in connection_params). The cloud turns
+          // each returned channel into its own camera. No creds / non-ONVIF NVR
+          // → channels:[] and the NVR still registers (registry-only).
+          const cp = req.connection_params ?? {};
+          const host =
+            (cp.host as string) ||
+            (cp.ip_address as string) ||
+            (cp.ip as string) ||
+            '';
+          const username = (cp.username as string) || '';
+          const password = (cp.password as string) || '';
+          let channels: unknown[] = [];
+          if (host && username) {
+            channels = await enumerateNvrChannels({
+              host,
+              port: typeof cp.onvif_port === 'number' ? cp.onvif_port : 80,
+              username,
+              password,
+            });
+          }
+          cloud.emit('configure:result', {
+            deviceId: req.deviceId,
+            ok: true,
+            // Never echo the password back to the cloud.
+            connection_params: {
+              ...cp,
+              password: undefined,
+              channels,
+              channel_count: channels.length,
+            },
+          });
         } else {
-          // iot_controller / router: sensor topics are already wildcard-subscribed.
+          // iot_controller / router / printer / scanner / etc: nothing to
+          // configure on the agent — sensor topics are already wildcard-subscribed.
           cloud.emit('configure:result', {
             deviceId: req.deviceId,
             ok: true,

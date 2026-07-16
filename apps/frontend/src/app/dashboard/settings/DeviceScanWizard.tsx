@@ -12,7 +12,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Camera, Cpu, Router, Check, X, Loader2, Copy, RefreshCw } from 'lucide-react';
+import { Camera, Cpu, Router, Check, X, Loader2, Copy, RefreshCw, Video, Printer, ScanLine, Smartphone, Monitor, Tablet, HardDrive } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { DiscoveredDevice } from '@/lib/settings';
 import { Modal, ErrorBanner } from '@/components/dashboard/ui';
@@ -35,8 +35,15 @@ interface Props {
 
 const DEVICE_ICON: Record<DiscoveredDevice['device_type'], typeof Camera> = {
   camera: Camera,
+  nvr: Video,
+  printer: Printer,
+  barcode_scanner: ScanLine,
   iot_controller: Cpu,
   router: Router,
+  pos_terminal: Smartphone,
+  kiosk: Monitor,
+  tablet: Tablet,
+  unknown: HardDrive,
 };
 
 function DeviceTypeIcon({ type }: { type: DiscoveredDevice['device_type'] }) {
@@ -63,6 +70,8 @@ export function DeviceScanWizard({ tenantId, outlets, initialOutletId, onClose, 
 
   // Step 4 — configure
   const [assign, setAssign] = useState<Record<string, { outletId: string; bayId: string }>>({});
+  // Per-NVR ONVIF credentials (used only to enumerate channels at confirm time).
+  const [creds, setCreds] = useState<Record<string, { username: string; password: string }>>({});
   const [results, setResults] = useState<Record<string, 'ok' | 'error' | 'pending'>>({});
 
   const bridge = bridges?.find((b) => b.outletId === outletId) ?? null;
@@ -159,18 +168,21 @@ export function DeviceScanWizard({ tenantId, outlets, initialOutletId, onClose, 
   // ── Step 4: configure ─────────────────────────────────────────────────────
   const configureOne = useCallback(async (device: DiscoveredDevice) => {
     const a = assign[device.device_id] ?? { outletId, bayId: '' };
+    const c = creds[device.device_id];
     setResults((r) => ({ ...r, [device.device_id]: 'pending' }));
     try {
       await api.post(`/discovery/${tenantId}/devices/${device.device_id}/confirm`, {
         assigned_outlet_id: a.outletId,
         ...(a.bayId ? { assigned_bay_id: a.bayId } : {}),
+        // NVR channels are enumerated over ONVIF using these credentials.
+        ...(device.device_type === 'nvr' && c?.username ? { credentials: c } : {}),
       });
       setResults((r) => ({ ...r, [device.device_id]: 'ok' }));
     } catch (err) {
       setResults((r) => ({ ...r, [device.device_id]: 'error' }));
       setError(err instanceof Error ? err.message : `Failed to configure ${device.suggested_label}`);
     }
-  }, [assign, outletId, tenantId]);
+  }, [assign, creds, outletId, tenantId]);
 
   const configureAll = useCallback(async () => {
     for (const d of scanned) {
@@ -369,6 +381,26 @@ export function DeviceScanWizard({ tenantId, outlets, initialOutletId, onClose, 
                       {res === 'ok' ? 'Configured' : 'Configure'}
                     </button>
                   </div>
+                  {d.device_type === 'nvr' && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] text-text-muted">NVR login (to load its cameras):</span>
+                      <input
+                        className="input-field w-28 py-1.5 text-xs"
+                        placeholder="username"
+                        autoComplete="off"
+                        value={creds[d.device_id]?.username ?? ''}
+                        onChange={(e) => setCreds((s) => ({ ...s, [d.device_id]: { username: e.target.value, password: s[d.device_id]?.password ?? '' } }))}
+                      />
+                      <input
+                        className="input-field w-28 py-1.5 text-xs"
+                        type="password"
+                        placeholder="password"
+                        autoComplete="new-password"
+                        value={creds[d.device_id]?.password ?? ''}
+                        onChange={(e) => setCreds((s) => ({ ...s, [d.device_id]: { username: s[d.device_id]?.username ?? '', password: e.target.value } }))}
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}

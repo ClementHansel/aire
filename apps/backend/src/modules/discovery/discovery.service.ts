@@ -7,7 +7,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Pool } from 'pg';
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 import { DiscoveredDevice } from '../settings/settings.interfaces';
 import { SettingsService } from '../settings/settings.service';
 import { AuditService } from '../audit/audit.service';
@@ -24,6 +24,9 @@ import {
 
 /** After this long with no `scan:done`, a scan is force-completed + persisted. */
 const SCAN_TIMEOUT_MS = 30_000;
+
+/** Fixed namespace for deriving stable, deterministic device ids (uuidv5). */
+const DEVICE_ID_NAMESPACE = '6f3d2c1a-9b8e-4d7c-a1f2-0e5b4c3d2a19';
 
 /**
  * Device Discovery Service (bridge model).
@@ -136,12 +139,15 @@ export class DiscoveryService implements OnModuleInit {
   private onDeviceEvent(e: DeviceEvent): void {
     const session = this.scans.get(e.scanId);
     if (!session) return;
+    const mac = (e.device.connection_params?.mac as string | undefined) || null;
+    const stableKey = `${session.tenantId}:${mac ?? e.device.ip_address}`;
     const record = this.createDeviceRecord({
       ip_address: e.device.ip_address,
       device_type: e.device.device_type,
       manufacturer: e.device.manufacturer,
       model: e.device.model,
       connection_params: e.device.connection_params,
+      stableKey,
     });
     session.devices.push(record);
   }
@@ -170,13 +176,20 @@ export class DiscoveryService implements OnModuleInit {
 
     try {
       const settings = await this.settingsService.getSettings(session.tenantId);
-      const confirmed = settings.discovered_devices.filter((d) => d.confirmed);
-      const confirmedIps = new Set(confirmed.map((d) => d.ip_address));
-      // Keep confirmed devices; add freshly-scanned ones not already confirmed.
-      const merged = [
-        ...confirmed,
-        ...session.devices.filter((d) => !confirmedIps.has(d.ip_address)),
-      ];
+      // UNION merge keyed by device id — never lose a previously-found device
+      // just because a flaky/partial scan didn't re-see it. Confirmed devices are
+      // always kept as-is; unconfirmed prior devices are retained and a fresh
+      // sighting refreshes their fields (status/model/params) in place.
+      const byId = new Map<string, DiscoveredDevice>();
+      for (const prior of settings.discovered_devices) {
+        byId.set(prior.device_id, prior);
+      }
+      for (const fresh of session.devices) {
+        const prior = byId.get(fresh.device_id);
+        if (prior?.confirmed) continue; // keep the confirmed record untouched
+        byId.set(fresh.device_id, prior ? { ...prior, ...fresh } : fresh);
+      }
+      const merged = [...byId.values()];
       await this.settingsService.updateSettings(session.tenantId, null, {
         discovered_devices: merged,
       });
@@ -219,6 +232,7 @@ export class DiscoveryService implements OnModuleInit {
       camera: 'Camera',
       nvr: 'NVR',
       printer: 'Printer',
+      barcode_scanner: 'Barcode Scanner',
       iot_controller: 'IoT Controller',
       router: 'Router',
       pos_terminal: 'POS Terminal',
@@ -241,9 +255,16 @@ export class DiscoveryService implements OnModuleInit {
     manufacturer: string | null;
     model: string | null;
     connection_params?: Record<string, unknown>;
+    /** Stable per-device key (tenant + MAC/IP) so re-scans keep the same id. */
+    stableKey?: string;
   }): DiscoveredDevice {
     return {
-      device_id: uuidv4(),
+      // Deterministic id from a stable key (MAC preferred, else IP) so a device
+      // keeps the SAME id across re-scans — the confirm flow can then reference a
+      // device by id even after a later scan refreshes the discovered list.
+      device_id: params.stableKey
+        ? uuidv5(params.stableKey, DEVICE_ID_NAMESPACE)
+        : uuidv4(),
       ip_address: params.ip_address,
       device_type: params.device_type,
       manufacturer: params.manufacturer,
@@ -296,6 +317,19 @@ export class DiscoveryService implements OnModuleInit {
     device.confirmed_at = new Date().toISOString();
     device.status = 'online';
 
+    // For an NVR, hand the device credentials + host to the agent (transiently,
+    // in connection_params) so autoconfigure can enumerate its channels over
+    // ONVIF. These are NOT persisted — the agent strips the password from its
+    // configure:result, and we clear them below before saving.
+    if (confirmation.credentials) {
+      device.connection_params = {
+        ...device.connection_params,
+        host: device.ip_address,
+        username: confirmation.credentials.username,
+        password: confirmation.credentials.password,
+      };
+    }
+
     let autoConfigSuccess = true;
     let autoConfigError: string | undefined;
     let cameraRefId: string | null = null;
@@ -304,6 +338,13 @@ export class DiscoveryService implements OnModuleInit {
       // Once configured, a camera is registered + its live relay is started.
       if (device.device_type === 'camera') {
         cameraRefId = await this.registerCameraFromDevice(tenantId, device);
+      } else if (device.device_type === 'nvr') {
+        // Each ONVIF channel behind the NVR becomes its own camera.
+        cameraRefId = await this.registerNvrChannels(tenantId, device);
+      }
+      // Never persist raw credentials.
+      if (device.connection_params.password) {
+        device.connection_params = { ...device.connection_params, password: undefined };
       }
     } catch (error) {
       autoConfigSuccess = false;
@@ -463,6 +504,77 @@ export class DiscoveryService implements OnModuleInit {
     }
     this.logger.log(`Registered camera ${cameraId} from device ${device.device_id}`);
     return cameraId;
+  }
+
+  /**
+   * Register one `cameras` row per channel behind a confirmed NVR (channels are
+   * resolved by the agent over ONVIF into `connection_params.channels`) and kick
+   * off each channel's live relay. Idempotent per (device, channel token) via a
+   * derived camera `device_id`. Returns the first camera id (or null when the NVR
+   * exposed no channels — it still registers as an `nvr` in the device registry).
+   */
+  private async registerNvrChannels(
+    tenantId: string,
+    device: DiscoveredDevice,
+  ): Promise<string | null> {
+    if (!this.pool || !device.assigned_outlet_id) return null;
+    const channels = Array.isArray(device.connection_params.channels)
+      ? (device.connection_params.channels as Array<{
+          name?: string;
+          token?: string;
+          rtsp_url?: string;
+        }>)
+      : [];
+    if (channels.length === 0) {
+      this.logger.warn(
+        `NVR ${device.device_id} confirmed but exposed no ONVIF channels ` +
+          `(wrong credentials or non-ONVIF NVR) — registered as NVR only`,
+      );
+      return null;
+    }
+    const bridgeId = await this.resolveBridgeId(device.assigned_outlet_id);
+    let firstId: string | null = null;
+    for (let i = 0; i < channels.length; i += 1) {
+      const ch = channels[i]!;
+      const rtspUrl = String(ch.rtsp_url ?? '');
+      if (!rtspUrl) continue;
+      // Deterministic per-channel device id keeps re-confirmation idempotent.
+      const channelDeviceId = uuidv5(
+        `${device.device_id}:${ch.token ?? i}`,
+        DEVICE_ID_NAMESPACE,
+      );
+      const name = `${device.suggested_label} · ${ch.name ?? `Ch ${i + 1}`}`;
+      // Manual upsert keyed by device_id (cameras.device_id has no unique index,
+      // so we can't use ON CONFLICT) — keeps re-confirming an NVR idempotent.
+      const existing = await this.pool.query<{ id: string }>(
+        `SELECT id FROM cameras WHERE device_id = $1 LIMIT 1`,
+        [channelDeviceId],
+      );
+      let cameraId: string;
+      if (existing.rows[0]) {
+        cameraId = existing.rows[0].id;
+        await this.pool.query(
+          `UPDATE cameras SET rtsp_url = $2, name = $3 WHERE id = $1`,
+          [cameraId, rtspUrl, name],
+        );
+      } else {
+        const inserted = await this.pool.query<{ id: string }>(
+          `INSERT INTO cameras (tenant_id, outlet_id, bridge_id, name, rtsp_url, device_id)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [tenantId, device.assigned_outlet_id, bridgeId, name, rtspUrl, channelDeviceId],
+        );
+        cameraId = inserted.rows[0]!.id;
+      }
+      firstId = firstId ?? cameraId;
+      if (this.bridgeDispatch) {
+        this.bridgeDispatch.dispatchStreamStart(device.assigned_outlet_id, { cameraId, rtspUrl });
+      }
+    }
+    this.logger.log(
+      `Registered ${channels.length} channel camera(s) from NVR ${device.device_id}`,
+    );
+    return firstId;
   }
 
   /** Resolve the bridge paired to an outlet, or null when none/no pool. */

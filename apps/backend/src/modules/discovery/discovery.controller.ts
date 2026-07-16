@@ -113,6 +113,7 @@ export class DiscoveryController {
       device_id: deviceId,
       assigned_outlet_id: body.assigned_outlet_id,
       assigned_bay_id: body.assigned_bay_id,
+      credentials: body.credentials,
     };
     return this.discoveryService.confirmDevice(tenantId, confirmation);
   }

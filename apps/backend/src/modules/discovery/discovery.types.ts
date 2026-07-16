@@ -40,6 +40,11 @@ export interface DeviceConfirmation {
   device_id: string;
   assigned_outlet_id: string;
   assigned_bay_id?: string;
+  /**
+   * Optional device credentials (NVR/camera ONVIF login). Used to enumerate the
+   * channels behind an NVR at confirm time; never persisted back to the cloud.
+   */
+  credentials?: { username: string; password: string };
 }
 
 /**

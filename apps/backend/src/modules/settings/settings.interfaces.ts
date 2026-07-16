@@ -64,6 +64,7 @@ export type DiscoveredDeviceType =
   | 'camera'
   | 'nvr'
   | 'printer'
+  | 'barcode_scanner'
   | 'iot_controller'
   | 'router'
   | 'pos_terminal'

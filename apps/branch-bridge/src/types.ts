@@ -9,6 +9,7 @@ export type DeviceType =
   | 'camera'
   | 'nvr'
   | 'printer'
+  | 'barcode_scanner'
   | 'iot_controller'
   | 'router'
   | 'pos_terminal'

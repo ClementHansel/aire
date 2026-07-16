@@ -7,19 +7,19 @@
  */
 
 import {
-  Cctv, Cpu, Printer, Monitor, Smartphone, Router, Waypoints, HardDrive, Video, Tablet,
+  Cctv, Cpu, Printer, Monitor, Smartphone, Router, Waypoints, HardDrive, Video, Tablet, ScanLine,
   type LucideIcon,
 } from 'lucide-react';
 
 /* ── Enums ──────────────────────────────────────────────────────────── */
 
 export type DeviceCategory =
-  | 'camera' | 'nvr' | 'controller' | 'printer' | 'kiosk' | 'pos_terminal' | 'tablet' | 'router' | 'other';
+  | 'camera' | 'nvr' | 'controller' | 'printer' | 'scanner' | 'kiosk' | 'pos_terminal' | 'tablet' | 'router' | 'other';
 
 export type DeviceStatus = 'online' | 'offline' | 'unconfigured';
 
 export const DEVICE_CATEGORIES: DeviceCategory[] = [
-  'camera', 'nvr', 'controller', 'printer', 'kiosk', 'pos_terminal', 'tablet', 'router', 'other',
+  'camera', 'nvr', 'controller', 'printer', 'scanner', 'kiosk', 'pos_terminal', 'tablet', 'router', 'other',
 ];
 
 /* ── Topology JSON (GET /api/topology) ──────────────────────────────── */
@@ -118,6 +118,7 @@ export const CATEGORY_META: Record<DeviceCategory, CategoryMeta> = {
   nvr:          { label: 'NVRs / DVRs', iconName: 'Video',     icon: Video },
   controller:   { label: 'Controllers', iconName: 'Cpu',       icon: Cpu },
   printer:      { label: 'Printers',   iconName: 'Printer',    icon: Printer },
+  scanner:      { label: 'Scanners',   iconName: 'ScanLine',   icon: ScanLine },
   kiosk:        { label: 'Kiosks',     iconName: 'Monitor',    icon: Monitor },
   pos_terminal: { label: 'Terminals',  iconName: 'Smartphone', icon: Smartphone },
   tablet:       { label: 'Tablets',    iconName: 'Tablet',     icon: Tablet },

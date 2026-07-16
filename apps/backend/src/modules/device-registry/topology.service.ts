@@ -57,6 +57,7 @@ const CATEGORY_ORDER: DeviceCategory[] = [
   'nvr',
   'controller',
   'printer',
+  'scanner',
   'kiosk',
   'pos_terminal',
   'tablet',
