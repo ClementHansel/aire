@@ -301,16 +301,31 @@ export class DiscoveryService implements OnModuleInit {
     }
 
     const settings = await this.settingsService.getSettings(tenantId);
-    const deviceIndex = settings.discovered_devices.findIndex(
+    // Prefer the persisted record; fall back to any LIVE in-memory scan buffer
+    // (what the wizard just polled) so a confirm can't 404 due to a persistence
+    // race or a later scan refreshing the list.
+    let source = settings.discovered_devices.find(
       (d) => d.device_id === confirmation.device_id,
     );
-    if (deviceIndex === -1) {
+    if (!source) {
+      for (const session of this.scans.values()) {
+        if (session.tenantId !== tenantId) continue;
+        const found = session.devices.find(
+          (d) => d.device_id === confirmation.device_id,
+        );
+        if (found) {
+          source = found;
+          break;
+        }
+      }
+    }
+    if (!source) {
       throw new NotFoundException(
         `Device ${confirmation.device_id} not found in tenant's discovered devices`,
       );
     }
 
-    const device = { ...settings.discovered_devices[deviceIndex]! };
+    const device = { ...source };
     device.confirmed = true;
     device.assigned_outlet_id = confirmation.assigned_outlet_id;
     device.assigned_bay_id = confirmation.assigned_bay_id ?? null;
@@ -358,8 +373,11 @@ export class DiscoveryService implements OnModuleInit {
       );
     }
 
-    const updatedDevices = [...settings.discovered_devices];
-    updatedDevices[deviceIndex] = device;
+    // Upsert by id (the device may not have been in the persisted list yet).
+    const updatedDevices = [
+      ...settings.discovered_devices.filter((d) => d.device_id !== device.device_id),
+      device,
+    ];
     await this.settingsService.updateSettings(tenantId, null, {
       discovered_devices: updatedDevices,
     });
