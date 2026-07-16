@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { loadConfig, type BridgeConfig } from './config';
 import { CloudClient } from './cloud-client';
-import { runScan, enumerateNvrChannels } from './scanner';
+import { runScan, enumerateNvrChannels, injectRtspCreds, detectNvrVendor } from './scanner';
 import { Streamer } from './streamer';
 import { MqttBridge } from './mqtt-bridge';
 import type {
@@ -10,6 +10,8 @@ import type {
   ScanRequest,
   StreamStartRequest,
   StreamStopRequest,
+  PlaybackStartRequest,
+  PlaybackStopRequest,
 } from './types';
 
 // Re-export the public surface so this package can be imported + unit-tested.
@@ -145,13 +147,17 @@ async function main(): Promise<void> {
             '';
           const username = (cp.username as string) || '';
           const password = (cp.password as string) || '';
+          const ffprobePath = config.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
           let channels: unknown[] = [];
           if (host && username) {
             channels = await enumerateNvrChannels({
               host,
               port: typeof cp.onvif_port === 'number' ? cp.onvif_port : 80,
+              rtspPort: typeof cp.rtsp_port === 'number' ? cp.rtsp_port : 554,
               username,
               password,
+              vendor: detectNvrVendor((cp.vendor as string) || (cp.manufacturer as string)),
+              ffprobePath,
             });
           }
           cloud.emit('configure:result', {
@@ -184,11 +190,23 @@ async function main(): Promise<void> {
     },
 
     onStreamStart: async (req: StreamStartRequest) => {
-      await streamer.startStream(req.cameraId, req.rtspUrl);
+      const url = injectRtspCreds(req.rtspUrl, req.username ?? '', req.password ?? '');
+      await streamer.startStream(req.cameraId, url);
     },
 
     onStreamStop: async (req: StreamStopRequest) => {
       await streamer.stopStream(req.cameraId);
+    },
+
+    // NVR archive playback: relay the vendor playback URL as a transient HLS
+    // session keyed by sessionId (the cloud serves it under /playback/:sessionId).
+    onPlaybackStart: async (req: PlaybackStartRequest) => {
+      const url = injectRtspCreds(req.rtspUrl, req.username ?? '', req.password ?? '');
+      await streamer.startStream(req.sessionId, url);
+    },
+
+    onPlaybackStop: async (req: PlaybackStopRequest) => {
+      await streamer.stopStream(req.sessionId);
     },
 
     onCommand: async (req: CommandRequest) => {

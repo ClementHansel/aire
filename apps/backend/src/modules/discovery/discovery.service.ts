@@ -15,6 +15,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { BridgeDispatchService } from '../bridge/bridge-dispatch.service';
 import { BridgeEvents, DeviceEvent, ScanDoneEvent } from '../bridge/bridge.events';
 import { DeviceRegistryService } from '../device-registry/device-registry.service';
+import { encrypt } from '../settings/encryption.util';
 import {
   DeviceConfirmation,
   DeviceHealthCheck,
@@ -540,30 +541,54 @@ export class DiscoveryService implements OnModuleInit {
       ? (device.connection_params.channels as Array<{
           name?: string;
           token?: string;
+          channel?: number;
+          stream?: 'main' | 'sub';
           rtsp_url?: string;
+          vendor?: string;
         }>)
       : [];
     if (channels.length === 0) {
       this.logger.warn(
-        `NVR ${device.device_id} confirmed but exposed no ONVIF channels ` +
-          `(wrong credentials or non-ONVIF NVR) — registered as NVR only`,
+        `NVR ${device.device_id} confirmed but exposed no channels ` +
+          `(wrong credentials / RTSP+ONVIF disabled) — registered as NVR only`,
       );
       return null;
     }
     const bridgeId = await this.resolveBridgeId(device.assigned_outlet_id);
+    // Encrypt the NVR login once (best-effort) so live auto-reconnect + archive
+    // playback can re-authenticate without the password living in the RTSP URL.
+    const username = (device.connection_params.username as string) || '';
+    const password = (device.connection_params.password as string) || '';
+    let credEnc: string | null = null;
+    if (username) {
+      try {
+        credEnc = encrypt(JSON.stringify({ username, password }));
+      } catch (err) {
+        this.logger.warn(
+          `Could not encrypt NVR credentials (SETTINGS_ENCRYPTION_KEY?): ${
+            err instanceof Error ? err.message : String(err)
+          } — live/playback will need the password re-entered`,
+        );
+      }
+    }
+    const host = device.ip_address;
     let firstId: string | null = null;
     for (let i = 0; i < channels.length; i += 1) {
       const ch = channels[i]!;
-      const rtspUrl = String(ch.rtsp_url ?? '');
+      const rtspUrl = String(ch.rtsp_url ?? ''); // credential-less
       if (!rtspUrl) continue;
-      // Deterministic per-channel device id keeps re-confirmation idempotent.
-      const channelDeviceId = uuidv5(
-        `${device.device_id}:${ch.token ?? i}`,
-        DEVICE_ID_NAMESPACE,
-      );
+      const channelDeviceId = uuidv5(`${device.device_id}:${ch.token ?? i}`, DEVICE_ID_NAMESPACE);
       const name = `${device.suggested_label} · ${ch.name ?? `Ch ${i + 1}`}`;
-      // Manual upsert keyed by device_id (cameras.device_id has no unique index,
-      // so we can't use ON CONFLICT) — keeps re-confirming an NVR idempotent.
+      const playbackMeta = {
+        vendor: ch.vendor ?? 'onvif',
+        host,
+        port: 554,
+        channel: ch.channel ?? i + 1,
+        stream: ch.stream ?? 'main',
+        cred_enc: credEnc,
+        onvif: !!ch.token && String(ch.token).startsWith('profile'),
+      };
+      // Manual upsert keyed by device_id (cameras.device_id has no unique index).
       const existing = await this.pool.query<{ id: string }>(
         `SELECT id FROM cameras WHERE device_id = $1 LIMIT 1`,
         [channelDeviceId],
@@ -572,21 +597,28 @@ export class DiscoveryService implements OnModuleInit {
       if (existing.rows[0]) {
         cameraId = existing.rows[0].id;
         await this.pool.query(
-          `UPDATE cameras SET rtsp_url = $2, name = $3 WHERE id = $1`,
-          [cameraId, rtspUrl, name],
+          `UPDATE cameras SET rtsp_url = $2, name = $3, playback_meta = $4 WHERE id = $1`,
+          [cameraId, rtspUrl, name, JSON.stringify(playbackMeta)],
         );
       } else {
         const inserted = await this.pool.query<{ id: string }>(
-          `INSERT INTO cameras (tenant_id, outlet_id, bridge_id, name, rtsp_url, device_id)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO cameras (tenant_id, outlet_id, bridge_id, name, rtsp_url, device_id, playback_meta)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING id`,
-          [tenantId, device.assigned_outlet_id, bridgeId, name, rtspUrl, channelDeviceId],
+          [tenantId, device.assigned_outlet_id, bridgeId, name, rtspUrl, channelDeviceId, JSON.stringify(playbackMeta)],
         );
         cameraId = inserted.rows[0]!.id;
       }
       firstId = firstId ?? cameraId;
       if (this.bridgeDispatch) {
-        this.bridgeDispatch.dispatchStreamStart(device.assigned_outlet_id, { cameraId, rtspUrl });
+        // Pass the plaintext creds now (we have them at confirm); ongoing
+        // reconnects re-derive them from the encrypted playback_meta.
+        this.bridgeDispatch.dispatchStreamStart(device.assigned_outlet_id, {
+          cameraId,
+          rtspUrl,
+          username: username || undefined,
+          password: password || undefined,
+        });
       }
     }
     this.logger.log(

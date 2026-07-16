@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
@@ -149,7 +150,7 @@ const DEVICE_TYPE_TO_CATEGORY: Record<
  * request input, so a compromised agent can never widen its scope.
  */
 @Injectable()
-export class DeviceRegistryService implements OnModuleInit {
+export class DeviceRegistryService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DeviceRegistryService.name);
 
   /** Last-known online state per bridge, for offline/online transition alerts. */
@@ -166,8 +167,27 @@ export class DeviceRegistryService implements OnModuleInit {
    * so unit tests that construct the service with just a pool are not forced to
    * provide an event bus.
    */
+  /** Heartbeat is considered stale (bridge down) after this long with no beat. */
+  private static readonly LIVENESS_STALE_MS = 90_000;
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+
   onModuleInit(): void {
     this.subscribeToBridge();
+    // Backstop: even if a disconnect event is missed (socket.io detects a dead
+    // agent slowly, or the gateway status flip is stale), reconcile device
+    // liveness from branch_bridges.last_seen_at every 30s so topology + alerts
+    // reflect reality. Guarded so unit tests (no bus/pool) don't start a timer.
+    if (this.bridgeEvents && !this.reconcileTimer) {
+      this.reconcileTimer = setInterval(() => void this.reconcileLiveness(), 30_000);
+      if (typeof this.reconcileTimer.unref === 'function') this.reconcileTimer.unref();
+    }
+  }
+
+  onModuleDestroy(): void {
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
   }
 
   /** Subscribe to liveness events. Safe to call when no bus is wired (tests). */
@@ -184,10 +204,9 @@ export class DeviceRegistryService implements OnModuleInit {
   }
 
   /**
-   * Update every device on a bridge and, on a state TRANSITION, emit a
-   * device.offline / device.online domain event so the AI monitoring feed +
-   * realtime dashboard can alert that a branch's edge went down / recovered.
-   * The initial heartbeat (undefined → online) is silent (not an incident).
+   * Fast path: a heartbeat / disconnect event flips a bridge's devices and (on a
+   * TRANSITION) emits a device.offline/online domain event. The initial heartbeat
+   * (undefined → online) is silent (not an incident).
    */
   private async handleBridgeLiveness(
     bridgeId: string,
@@ -196,6 +215,46 @@ export class DeviceRegistryService implements OnModuleInit {
     online: boolean,
   ): Promise<void> {
     await this.setStatusForBridge(bridgeId, online ? 'online' : 'offline');
+    await this.emitTransition(bridgeId, tenantId, outletId, online);
+  }
+
+  /**
+   * Backstop path: derive each bridge's liveness from branch_bridges.last_seen_at
+   * (stale ⇒ offline) — independent of the disconnect event firing — and sync its
+   * devices' status + emit transitions. This is what guarantees topology flips a
+   * branch's devices offline within ~30-120s of its agent dying.
+   */
+  private async reconcileLiveness(): Promise<void> {
+    try {
+      const staleSec = Math.floor(DeviceRegistryService.LIVENESS_STALE_MS / 1000);
+      const res = await this.pool.query<{
+        id: string; tenant_id: string; outlet_id: string; online: boolean;
+      }>(
+        `SELECT id, tenant_id, outlet_id,
+                (status = 'online' AND last_seen_at IS NOT NULL
+                 AND last_seen_at > NOW() - ($1 || ' seconds')::interval) AS online
+         FROM branch_bridges`,
+        [String(staleSec)],
+      );
+      for (const b of res.rows) {
+        // Only touch DB when the current device status disagrees, to avoid churn.
+        await this.setStatusForBridge(b.id, b.online ? 'online' : 'offline');
+        await this.emitTransition(b.id, b.tenant_id, b.outlet_id, b.online);
+      }
+    } catch (err) {
+      this.logger.error(
+        `Liveness reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Emit device.offline/online on a real transition (deduped via bridgeOnline). */
+  private async emitTransition(
+    bridgeId: string,
+    tenantId: string,
+    outletId: string,
+    online: boolean,
+  ): Promise<void> {
     const prev = this.bridgeOnline.get(bridgeId);
     if (prev === online) return; // no change
     this.bridgeOnline.set(bridgeId, online);

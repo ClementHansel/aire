@@ -53,8 +53,18 @@ export interface CctvCamera {
   isActive: boolean;
   isStreaming: boolean;
   lastFrameAt: string | null;
+  playbackMeta?: CameraPlaybackMeta;
   createdAt: string;
   updatedAt: string;
+}
+
+/** NVR playback metadata; `vendor` present ⇒ the camera's archive is available. */
+export interface CameraPlaybackMeta {
+  vendor?: 'hikvision' | 'dahua' | 'onvif';
+  host?: string;
+  channel?: number;
+  stream?: 'main' | 'sub';
+  onvif?: boolean;
 }
 
 export interface CctvRecording {

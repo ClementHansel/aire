@@ -342,45 +342,165 @@ const OUI_VENDORS: Record<string, { vendor: string; hint?: DeviceType }> = {
   'f4:6d:2f': { vendor: 'Ubiquiti', hint: 'router' },
 };
 
-/** One camera channel behind an NVR/DVR, resolved via ONVIF. */
+export type NvrVendor = 'hikvision' | 'dahua' | 'onvif';
+
+/** One camera channel behind an NVR/DVR. `rtsp_url` is CREDENTIAL-LESS. */
 export interface NvrChannel {
   name: string;
   token: string;
-  rtsp_url: string;
+  channel: number; // 1-based NVR channel
+  stream: 'main' | 'sub';
+  rtsp_url: string; // rtsp://host:port/path — no credentials (injected at stream time)
+  vendor: NvrVendor;
+}
+
+/** Inject (or replace) user:pass in an rtsp:// URL. Empty user → unchanged. */
+export function injectRtspCreds(url: string, username: string, password: string): string {
+  if (!username) return url;
+  return url.replace(
+    /^rtsp:\/\/(?:[^@/]*@)?/i,
+    `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password)}@`,
+  );
+}
+
+/** Strip any credentials from an rtsp:// URL. */
+export function stripRtspCreds(url: string): string {
+  return url.replace(/^(rtsp:\/\/)(?:[^@/]*@)/i, '$1');
+}
+
+/** Detect NVR vendor from an ONVIF/scan manufacturer string. */
+export function detectNvrVendor(manufacturer?: string | null): NvrVendor {
+  const m = (manufacturer ?? '').toLowerCase();
+  if (m.includes('hikvision') || m.includes('hik')) return 'hikvision';
+  if (m.includes('dahua')) return 'dahua';
+  return 'onvif';
+}
+
+/** Vendor LIVE channel URL (credential-less). */
+export function nvrLiveUrl(
+  vendor: NvrVendor,
+  host: string,
+  port: number,
+  channel: number,
+  stream: 'main' | 'sub',
+): string {
+  if (vendor === 'dahua') {
+    return `rtsp://${host}:${port}/cam/realmonitor?channel=${channel}&subtype=${stream === 'sub' ? 1 : 0}`;
+  }
+  // Hikvision layout is the de-facto default for most kits.
+  return `rtsp://${host}:${port}/Streaming/Channels/${channel}${stream === 'sub' ? '02' : '01'}`;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+/** Hikvision playback time: YYYYMMDDThhmmssZ (UTC). */
+function fmtHikTime(iso: string): string {
+  const d = new Date(iso);
+  return (
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
+    `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
+  );
+}
+/** Dahua playback time: YYYY_MM_DD_HH_MM_SS (UTC). */
+function fmtDahuaTime(iso: string): string {
+  const d = new Date(iso);
+  return (
+    `${d.getUTCFullYear()}_${pad(d.getUTCMonth() + 1)}_${pad(d.getUTCDate())}` +
+    `_${pad(d.getUTCHours())}_${pad(d.getUTCMinutes())}_${pad(d.getUTCSeconds())}`
+  );
+}
+
+/** Vendor PLAYBACK (archive) URL for a time window (credential-less). */
+export function nvrPlaybackUrl(
+  vendor: NvrVendor,
+  host: string,
+  port: number,
+  channel: number,
+  startIso: string,
+  endIso: string,
+): string {
+  if (vendor === 'dahua') {
+    return (
+      `rtsp://${host}:${port}/cam/playback?channel=${channel}&subtype=0` +
+      `&starttime=${fmtDahuaTime(startIso)}&endtime=${fmtDahuaTime(endIso)}`
+    );
+  }
+  return (
+    `rtsp://${host}:${port}/Streaming/tracks/${channel}01` +
+    `?starttime=${fmtHikTime(startIso)}&endtime=${fmtHikTime(endIso)}`
+  );
+}
+
+/** True if ffprobe can open the RTSP URL within the timeout (channel exists). */
+async function rtspOpens(ffprobePath: string, url: string, timeoutMs: number): Promise<boolean> {
+  try {
+    await execFileAsync(
+      ffprobePath,
+      ['-rtsp_transport', 'tcp', '-i', url, '-show_entries', 'format=duration', '-of', 'csv=p=0'],
+      { timeout: timeoutMs },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Enumerate the camera channels behind an NVR/DVR over ONVIF (requires the
- * device's credentials). Returns one entry per media profile with its concrete
- * RTSP stream URI, so the cloud can create a `cameras` row per channel. Any
- * failure (wrong creds, non-ONVIF NVR, timeout) resolves to [] — never throws —
- * so confirming the NVR still succeeds (registry-only) when channels can't be read.
+ * Enumerate the camera channels behind an NVR/DVR. Tries ONVIF first (exact,
+ * vendor-agnostic); on failure (ONVIF disabled — common on cheap kits) falls
+ * back to probing vendor RTSP templates channel-by-channel with ffprobe. Returns
+ * CREDENTIAL-LESS urls + channel metadata; never throws (→ [] so the NVR still
+ * registers). Credentials are only used to authenticate the probe here.
  */
 export async function enumerateNvrChannels(opts: {
+  host: string;
+  port?: number; // ONVIF port (usually 80)
+  rtspPort?: number; // RTSP port (usually 554)
+  username: string;
+  password: string;
+  vendor?: NvrVendor;
+  ffprobePath?: string;
+  maxChannels?: number;
+  timeoutMs?: number;
+}): Promise<NvrChannel[]> {
+  const via = await enumerateViaOnvif(opts).catch(() => [] as NvrChannel[]);
+  if (via.length > 0) return via;
+  return enumerateViaTemplates(opts);
+}
+
+/** ONVIF enumeration: GetProfiles → GetStreamUri per profile (credential-less out). */
+function enumerateViaOnvif(opts: {
   host: string;
   port?: number;
   username: string;
   password: string;
+  vendor?: NvrVendor;
   timeoutMs?: number;
 }): Promise<NvrChannel[]> {
   const { host, username, password } = opts;
   const port = opts.port ?? 80;
+  const timeoutMs = opts.timeoutMs ?? 8000;
   return new Promise<NvrChannel[]>((resolve) => {
-    const timer = setTimeout(() => resolve([]), opts.timeoutMs ?? 8000);
+    const timer = setTimeout(() => resolve([]), timeoutMs);
     try {
-      // The onvif types are loose; use a permissive alias for the callback API.
       const CamAny = Cam as unknown as new (
         o: Record<string, unknown>,
         cb: (err: Error | null) => void,
-      ) => Record<string, (...a: unknown[]) => void>;
+      ) => Record<string, (...a: unknown[]) => void> & { deviceInformation?: unknown };
       const cam = new CamAny(
-        { hostname: host, port, username, password, timeout: opts.timeoutMs ?? 8000 },
+        { hostname: host, port, username, password, timeout: timeoutMs },
         (err: Error | null) => {
           if (err) {
             clearTimeout(timer);
             resolve([]);
             return;
           }
+          const vendor =
+            opts.vendor ??
+            detectNvrVendor(
+              (cam.deviceInformation as { manufacturer?: string } | undefined)?.manufacturer,
+            );
           cam.getProfiles((pErr: unknown, profiles: unknown) => {
             const list = Array.isArray(profiles) ? profiles : [];
             if (pErr || list.length === 0) {
@@ -392,21 +512,21 @@ export async function enumerateNvrChannels(opts: {
             let pending = list.length;
             list.forEach((p: Record<string, unknown>, idx: number) => {
               const token =
-                (p?.$ as Record<string, unknown>)?.token ??
-                p?.token ??
-                `profile-${idx + 1}`;
+                (p?.$ as Record<string, unknown>)?.token ?? p?.token ?? `profile-${idx + 1}`;
               const name = (p?.name as string) ?? `Channel ${idx + 1}`;
               cam.getStreamUri(
                 { protocol: 'RTSP', profileToken: token },
                 (sErr: unknown, stream: unknown) => {
                   const uri = (stream as { uri?: string })?.uri;
                   if (!sErr && uri) {
-                    // Embed creds so the relay can pull without a separate auth step.
-                    const withAuth = uri.replace(
-                      /^rtsp:\/\//i,
-                      `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password)}@`,
-                    );
-                    channels.push({ name, token: String(token), rtsp_url: withAuth });
+                    channels.push({
+                      name,
+                      token: String(token),
+                      channel: idx + 1,
+                      stream: idx % 2 === 1 ? 'sub' : 'main',
+                      rtsp_url: stripRtspCreds(uri),
+                      vendor,
+                    });
                   }
                   pending -= 1;
                   if (pending === 0) {
@@ -424,6 +544,45 @@ export async function enumerateNvrChannels(opts: {
       resolve([]);
     }
   });
+}
+
+/** Vendor-template fallback: probe channels 1..N (main) via ffprobe, stop at the first gap. */
+async function enumerateViaTemplates(opts: {
+  host: string;
+  rtspPort?: number;
+  username: string;
+  password: string;
+  vendor?: NvrVendor;
+  ffprobePath?: string;
+  maxChannels?: number;
+  timeoutMs?: number;
+}): Promise<NvrChannel[]> {
+  const vendor = opts.vendor ?? 'hikvision';
+  const rtspPort = opts.rtspPort ?? 554;
+  const ffprobe = opts.ffprobePath ?? 'ffprobe';
+  const max = opts.maxChannels ?? 16;
+  const perProbe = opts.timeoutMs ?? 4000;
+  const channels: NvrChannel[] = [];
+  for (let ch = 1; ch <= max; ch += 1) {
+    const mainUrl = nvrLiveUrl(vendor, opts.host, rtspPort, ch, 'main');
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await rtspOpens(ffprobe, injectRtspCreds(mainUrl, opts.username, opts.password), perProbe);
+    if (!ok) {
+      if (channels.length > 0) break; // channels are contiguous — first gap ends it
+      if (ch >= 2) break; // ch1 & ch2 both failed → not this vendor / no access
+      continue;
+    }
+    channels.push({ name: `Channel ${ch}`, token: `ch${ch}-main`, channel: ch, stream: 'main', rtsp_url: mainUrl, vendor });
+    channels.push({
+      name: `Channel ${ch} (sub)`,
+      token: `ch${ch}-sub`,
+      channel: ch,
+      stream: 'sub',
+      rtsp_url: nvrLiveUrl(vendor, opts.host, rtspPort, ch, 'sub'),
+      vendor,
+    });
+  }
+  return channels;
 }
 
 /** Look up a MAC's vendor + device-type hint from the built-in OUI table. */
@@ -690,15 +849,18 @@ async function scanTcpSubnet(
       };
     }
     const devices: DiscoveredDeviceInput[] = [];
-    // Concurrency 24 (not 64): a car-wash branch is on wifi, and hammering it
-    // with hundreds of simultaneous sockets causes dropped SYNs (false
-    // negatives) and saturates the link. Slower but far more reliable.
-    await mapWithConcurrency(hosts, 24, async (ip) => {
-      const openPorts: number[] = [];
-      for (const port of PROBE_PORTS) {
-        // eslint-disable-next-line no-await-in-loop
-        if (await probePortReliable(ip, port, timeoutMs)) openPorts.push(port);
-      }
+    // Probe all of a host's ports IN PARALLEL (not sequentially): on a host that
+    // FILTERS closed ports every probe is a full timeout, so a serial 13-port
+    // sweep × retry would blow past the cloud's 30s scan window. Parallel keeps
+    // per-host cost ≈ one timeout regardless of port count. Concurrency 48 hosts
+    // at a time balances speed against saturating a branch's wifi.
+    await mapWithConcurrency(hosts, 48, async (ip) => {
+      const probed = await Promise.all(
+        PROBE_PORTS.map((port) =>
+          probePortReliable(ip, port, timeoutMs).then((open) => (open ? port : null)),
+        ),
+      );
+      const openPorts = probed.filter((p): p is number => p !== null);
       const type = classifyByPorts(openPorts);
       if (type) {
         const cp: Record<string, unknown> = { open_ports: openPorts };

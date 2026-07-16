@@ -101,8 +101,15 @@ export class BridgeDispatchService implements OnModuleInit {
     });
   }
 
-  /** Ask the agent to start relaying a camera's RTSP feed as HLS. Best-effort. */
-  dispatchStreamStart(outletId: string, params: { cameraId: string; rtspUrl: string }): boolean {
+  /**
+   * Ask the agent to start relaying a camera's RTSP feed as HLS. Best-effort.
+   * `username`/`password` (NVR/camera login) are injected into the URL by the
+   * agent at stream time so the credential is never persisted in the DB URL.
+   */
+  dispatchStreamStart(
+    outletId: string,
+    params: { cameraId: string; rtspUrl: string; username?: string; password?: string },
+  ): boolean {
     const sent = this.gateway.emitToOutlet(outletId, 'stream:start', params);
     if (!sent) {
       this.logger.warn(
@@ -115,6 +122,25 @@ export class BridgeDispatchService implements OnModuleInit {
   /** Ask the agent to stop the ffmpeg relay for a camera. Best-effort. */
   dispatchStreamStop(outletId: string, params: { cameraId: string }): boolean {
     return this.gateway.emitToOutlet(outletId, 'stream:stop', params);
+  }
+
+  /** Ask the agent to relay an NVR ARCHIVE (playback) window as a transient HLS session. */
+  dispatchPlaybackStart(
+    outletId: string,
+    params: { sessionId: string; rtspUrl: string; username?: string; password?: string },
+  ): boolean {
+    const sent = this.gateway.emitToOutlet(outletId, 'playback:start', params);
+    if (!sent) {
+      this.logger.warn(
+        `playback:start ${params.sessionId} not delivered — bridge offline (outlet ${outletId})`,
+      );
+    }
+    return sent;
+  }
+
+  /** Ask the agent to stop a playback session. Best-effort. */
+  dispatchPlaybackStop(outletId: string, params: { sessionId: string }): boolean {
+    return this.gateway.emitToOutlet(outletId, 'playback:stop', params);
   }
 
   /**

@@ -307,22 +307,28 @@ function HistoryTab({ outletId, onError }: { outletId: string; onError: (m: stri
   const [recordings, setRecordings] = useState<CctvRecording[] | null>(null);
   // cameraId -> name (RecordingDTO has no cameraName; join to the cameras list).
   const [cameraNames, setCameraNames] = useState<Record<string, string>>({});
+  const [cameras, setCameras] = useState<CctvCamera[]>([]);
   const [playing, setPlaying] = useState<CctvRecording | null>(null);
 
   useEffect(() => {
-    if (!outletId) { setRecordings([]); setCameraNames({}); return; }
+    if (!outletId) { setRecordings([]); setCameraNames({}); setCameras([]); return; }
     Promise.all([
       api.get<CctvRecording[]>(`/cctv/recordings?outletId=${encodeURIComponent(outletId)}`),
       api.get<CctvCamera[]>(`/cctv/cameras?outletId=${encodeURIComponent(outletId)}`).catch(() => [] as CctvCamera[]),
     ])
       .then(([recs, cams]) => {
         setRecordings(recs);
+        setCameras(cams);
         setCameraNames(Object.fromEntries(cams.map((c) => [c.id, c.name])));
       })
       .catch((err) => { setRecordings([]); onError(err instanceof Error ? err.message : 'Failed to load recordings'); });
   }, [outletId, onError]);
 
+  const nvrCams = cameras.filter((c) => c.playbackMeta?.vendor);
+
   return (
+    <div className="space-y-4">
+    {nvrCams.length > 0 && <NvrArchivePanel cameras={nvrCams} onError={onError} />}
     <div className="card p-0 overflow-hidden">
       <TableWrap>
         <thead className="border-b border-border bg-surface-sunken/40">
@@ -360,6 +366,85 @@ function HistoryTab({ outletId, onError }: { outletId: string; onError: (m: stri
         <Modal title={cameraNames[playing.cameraId] || t('dash.cctv.playback', 'Playback')} onClose={() => setPlaying(null)} maxWidth="max-w-3xl">
           <div className="aspect-video">
             <HlsPlayer src={`/cctv/recordings/${playing.id}/index.m3u8`} streamable={false} className="h-full w-full" muted={false} controls autoPlay />
+          </div>
+        </Modal>
+      )}
+    </div>
+    </div>
+  );
+}
+
+/* ── NVR archive scrubber (pull the NVR's own recorded footage on demand) ───── */
+
+function NvrArchivePanel({
+  cameras, onError,
+}: {
+  cameras: CctvCamera[];
+  onError: (m: string) => void;
+}) {
+  const { t } = useI18n();
+  const [cameraId, setCameraId] = useState(cameras[0]?.id ?? '');
+  const toLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const now = new Date();
+  const [start, setStart] = useState(toLocal(new Date(now.getTime() - 3600_000)));
+  const [end, setEnd] = useState(toLocal(now));
+  const [session, setSession] = useState<{ id: string; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const play = async () => {
+    if (!cameraId) return;
+    setBusy(true);
+    try {
+      const { sessionId } = await api.post<{ sessionId: string }>(
+        `/cctv/cameras/${cameraId}/playback`,
+        { start: new Date(start).toISOString(), end: new Date(end).toISOString() },
+      );
+      const name = cameras.find((c) => c.id === cameraId)?.name ?? 'Playback';
+      setSession({ id: sessionId, name });
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Failed to start NVR playback');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const close = () => {
+    if (session) api.delete(`/cctv/playback/${session.id}`).catch(() => undefined);
+    setSession(null);
+  };
+
+  return (
+    <div className="card space-y-3">
+      <div>
+        <h3 className="section-title">{t('dash.cctv.nvrArchive', 'NVR archive')}</h3>
+        <p className="section-description">
+          {t('dash.cctv.nvrArchiveHint', "Play footage recorded on the NVR's own disk for a time window.")}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs">
+          <span className="block text-text-muted mb-1">{t('dash.cctv.camera', 'Camera')}</span>
+          <select className="input-field w-56 py-1.5 text-sm" value={cameraId} onChange={(e) => setCameraId(e.target.value)}>
+            {cameras.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <label className="text-xs">
+          <span className="block text-text-muted mb-1">{t('dash.cctv.from', 'From')}</span>
+          <input type="datetime-local" className="input-field py-1.5 text-sm" value={start} onChange={(e) => setStart(e.target.value)} />
+        </label>
+        <label className="text-xs">
+          <span className="block text-text-muted mb-1">{t('dash.cctv.to', 'To')}</span>
+          <input type="datetime-local" className="input-field py-1.5 text-sm" value={end} onChange={(e) => setEnd(e.target.value)} />
+        </label>
+        <button className="btn-primary text-sm" onClick={play} disabled={busy || !cameraId}>
+          {busy ? t('dash.cctv.starting', 'Starting…') : t('dash.cctv.playArchive', 'Play archive')}
+        </button>
+      </div>
+
+      {session && (
+        <Modal title={`${session.name} — ${t('dash.cctv.archive', 'archive')}`} onClose={close} maxWidth="max-w-3xl">
+          <div className="aspect-video">
+            <HlsPlayer src={`/cctv/playback/${session.id}/index.m3u8`} className="h-full w-full" muted={false} controls autoPlay />
           </div>
         </Modal>
       )}

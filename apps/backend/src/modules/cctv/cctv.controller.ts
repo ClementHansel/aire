@@ -133,6 +133,36 @@ export class CctvController {
     return this.cctvService.stopRecording(user.tenant_id, recordingId);
   }
 
+  // ─── NVR archive playback (on-demand) ────────────────────────────────────────
+
+  /** Start playing the NVR's own recorded archive for a camera + time window. */
+  @Post('cameras/:id/playback')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async startPlayback(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { start?: string; end?: string },
+  ): Promise<{ sessionId: string }> {
+    if (!body?.start || !body?.end) {
+      throw new BadRequestException('start and end (ISO timestamps) are required');
+    }
+    if (isNaN(Date.parse(body.start)) || isNaN(Date.parse(body.end))) {
+      throw new BadRequestException('start/end must be ISO timestamps');
+    }
+    const camera = await this.cctvService.getCamera(user.tenant_id, id);
+    const sessionId = await this.cctvService.startPlayback(camera, body.start, body.end);
+    return { sessionId };
+  }
+
+  @Delete('playback/:sessionId')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  stopPlayback(@Param('sessionId') sessionId: string): { ok: true } {
+    this.cctvService.stopPlayback(sessionId);
+    return { ok: true };
+  }
+
   // ─── Live HLS serving (media, stream-auth) ───────────────────────────────────
 
   @Get('cameras/:id/live.m3u8')
@@ -182,6 +212,26 @@ export class CctvController {
     @Res() res: Response,
   ): Promise<void> {
     const buffer = await this.cctvService.getRecordingSegment(user.tenant_id, id, name);
+    if (!buffer) throw new NotFoundException('Segment not available');
+    this.sendSegment(res, buffer);
+  }
+
+  // ─── NVR playback serving (media, stream-auth) ───────────────────────────────
+
+  @Get('playback/:sessionId/index.m3u8')
+  @UseGuards(StreamAuthGuard)
+  playbackPlaylist(@Param('sessionId') sessionId: string, @Res() res: Response): void {
+    this.sendPlaylist(res, this.cctvService.getPlaybackPlaylist(sessionId));
+  }
+
+  @Get('playback/:sessionId/seg/:name')
+  @UseGuards(StreamAuthGuard)
+  playbackSegment(
+    @Param('sessionId') sessionId: string,
+    @Param('name') name: string,
+    @Res() res: Response,
+  ): void {
+    const buffer = this.cctvService.getPlaybackSegment(sessionId, name);
     if (!buffer) throw new NotFoundException('Segment not available');
     this.sendSegment(res, buffer);
   }

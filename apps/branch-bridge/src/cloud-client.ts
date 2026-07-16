@@ -6,6 +6,8 @@ import type {
   ScanRequest,
   StreamStartRequest,
   StreamStopRequest,
+  PlaybackStartRequest,
+  PlaybackStopRequest,
 } from './types';
 
 const HEARTBEAT_INTERVAL_MS = 15000;
@@ -16,6 +18,8 @@ export interface CloudHandlers {
   onConfigure: (req: ConfigureRequest) => void | Promise<void>;
   onStreamStart: (req: StreamStartRequest) => void | Promise<void>;
   onStreamStop: (req: StreamStopRequest) => void | Promise<void>;
+  onPlaybackStart: (req: PlaybackStartRequest) => void | Promise<void>;
+  onPlaybackStop: (req: PlaybackStopRequest) => void | Promise<void>;
   onCommand: (req: CommandRequest) => void | Promise<void>;
 }
 
@@ -73,6 +77,12 @@ export class CloudClient {
     });
     this.socket.on('stream:stop', (req: StreamStopRequest) => {
       void this.handlers.onStreamStop(req);
+    });
+    this.socket.on('playback:start', (req: PlaybackStartRequest) => {
+      void this.handlers.onPlaybackStart(req);
+    });
+    this.socket.on('playback:stop', (req: PlaybackStopRequest) => {
+      void this.handlers.onPlaybackStop(req);
     });
     this.socket.on('command', (req: CommandRequest) => {
       void this.handlers.onCommand(req);

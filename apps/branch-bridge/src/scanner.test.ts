@@ -9,7 +9,57 @@ import {
   PORT_CAMERA_RTSP,
   PORT_MQTT,
   PORT_HTTP,
+  injectRtspCreds,
+  stripRtspCreds,
+  detectNvrVendor,
+  nvrLiveUrl,
+  nvrPlaybackUrl,
 } from './scanner';
+
+describe('NVR url helpers', () => {
+  it('injects and strips rtsp credentials', () => {
+    expect(injectRtspCreds('rtsp://10.0.0.2:554/x', 'admin', 'p@ss')).toBe(
+      'rtsp://admin:p%40ss@10.0.0.2:554/x',
+    );
+    expect(injectRtspCreds('rtsp://u:old@10.0.0.2/x', 'admin', 'new')).toBe(
+      'rtsp://admin:new@10.0.0.2/x',
+    );
+    expect(injectRtspCreds('rtsp://10.0.0.2/x', '', '')).toBe('rtsp://10.0.0.2/x');
+    expect(stripRtspCreds('rtsp://admin:p@10.0.0.2:554/x')).toBe('rtsp://10.0.0.2:554/x');
+  });
+  it('detects vendor', () => {
+    expect(detectNvrVendor('HIKVISION')).toBe('hikvision');
+    expect(detectNvrVendor('Dahua Technology')).toBe('dahua');
+    expect(detectNvrVendor('Acme')).toBe('onvif');
+    expect(detectNvrVendor(null)).toBe('onvif');
+  });
+  it('builds hikvision live + playback urls (main/sub)', () => {
+    expect(nvrLiveUrl('hikvision', '10.0.0.2', 554, 3, 'main')).toBe(
+      'rtsp://10.0.0.2:554/Streaming/Channels/301',
+    );
+    expect(nvrLiveUrl('hikvision', '10.0.0.2', 554, 3, 'sub')).toBe(
+      'rtsp://10.0.0.2:554/Streaming/Channels/302',
+    );
+    expect(
+      nvrPlaybackUrl('hikvision', '10.0.0.2', 554, 1, '2026-01-02T03:04:05Z', '2026-01-02T04:04:05Z'),
+    ).toBe(
+      'rtsp://10.0.0.2:554/Streaming/tracks/101?starttime=20260102T030405Z&endtime=20260102T040405Z',
+    );
+  });
+  it('builds dahua live + playback urls (main/sub)', () => {
+    expect(nvrLiveUrl('dahua', '10.0.0.2', 554, 2, 'main')).toBe(
+      'rtsp://10.0.0.2:554/cam/realmonitor?channel=2&subtype=0',
+    );
+    expect(nvrLiveUrl('dahua', '10.0.0.2', 554, 2, 'sub')).toBe(
+      'rtsp://10.0.0.2:554/cam/realmonitor?channel=2&subtype=1',
+    );
+    expect(
+      nvrPlaybackUrl('dahua', '10.0.0.2', 554, 2, '2026-01-02T03:04:05Z', '2026-01-02T04:04:05Z'),
+    ).toBe(
+      'rtsp://10.0.0.2:554/cam/playback?channel=2&subtype=0&starttime=2026_01_02_03_04_05&endtime=2026_01_02_04_04_05',
+    );
+  });
+});
 
 describe('classifyByPorts', () => {
   it('maps RTSP 554 -> camera', () => {

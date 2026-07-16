@@ -55,10 +55,25 @@ export interface ConfigureRequest {
 export interface StreamStartRequest {
   cameraId: string;
   rtspUrl: string;
+  /** Optional creds injected into rtspUrl at stream time (kept out of storage). */
+  username?: string;
+  password?: string;
 }
 
 export interface StreamStopRequest {
   cameraId: string;
+}
+
+/** Start relaying an NVR ARCHIVE (playback) window as a transient HLS session. */
+export interface PlaybackStartRequest {
+  sessionId: string;
+  rtspUrl: string; // vendor playback URL (credential-less)
+  username?: string;
+  password?: string;
+}
+
+export interface PlaybackStopRequest {
+  sessionId: string;
 }
 
 export interface CommandRequest {

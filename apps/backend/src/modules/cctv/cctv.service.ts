@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   ConflictException,
+  BadRequestException,
   OnModuleInit,
 } from '@nestjs/common';
 import { Pool } from 'pg';
@@ -13,6 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { StorageService } from '../storage/storage.service';
 import { BridgeDispatchService } from '../bridge/bridge-dispatch.service';
+import { decrypt } from '../settings/encryption.util';
 import {
   BridgeEvents,
   HlsPlaylistEvent,
@@ -21,6 +23,20 @@ import {
 } from '../bridge/bridge.events';
 
 /** A configured CCTV camera (row of the `cameras` table). */
+/**
+ * NVR/vendor playback metadata (cameras.playback_meta). Present on channel
+ * cameras confirmed from an NVR; empty {} for a plain standalone camera.
+ */
+export interface PlaybackMeta {
+  vendor?: 'hikvision' | 'dahua' | 'onvif';
+  host?: string;
+  port?: number; // RTSP port (usually 554)
+  channel?: number;
+  stream?: 'main' | 'sub';
+  cred_enc?: string; // AES-GCM encrypted JSON {username,password}
+  onvif?: boolean;
+}
+
 export interface CameraDTO {
   id: string;
   tenantId: string;
@@ -33,6 +49,7 @@ export interface CameraDTO {
   isActive: boolean;
   isStreaming: boolean;
   lastFrameAt: string | null;
+  playbackMeta: PlaybackMeta;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,6 +117,8 @@ export class CctvService implements OnModuleInit {
   private readonly streaming = new Set<string>();
   /** cameraId → active recording session (at most one per camera). */
   private readonly activeRecordings = new Map<string, ActiveRecording>();
+  /** playback sessionId → { outletId, expiresAt } for on-demand NVR archive VOD. */
+  private readonly playbackSessions = new Map<string, { outletId: string; expiresAt: number }>();
 
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
@@ -200,9 +219,11 @@ export class CctvService implements OnModuleInit {
   private ensureStreaming(camera: CameraDTO): void {
     if (this.streaming.has(camera.id)) return;
     if (this.bridgeDispatch && camera.rtspUrl) {
+      const creds = this.decryptCreds(camera.playbackMeta);
       this.bridgeDispatch.dispatchStreamStart(camera.outletId, {
         cameraId: camera.id,
         rtspUrl: camera.rtspUrl,
+        ...creds,
       });
       this.streaming.add(camera.id);
       void this.pool
@@ -211,6 +232,96 @@ export class CctvService implements OnModuleInit {
         ])
         .catch(() => undefined);
     }
+  }
+
+  /** Decrypt the stored NVR login for a camera, or {} when none/undecryptable. */
+  private decryptCreds(meta: PlaybackMeta | undefined): { username?: string; password?: string } {
+    if (!meta?.cred_enc) return {};
+    try {
+      const { username, password } = JSON.parse(decrypt(meta.cred_enc));
+      return { username, password };
+    } catch (err) {
+      this.logger.error(`Failed decrypting NVR credentials: ${err instanceof Error ? err.message : err}`);
+      return {};
+    }
+  }
+
+  // ─── NVR archive playback (on-demand VOD, credential-less URL built here) ─────
+
+  /**
+   * Start an NVR archive playback session for a camera + time window. Builds the
+   * vendor playback RTSP URL from the camera's playback_meta, decrypts the stored
+   * NVR login, and asks the agent to relay it as a transient HLS session keyed by
+   * a fresh sessionId (served via getPlaybackPlaylist/getPlaybackSegment). Throws
+   * if the camera has no NVR playback metadata.
+   */
+  async startPlayback(camera: CameraDTO, startIso: string, endIso: string): Promise<string> {
+    const m = camera.playbackMeta ?? {};
+    if (!m.vendor || !m.host || !m.channel) {
+      throw new BadRequestException('This camera has no NVR playback metadata (archive not available)');
+    }
+    const rtspUrl = CctvService.buildPlaybackUrl(
+      m.vendor,
+      m.host,
+      m.port ?? 554,
+      m.channel,
+      startIso,
+      endIso,
+    );
+    const creds = this.decryptCreds(m);
+    const sessionId = `pb_${uuidv4()}`;
+    if (this.bridgeDispatch) {
+      this.bridgeDispatch.dispatchPlaybackStart(camera.outletId, { sessionId, rtspUrl, ...creds });
+    }
+    // Session lives ~15 min; getPlaybackPlaylist refreshes the TTL on each poll.
+    this.playbackSessions.set(sessionId, { outletId: camera.outletId, expiresAt: Date.now() + 900_000 });
+    return sessionId;
+  }
+
+  /** Live-style playlist for a playback session (no stream:start dispatch). */
+  getPlaybackPlaylist(sessionId: string): string {
+    const s = this.playbackSessions.get(sessionId);
+    if (s) s.expiresAt = Date.now() + 900_000;
+    return this.livePlaylists.get(sessionId) ?? this.buildLivePlaylist(sessionId);
+  }
+
+  getPlaybackSegment(sessionId: string, name: string): Buffer | null {
+    return this.getLiveSegment(sessionId, name);
+  }
+
+  /** Stop a playback session + free its buffers. */
+  stopPlayback(sessionId: string): void {
+    const s = this.playbackSessions.get(sessionId);
+    if (s && this.bridgeDispatch) {
+      this.bridgeDispatch.dispatchPlaybackStop(s.outletId, { sessionId });
+    }
+    this.playbackSessions.delete(sessionId);
+    this.liveSegments.delete(sessionId);
+    this.livePlaylists.delete(sessionId);
+  }
+
+  /** Vendor archive-playback RTSP URL (credential-less) for a time window. */
+  private static buildPlaybackUrl(
+    vendor: string,
+    host: string,
+    port: number,
+    channel: number,
+    startIso: string,
+    endIso: string,
+  ): string {
+    const p2 = (n: number) => String(n).padStart(2, '0');
+    const hik = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}T${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}Z`;
+    };
+    const dahua = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getUTCFullYear()}_${p2(d.getUTCMonth() + 1)}_${p2(d.getUTCDate())}_${p2(d.getUTCHours())}_${p2(d.getUTCMinutes())}_${p2(d.getUTCSeconds())}`;
+    };
+    if (vendor === 'dahua') {
+      return `rtsp://${host}:${port}/cam/playback?channel=${channel}&subtype=0&starttime=${dahua(startIso)}&endtime=${dahua(endIso)}`;
+    }
+    return `rtsp://${host}:${port}/Streaming/tracks/${channel}01?starttime=${hik(startIso)}&endtime=${hik(endIso)}`;
   }
 
   /** Synthesize a live media playlist from the in-memory ring buffer. */
@@ -480,7 +591,7 @@ export class CctvService implements OnModuleInit {
   }
 
   private static readonly CAMERA_COLUMNS =
-    'id, tenant_id, outlet_id, bridge_id, name, rtsp_url, location, device_id, is_active, is_streaming, last_frame_at, created_at, updated_at';
+    'id, tenant_id, outlet_id, bridge_id, name, rtsp_url, location, device_id, is_active, is_streaming, last_frame_at, playback_meta, created_at, updated_at';
 
   private static readonly RECORDING_COLUMNS =
     'id, tenant_id, outlet_id, camera_id, order_id, status, storage_prefix, segment_count, duration_seconds, started_at, stopped_at';
@@ -497,6 +608,7 @@ export class CctvService implements OnModuleInit {
     isActive: r.is_active,
     isStreaming: r.is_streaming,
     lastFrameAt: r.last_frame_at ? new Date(r.last_frame_at).toISOString() : null,
+    playbackMeta: (r.playback_meta ?? {}) as PlaybackMeta,
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : r.created_at,
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : r.updated_at,
   });
