@@ -85,7 +85,7 @@ export class ReportController {
     // outlet-bound roles are restricted to the branches assigned to them.
     const outletIds = await this.scope.resolveOutletIds(user, outletId);
 
-    return this.reportService.getSummary({
+    return this.reportService.getSummary(user.tenant_id, {
       dateFrom,
       dateTo,
       outletIds,
@@ -109,7 +109,7 @@ export class ReportController {
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
     const outletIds = await this.scope.resolveOutletIds(user, outletId);
     const gran = (['day', 'week', 'month'].includes(granularity ?? '') ? granularity : 'day') as 'day' | 'week' | 'month';
-    return this.reportService.getRevenueSeries({ dateFrom, dateTo, outletIds, businessUnit, granularity: gran });
+    return this.reportService.getRevenueSeries(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit, granularity: gran });
   }
 
   /**
@@ -142,7 +142,7 @@ export class ReportController {
     if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
     const outletIds = await this.scope.resolveOutletIds(user, outletId);
-    return this.reportService.getDailySales({ dateFrom, dateTo, outletIds, businessUnit });
+    return this.reportService.getDailySales(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit });
   }
 
   /**
@@ -158,7 +158,7 @@ export class ReportController {
     if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
     if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
     const outletIds = await this.scope.resolveOutletIds(user, outletId);
-    return this.reportService.getShiftReport({ dateFrom, dateTo, outletIds });
+    return this.reportService.getShiftReport(user.tenant_id, { dateFrom, dateTo, outletIds });
   }
 
   /**
@@ -206,9 +206,9 @@ export class ReportController {
     // ── PDF: a polished, branded business report (KPIs, P&L, charts, tables) ───
     if (format === 'pdf') {
       const [summary, daily, shifts, names, tpl] = await Promise.all([
-        this.reportService.getSummary({ dateFrom, dateTo, outletIds, businessUnit }),
-        this.reportService.getDailySales({ dateFrom, dateTo, outletIds, businessUnit }),
-        this.reportService.getShiftReport({ dateFrom, dateTo, outletIds }),
+        this.reportService.getSummary(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit }),
+        this.reportService.getDailySales(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit }),
+        this.reportService.getShiftReport(user.tenant_id, { dateFrom, dateTo, outletIds }),
         this.reportService.getScopeNames(user.tenant_id, headerOutletId),
         this.docTemplate.get(user.tenant_id, 'report'),
       ]);
@@ -239,8 +239,8 @@ export class ReportController {
     const exportScope = scope === 'daily' ? 'daily' : 'orders';
     const csvContent =
       exportScope === 'daily'
-        ? await this.reportService.exportDailySalesCsv({ dateFrom, dateTo, outletIds, businessUnit })
-        : await this.reportService.exportCsv({ dateFrom, dateTo, outletIds, businessUnit });
+        ? await this.reportService.exportDailySalesCsv(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit })
+        : await this.reportService.exportCsv(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit });
 
     const filename =
       exportScope === 'daily'

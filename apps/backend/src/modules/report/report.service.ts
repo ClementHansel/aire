@@ -22,9 +22,10 @@ export class ReportService {
    * Day-by-day sales: one row per day in the range with order count and
    * revenue (paid/confirmed/completed). Optional outlet filter.
    */
-  async getDailySales(params: ReportQueryParams): Promise<{ date: string; orders: number; revenue: number; paidOrders: number }[]> {
+  async getDailySales(tenantId: string, params: ReportQueryParams): Promise<{ date: string; orders: number; revenue: number; paidOrders: number }[]> {
     const { dateFrom, dateTo, outletIds, businessUnit } = params;
     const qp: unknown[] = [dateFrom, dateTo];
+    qp.push(tenantId); const tf = ` AND tenant_id = $${qp.length}`;
     let filter = '';
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
@@ -34,7 +35,7 @@ export class ReportService {
               COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
               COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS paid
        FROM orders
-       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${filter}
+       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${tf} ${filter}
        GROUP BY day ORDER BY day ASC`,
       qp,
     );
@@ -42,11 +43,12 @@ export class ReportService {
   }
 
   /** Shift-by-shift report: each register session with its sales + cash reconciliation. */
-  async getShiftReport(params: ReportQueryParams): Promise<Record<string, unknown>[]> {
+  async getShiftReport(tenantId: string, params: ReportQueryParams): Promise<Record<string, unknown>[]> {
     const { dateFrom, dateTo, outletIds } = params;
     const qp: unknown[] = [dateFrom, dateTo];
+    qp.push(tenantId); const tf = ` AND s.tenant_id = $${qp.length}`;
     let outletFilter = '';
-    if (outletIds != null) { outletFilter = ' AND s.outlet_id = ANY($3::uuid[])'; qp.push(outletIds); }
+    if (outletIds != null) { outletFilter = ` AND s.outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     const res = await this.pool.query(
       `SELECT s.id, s.operator_name, s.status, s.opening_float, s.closing_counted, s.expected_cash,
               s.variance, s.total_sales, s.cash_sales, s.non_cash_sales, s.order_count, s.opened_at, s.closed_at,
@@ -56,7 +58,7 @@ export class ReportService {
          SELECT COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS outlet_count
          FROM orders WHERE shift_id = s.id
        ) o ON true
-       WHERE s.opened_at >= $1::timestamptz AND s.opened_at < ($2::date + INTERVAL '1 day') ${outletFilter}
+       WHERE s.opened_at >= $1::timestamptz AND s.opened_at < ($2::date + INTERVAL '1 day') ${tf} ${outletFilter}
        ORDER BY s.opened_at DESC`,
       qp,
     );
@@ -79,8 +81,8 @@ export class ReportService {
   }
 
   /** CSV for day-by-day sales. */
-  async exportDailySalesCsv(params: ReportQueryParams): Promise<string> {
-    const rows = await this.getDailySales(params);
+  async exportDailySalesCsv(tenantId: string, params: ReportQueryParams): Promise<string> {
+    const rows = await this.getDailySales(tenantId, params);
     const headers = ['Date', 'Orders', 'Paid Orders', 'Revenue'];
     const lines = [headers.join(','), ...rows.map((r) => [r.date, r.orders, r.paidOrders, r.revenue].join(','))];
     return lines.join('\n');
@@ -90,11 +92,12 @@ export class ReportService {
    * Revenue + order-count time series grouped by day/week/month. Powers the
    * Transaction-tab charts (daily/weekly/monthly/custom range).
    */
-  async getRevenueSeries(params: ReportQueryParams & { granularity?: 'day' | 'week' | 'month' }): Promise<{ period: string; revenue: number; orders: number }[]> {
+  async getRevenueSeries(tenantId: string, params: ReportQueryParams & { granularity?: 'day' | 'week' | 'month' }): Promise<{ period: string; revenue: number; orders: number }[]> {
     const { dateFrom, dateTo, outletIds, businessUnit } = params;
     const gran = params.granularity ?? 'day';
     const trunc = gran === 'month' ? 'month' : gran === 'week' ? 'week' : 'day';
     const qp: unknown[] = [dateFrom, dateTo];
+    qp.push(tenantId); const tf = ` AND tenant_id = $${qp.length}`;
     let filter = '';
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
@@ -103,7 +106,7 @@ export class ReportService {
               COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
               COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS orders
        FROM orders
-       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${filter}
+       WHERE created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day') ${tf} ${filter}
        GROUP BY period ORDER BY period ASC`,
       qp,
     );
@@ -138,7 +141,7 @@ export class ReportService {
    * - byPaymentMethod: GROUP BY payment_method, SUM(total), COUNT(*)
    * - byService: JOIN order_items + services, GROUP BY service, ORDER BY quantity DESC LIMIT 10
    */
-  async getSummary(params: ReportQueryParams): Promise<SummaryResponse> {
+  async getSummary(tenantId: string, params: ReportQueryParams): Promise<SummaryResponse> {
     const { dateFrom, dateTo, outletIds, businessUnit } = params;
 
     const [
@@ -147,10 +150,10 @@ export class ReportService {
       businessUnitResult,
       serviceResult,
     ] = await Promise.all([
-      this.getOverviewStats(dateFrom, dateTo, outletIds, businessUnit),
-      this.getPaymentMethodBreakdown(dateFrom, dateTo, outletIds, businessUnit),
-      this.getBusinessUnitBreakdown(dateFrom, dateTo, outletIds),
-      this.getServiceBreakdown(dateFrom, dateTo, outletIds, businessUnit),
+      this.getOverviewStats(tenantId, dateFrom, dateTo, outletIds, businessUnit),
+      this.getPaymentMethodBreakdown(tenantId, dateFrom, dateTo, outletIds, businessUnit),
+      this.getBusinessUnitBreakdown(tenantId, dateFrom, dateTo, outletIds),
+      this.getServiceBreakdown(tenantId, dateFrom, dateTo, outletIds, businessUnit),
     ]);
 
     return {
@@ -190,11 +193,12 @@ export class ReportService {
    * Returns CSV string with headers: Order Number, Date, Customer, Phone, Status,
    * Payment Method, Total, Items, Note
    */
-  async exportCsv(params: ReportQueryParams): Promise<string> {
+  async exportCsv(tenantId: string, params: ReportQueryParams): Promise<string> {
     const { dateFrom, dateTo, outletIds, businessUnit } = params;
 
     const queryParams: unknown[] = [dateFrom, dateTo];
-    let filter = '';
+    queryParams.push(tenantId); const tf = ` AND o.tenant_id = $${queryParams.length}`;
+    let filter = tf;
     if (outletIds != null) { filter += ` AND o.outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND o.business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
@@ -278,13 +282,14 @@ export class ReportService {
   // ─── Private Helpers ──────────────────────────────────────────────────────────
 
   private async getOverviewStats(
+    tenantId: string,
     dateFrom: string,
     dateTo: string,
     outletIds?: string[] | null,
     businessUnit?: string,
   ): Promise<Omit<SummaryResponse, 'byPaymentMethod' | 'byBusinessUnit' | 'byService'>> {
     const queryParams: unknown[] = [dateFrom, dateTo];
-    let filter = '';
+    queryParams.push(tenantId); let filter = ` AND tenant_id = $${queryParams.length}`;
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
@@ -322,13 +327,14 @@ export class ReportService {
   }
 
   private async getPaymentMethodBreakdown(
+    tenantId: string,
     dateFrom: string,
     dateTo: string,
     outletIds?: string[] | null,
     businessUnit?: string,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
     const queryParams: unknown[] = [dateFrom, dateTo];
-    let filter = '';
+    queryParams.push(tenantId); let filter = ` AND tenant_id = $${queryParams.length}`;
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
@@ -367,12 +373,13 @@ export class ReportService {
    * Always returns both units (zero-filled) so the dashboard can render both P&L views.
    */
   private async getBusinessUnitBreakdown(
+    tenantId: string,
     dateFrom: string,
     dateTo: string,
     outletIds?: string[] | null,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
     const queryParams: unknown[] = [dateFrom, dateTo];
-    let filter = '';
+    queryParams.push(tenantId); let filter = ` AND tenant_id = $${queryParams.length}`;
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
 
     const result = await this.pool.query<{ business_unit: string; revenue: string; count: string }>(
@@ -402,13 +409,14 @@ export class ReportService {
   }
 
   private async getServiceBreakdown(
+    tenantId: string,
     dateFrom: string,
     dateTo: string,
     outletIds?: string[] | null,
     businessUnit?: string,
   ): Promise<ServiceBreakdown[]> {
     const queryParams: unknown[] = [dateFrom, dateTo];
-    let filter = '';
+    queryParams.push(tenantId); let filter = ` AND o.tenant_id = $${queryParams.length}`;
     if (outletIds != null) { filter += ` AND o.outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     if (businessUnit) { filter += ` AND o.business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
