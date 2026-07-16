@@ -37,27 +37,63 @@ export function classifyMdnsService(serviceType: string): DeviceType {
   return 'router';
 }
 
+/** True for a private (RFC1918) IPv4 address. */
+function isPrivateV4(address: string): boolean {
+  const o = address.split('.').map((n) => parseInt(n, 10));
+  if (o.length !== 4 || o.some((n) => Number.isNaN(n))) return false;
+  if (o[0] === 10) return true;
+  if (o[0] === 172 && o[1]! >= 16 && o[1]! <= 31) return true;
+  if (o[0] === 192 && o[1] === 168) return true;
+  return false;
+}
+
 /**
- * Derive the local /24 CIDR from the first non-internal IPv4 interface.
+ * Interface-name patterns that are virtual/host-only adapters (WSL, Docker,
+ * Hyper-V, VirtualBox/VMware, loopback-ish). We DE-PRIORITISE these — a real
+ * branch camera is on the physical LAN, and picking a virtual adapter's subnet
+ * (e.g. WSL's 192.168.208.0/24) makes the scan silently find nothing.
+ */
+function isVirtualAdapter(name: string): boolean {
+  return /vethernet|wsl|docker|hyper-v|virtualbox|vmware|vmnet|loopback|tailscale|zerotier|utun|tun\d|tap\d/i.test(
+    name,
+  );
+}
+
+/**
+ * Every distinct private /24 CIDR across the host's non-internal IPv4
+ * interfaces, physical adapters first (virtual/host-only adapters last).
+ * We scan ALL of them so a machine with WSL/Docker/VPN adapters still covers
+ * the real LAN. Returns e.g. ["192.168.1.0/24", "192.168.208.0/24"].
+ */
+export function deriveLocalSubnets(
+  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces(),
+): string[] {
+  const physical: string[] = [];
+  const virtual: string[] = [];
+  for (const [name, infos] of Object.entries(interfaces)) {
+    if (!infos) continue;
+    for (const info of infos) {
+      // node >=18 reports family as 'IPv4'; older as 4.
+      const isV4 = info.family === 'IPv4' || (info.family as unknown) === 4;
+      if (!isV4 || info.internal || !isPrivateV4(info.address)) continue;
+      const octets = info.address.split('.');
+      if (octets.length !== 4) continue;
+      const cidr = `${octets[0]}.${octets[1]}.${octets[2]}.0/24`;
+      (isVirtualAdapter(name) ? virtual : physical).push(cidr);
+    }
+  }
+  return [...new Set([...physical, ...virtual])];
+}
+
+/**
+ * Derive a single local /24 CIDR — the first PHYSICAL private interface (falls
+ * back to any private interface). Kept for callers/tests that want one subnet.
  * Returns e.g. "192.168.1.0/24", or null when no suitable interface exists.
  */
 export function deriveLocalSubnet(
   interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces(),
 ): string | null {
-  for (const infos of Object.values(interfaces)) {
-    if (!infos) continue;
-    for (const info of infos) {
-      // node >=18 reports family as 'IPv4'; older as 4.
-      const isV4 = info.family === 'IPv4' || (info.family as unknown) === 4;
-      if (isV4 && !info.internal) {
-        const octets = info.address.split('.');
-        if (octets.length === 4) {
-          return `${octets[0]}.${octets[1]}.${octets[2]}.0/24`;
-        }
-      }
-    }
-  }
-  return null;
+  return deriveLocalSubnets(interfaces)[0] ?? null;
 }
 
 /**
@@ -413,15 +449,17 @@ export async function runScan(
   const wanted = options.protocols;
   const want = (p: string) => !wanted || wanted.length === 0 || wanted.includes(p);
 
-  const subnet = options.subnet ?? deriveLocalSubnet() ?? undefined;
+  // An explicit SCAN_SUBNET wins; otherwise scan EVERY private /24 the host is
+  // on (physical adapters first) so WSL/Docker/VPN adapters can't hide the real LAN.
+  const subnets = options.subnet ? [options.subnet] : deriveLocalSubnets();
 
   const tasks: Promise<ProtocolResult>[] = [];
   if (want('onvif')) tasks.push(scanOnvif(timeoutMs));
   if (want('mdns')) tasks.push(scanMdns(timeoutMs));
   if (want('ssdp')) tasks.push(scanSsdp(timeoutMs));
   if (want('tcp')) {
-    if (subnet) {
-      tasks.push(scanTcpSubnet(subnet, 400));
+    if (subnets.length > 0) {
+      for (const subnet of subnets) tasks.push(scanTcpSubnet(subnet, 800));
     } else {
       tasks.push(
         Promise.resolve<ProtocolResult>({
