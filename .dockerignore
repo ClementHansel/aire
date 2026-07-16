@@ -8,6 +8,10 @@ dist
 .next
 **/.next
 
+# TS incremental build cache (poisons composite `tsc` — must never enter the image)
+*.tsbuildinfo
+**/*.tsbuildinfo
+
 # Environment files
 .env
 .env.local
