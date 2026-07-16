@@ -90,10 +90,23 @@ export const TENANT_AUTOMATION_SETTINGS_SCHEMA = {
         type: 'object',
         properties: {
           device_id: { type: 'string', format: 'uuid' },
-          ip_address: { type: 'string', format: 'ipv4' },
+          // Plain string (not ipv4): USB peripherals use a synthetic
+          // `usb:<vid>:<pid>` address since they are not on the network.
+          ip_address: { type: 'string' },
           device_type: {
             type: 'string',
-            enum: ['camera', 'iot_controller', 'router'],
+            enum: [
+              'camera',
+              'nvr',
+              'printer',
+              'barcode_scanner',
+              'iot_controller',
+              'router',
+              'pos_terminal',
+              'kiosk',
+              'tablet',
+              'unknown',
+            ],
           },
           manufacturer: { type: ['string', 'null'] },
           model: { type: ['string', 'null'] },
