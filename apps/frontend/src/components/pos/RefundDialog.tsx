@@ -51,13 +51,13 @@ export function RefundDialog({ orderId, onDone, onCancel }: { orderId: string; o
   }, [orderId]);
 
   const fmt = (n: number) => `Rp ${Math.round(n).toLocaleString('id-ID')}`;
-  const total = data ? data.lines.reduce((s, l) => s + (sel[l.orderItemId]?.on ? sel[l.orderItemId].amount : 0), 0) : 0;
+  const total = data ? data.lines.reduce((s, l) => { const e = sel[l.orderItemId]; return s + (e?.on ? e.amount : 0); }, 0) : 0;
 
   const submit = async () => {
     if (!data) return;
     const items = data.lines
       .filter((l) => sel[l.orderItemId]?.on)
-      .map((l) => ({ orderItemId: l.orderItemId, quantity: sel[l.orderItemId].qty, amount: sel[l.orderItemId].amount }));
+      .map((l) => { const e = sel[l.orderItemId]!; return { orderItemId: l.orderItemId, quantity: e.qty, amount: e.amount }; });
     if (items.length === 0) { setErr(t('pos.refund.selectLine', 'Select at least one line to refund.')); return; }
     if (!reason.trim()) { setErr(t('pos.refund.reasonRequired', 'A refund reason is required.')); return; }
     setBusy(true); setErr('');

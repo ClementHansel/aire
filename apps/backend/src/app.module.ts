@@ -12,7 +12,6 @@ import { CctvModule } from './modules/cctv';
 import { MembershipModule } from './modules/membership';
 import { NotificationModule } from './modules/notification';
 import { OrderModule } from './modules/order';
-import { ReceiptModule } from './modules/receipt';
 import { ReportModule } from './modules/report';
 import { ServiceModule } from './modules/service';
 import { ProductModule } from './modules/product';
@@ -88,7 +87,6 @@ import { BarcodeModule } from './modules/barcode/barcode.module';
     NotificationModule,
     OrderModule,
     PaymentModule,
-    ReceiptModule,
     ReportModule,
     ServiceModule,
     ProductModule,

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 
 /**
  * Payment Gateway section (folded into Settings). Per-tenant online payment
@@ -52,6 +53,8 @@ export default function PaymentGatewaySection() {
           {t('dash.paymentSettings.intro2', ' for testing (charges auto-confirm); switch off and enter your live API key to go live.')}
         </p>
       </div>
+
+      <PaymentSandboxNote />
 
       {msg && <div className="rounded-lg bg-sky-50 border border-sky-200 p-2 text-sm text-sky-800">{msg}</div>}
 

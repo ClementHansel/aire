@@ -1,6 +1,7 @@
 import {
   Injectable,
   Inject,
+  Optional,
   Logger,
   NotFoundException,
   ConflictException,
@@ -9,6 +10,9 @@ import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../notification/notification.service';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
+import { AgentGateway } from './agent.gateway';
 import type { ActionProposal, ToolInvocation, ToolResult } from './agent.types';
 
 /**
@@ -33,6 +37,8 @@ export class ProposalService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly auditService: AuditService,
     private readonly notificationService: NotificationService,
+    @Optional() private readonly gateway?: AgentGateway,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   /**
@@ -78,6 +84,18 @@ export class ProposalService {
 
     const row = result.rows[0]!;
     const proposal = this.mapRowToProposal(row);
+
+    // Live-update the proposal board: the /agent gateway already exposes this
+    // channel; it just was never called on creation (only on resolve).
+    this.gateway?.emitProposalCreated(tenantId, { proposal });
+
+    // Domain event for the AI feed + monitoring throughput (parity with resolve).
+    void this.eventBus?.emit({
+      type: DomainEventType.AgentProposalCreated,
+      tenantId,
+      actor: 'agent',
+      payload: { proposalId: proposal.id, actionType, confidence },
+    });
 
     // Notify tenant owner (Req 6.3)
     await this.notifyTenantOwner(tenantId, proposal);

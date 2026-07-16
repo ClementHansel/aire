@@ -11,6 +11,7 @@ import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import AnnouncementsBanner from '@/components/dashboard/AnnouncementsBanner';
+import { OfflineIndicator } from '@/components/shared/OfflineIndicator';
 import {
   Home, LayoutDashboard, Receipt, Calculator, FileText, TrendingUp,
   Users, CalendarDays, Ticket, TicketPercent, Building2, Droplets,
@@ -218,6 +219,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     // h-screen + overflow-hidden makes the app shell own the viewport; only the
     // <main> region scrolls, so pages never produce a second (body) scrollbar.
     <div className="h-screen overflow-hidden bg-surface flex" data-testid="dashboard-layout">
+      {/* Connectivity banner — warns staff (esp. on-site POS on flaky wifi) that
+          the connection dropped so they don't assume a failed action succeeded. */}
+      <OfflineIndicator />
       {/* Sidebar */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 bg-surface-raised border-r border-border" data-testid="dashboard-sidebar">
         {/* Brand */}

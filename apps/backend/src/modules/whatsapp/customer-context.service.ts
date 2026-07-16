@@ -105,10 +105,10 @@ export class CustomerContextService {
 
   private async activeQueue(tenantId: string, customerId: string) {
     const r = await this.pool.query(
-      `SELECT o.order_number, qe.position, qe.status
-       FROM queue_entries qe JOIN orders o ON o.id = qe.order_id
-       WHERE o.tenant_id = $1 AND o.customer_id = $2 AND qe.status IN ('waiting','in_progress')
-       ORDER BY qe.created_at DESC LIMIT 1`,
+      `SELECT o.order_number, vq.position, vq.status
+       FROM vehicle_queue vq JOIN orders o ON o.id = vq.order_id
+       WHERE o.tenant_id = $1 AND o.customer_id = $2 AND vq.status IN ('waiting','serving')
+       ORDER BY vq.created_at DESC LIMIT 1`,
       [tenantId, customerId],
     );
     const x = r.rows[0];

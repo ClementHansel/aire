@@ -1,19 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KioskController } from './kiosk.controller';
-import { KioskService, KioskQueueStatus, KioskQueueEntry } from './kiosk.service';
+import { KioskService, KioskQueueStatus } from './kiosk.service';
 
 describe('KioskController', () => {
   let controller: KioskController;
   let mockService: {
     getQueueStatus: ReturnType<typeof vi.fn>;
-    joinQueue: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockService = {
       getQueueStatus: vi.fn(),
-      joinQueue: vi.fn(),
     };
     controller = new KioskController(mockService as unknown as KioskService);
   });
@@ -67,61 +65,4 @@ describe('KioskController', () => {
     });
   });
 
-  describe('POST /api/kiosk/join-queue', () => {
-    it('should call service.joinQueue with orderId and outletId', async () => {
-      const mockResult: KioskQueueEntry = {
-        id: 'qe-1',
-        orderId: 'order-1',
-        orderNumber: 'ORD-001',
-        position: 3,
-        priority: 0,
-        isMember: false,
-        estimatedWaitMinutes: 30,
-        createdAt: '2024-07-01T10:00:00.000Z',
-      };
-
-      mockService.joinQueue.mockResolvedValueOnce(mockResult);
-
-      const result = await controller.joinQueue({
-        orderId: 'order-1',
-        outletId: 'outlet-1',
-      });
-
-      expect(mockService.joinQueue).toHaveBeenCalledWith('order-1', 'outlet-1');
-      expect(result).toEqual(mockResult);
-    });
-
-    it('should return queue entry with member priority', async () => {
-      const mockResult: KioskQueueEntry = {
-        id: 'qe-2',
-        orderId: 'order-2',
-        orderNumber: 'ORD-002',
-        position: 1,
-        priority: 10,
-        isMember: true,
-        estimatedWaitMinutes: 0,
-        createdAt: '2024-07-01T10:05:00.000Z',
-      };
-
-      mockService.joinQueue.mockResolvedValueOnce(mockResult);
-
-      const result = await controller.joinQueue({
-        orderId: 'order-2',
-        outletId: 'outlet-1',
-      });
-
-      expect(result.priority).toBe(10);
-      expect(result.isMember).toBe(true);
-    });
-
-    it('should pass through service errors for invalid orders', async () => {
-      mockService.joinQueue.mockRejectedValueOnce(
-        new Error('Order must be paid before joining the queue'),
-      );
-
-      await expect(
-        controller.joinQueue({ orderId: 'order-unpaid', outletId: 'outlet-1' }),
-      ).rejects.toThrow('Order must be paid before joining the queue');
-    });
-  });
 });

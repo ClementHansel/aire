@@ -3,11 +3,12 @@ import { Pool, PoolClient } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { NotificationService, NotificationType } from '../notification/notification.service';
 import { MEMBERSHIP_GRACE_DAYS } from '@aire/shared';
 
 export type MembershipEventType =
   | 'activated' | 'renewed' | 'entered_grace' | 'revoked' | 'expired'
-  | 'suspended' | 'reactivated' | 'cancelled' | 'payment' | 'usage';
+  | 'suspended' | 'reactivated' | 'cancelled' | 'payment' | 'usage' | 'reminder';
 
 export interface MembershipEvent {
   id: string;
@@ -35,15 +36,20 @@ export class MembershipLifecycleService implements OnModuleInit {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
+    @Optional() private readonly notifications?: NotificationService,
   ) {}
 
   onModuleInit(): void {
     // Fire once at boot, then on a coarse interval. Guarded so overlapping runs
     // are skipped. Kept dependency-free (no @nestjs/schedule).
-    void this.runTransitions().catch((e) => this.logger.warn(`initial transition run failed: ${e}`));
-    setInterval(() => {
-      void this.runTransitions().catch((e) => this.logger.warn(`transition run failed: ${e}`));
-    }, TRANSITION_INTERVAL_MS).unref?.();
+    void this.sweep();
+    setInterval(() => { void this.sweep(); }, TRANSITION_INTERVAL_MS).unref?.();
+  }
+
+  /** One maintenance pass: advance statuses first, then send expiry reminders. */
+  private async sweep(): Promise<void> {
+    await this.runTransitions().catch((e) => this.logger.warn(`transition run failed: ${e}`));
+    await this.sendExpiryReminders().catch((e) => this.logger.warn(`expiry reminder run failed: ${e}`));
   }
 
   /**
@@ -121,6 +127,58 @@ export class MembershipLifecycleService implements OnModuleInit {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Send WhatsApp expiry reminders at H-30, H-7, and H-day for active memberships.
+   * Idempotent: a `reminder` membership_event is recorded per milestone, so the
+   * same reminder is never sent twice even across the 6-hourly runs / restarts.
+   * Delivery is best-effort via NotificationService (drained in-process).
+   */
+  async sendExpiryReminders(): Promise<number> {
+    if (!this.notifications) return 0;
+    const due = await this.pool.query<{
+      id: string; tenant_id: string; end_date: string; days_left: number;
+      customer_name: string; customer_phone: string; plan_name: string | null;
+    }>(
+      `SELECT m.id, m.tenant_id, m.end_date::text AS end_date,
+              (m.end_date - CURRENT_DATE) AS days_left,
+              c.name AS customer_name, c.phone AS customer_phone, mp.name AS plan_name
+         FROM memberships m
+         JOIN customers c ON c.id = m.customer_id
+         LEFT JOIN membership_plans mp ON mp.id = m.plan_id
+        WHERE m.status = 'active'
+          AND (m.end_date - CURRENT_DATE) IN (30, 7, 0)
+          AND c.phone IS NOT NULL AND c.phone <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM membership_events e
+             WHERE e.membership_id = m.id
+               AND e.event_type = 'reminder'
+               AND e.payload->>'milestone' = (m.end_date - CURRENT_DATE)::text
+          )`,
+    );
+
+    let sent = 0;
+    for (const r of due.rows) {
+      try {
+        await this.notifications.queueNotification(NotificationType.ExpiryReminder, {
+          phone: r.customer_phone,
+          customerName: r.customer_name ?? '',
+          planName: r.plan_name ?? '',
+          daysRemaining: String(r.days_left),
+          endDate: r.end_date,
+          tenantId: r.tenant_id,
+        });
+        // Record after enqueue so the milestone isn't reminded again (delivery is
+        // fire-and-forget; a failed send is logged by NotificationService).
+        await this.recordEvent(this.pool, r.tenant_id, r.id, 'reminder', { milestone: r.days_left }, 'system');
+        sent++;
+      } catch (e) {
+        this.logger.warn(`expiry reminder for membership ${r.id} failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    if (sent) this.logger.log(`membership expiry reminders sent: ${sent}`);
+    return sent;
   }
 
   /** Append a membership event. Accepts a pool or an in-transaction client. */

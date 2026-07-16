@@ -62,6 +62,22 @@ export class VoucherPackService {
         note: `Voucher Pack: ${template.name}`,
       });
       await client.query('COMMIT');
+      // Emitted at sell time (mirrors MembershipSold) so the AI feed / monitoring
+      // and customer-tagging see the pack sale immediately — VoucherPackIssued only
+      // fires later, after payment, when codes are generated.
+      void this.eventBus?.emit({
+        type: DomainEventType.VoucherPackSold,
+        tenantId: user.tenant_id,
+        outletId: user.outlet_id,
+        actor: user.sub,
+        payload: {
+          orderId: order.id,
+          templateId: template.id,
+          customerId,
+          packSize: template.max_uses,
+          salePrice: parseFloat(template.sale_price),
+        },
+      });
       return {
         order,
         templateId: template.id,

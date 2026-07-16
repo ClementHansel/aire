@@ -19,12 +19,48 @@ pnpm --filter @aire/database migrate
 # Check migration status
 pnpm --filter @aire/database migrate:status
 
-# Seed development data
+# Seed development data (base tenant, outlets, services, demo logins)
 pnpm --filter @aire/database seed
+
+# Seed 6 months of per-branch customer/sales history
+pnpm --filter @aire/database seed:history
 
 # Full reset (development only!)
 pnpm --filter @aire/database reset
 ```
+
+### Comprehensive demo seed (`seed-demo-full.sql`)
+
+`seed.ts` + `seed-history.ts` populate the tenant, outlets, services, customers,
+orders and memberships — but leave every other module empty. `seed-demo-full.sql`
+fills the rest so the whole app demos with live-looking data:
+
+- **HR / payroll** — links every staff login to an `employees` record (**required**:
+  without it, cashier login lands on `/employee` and `GET /me/home` returns 403
+  *"This login is not linked to an employee record"*), plus schedules, attendance,
+  payslips, a payroll run, leave, loans, holidays, custom roles, clock-in shifts.
+- **Inventory / COGS** — product categories, stocked items, movements, UOM
+  conversions, cost components, service recipes (BOM), a closed stock opname.
+- **Procurement** — suppliers, product brands, purchase orders, goods receipts.
+- **Finance / accounting** — chart of accounts, periods, finance settings, balanced
+  journal entries + lines, expenses, inter-branch settlements, petty cash.
+- **Sales / CRM / marketing** — sales targets, commission accruals, leads,
+  promotions + grants, a campaign.
+- **Feedback / revenue-ops** — NPS/CSAT feedback config + responses, refunds,
+  e-Faktur tax invoices, a WhatsApp broadcast campaign.
+- **Ops / vouchers** — legal entities (PT) assigned to branches, bookings, order
+  status logs, voucher packs/codes and outlet voucher books/tickets/counters.
+
+It targets the demo tenant `11111111-1111-1111-1111-111111111111`, is idempotent
+(every block guards on existing rows), and runs in one transaction:
+
+```bash
+# Local docker-compose
+cat database/seed-demo-full.sql | docker exec -i aire-postgres psql -U aire -d aire -v ON_ERROR_STOP=1
+```
+
+Prerequisites: run **after** migrations + `seed` + `seed:history` (it resolves
+outlets, services, staff users, customers and orders that those create).
 
 ## Migration Files
 

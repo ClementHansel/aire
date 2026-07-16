@@ -6,6 +6,7 @@ import {
 } from '@/lib/posDevice';
 import { isAuthenticated, setSession, type AuthSession } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
+import { OfflineIndicator } from '@/components/shared/OfflineIndicator';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
@@ -89,7 +90,9 @@ export default function PosLayout({ children }: { children: React.ReactNode }) {
     } finally { setBusy(false); }
   };
 
-  if (phase === 'ready') return <>{children}</>;
+  // On flaky on-site wifi, warn the cashier the moment connectivity drops so a
+  // failed sale/settlement isn't mistaken for success.
+  if (phase === 'ready') return <><OfflineIndicator />{children}</>;
 
   const Shell = ({ children: inner }: { children: React.ReactNode }) => (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">

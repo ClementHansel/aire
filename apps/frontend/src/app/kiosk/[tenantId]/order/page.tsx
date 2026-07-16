@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { QrScanButton } from '@/components/QrScanButton';
+import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 import { MembershipCard, type CardTemplate } from '@/components/dashboard/MembershipCard';
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
@@ -441,6 +442,7 @@ export default function KioskOrderPage() {
           <div className="card text-center">
             <h2 className="section-title">{t('kiosk.scanToPay', 'Scan to pay')}</h2>
             <p className="text-sm text-text-secondary mt-1">{createdOrder?.orderNumber} · {createdOrder ? fmt(createdOrder.total) : ''}</p>
+            <PaymentSandboxNote className="mt-3 text-left" />
             <img
               src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qr)}`}
               alt="QRIS payment code"

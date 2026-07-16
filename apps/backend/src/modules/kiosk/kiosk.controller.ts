@@ -9,29 +9,17 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { KioskService, KioskQueueStatus, KioskQueueEntry, PublicMenu } from './kiosk.service';
+import { KioskService, KioskQueueStatus, PublicMenu } from './kiosk.service';
 import { KioskOrderService, KioskOrderDto } from './kiosk-order.service';
 import { KioskTokenGuard, KioskCtx, KioskContext } from './kiosk-token.guard';
 import { VehicleCatalogService } from '../vehicle-catalog/vehicle-catalog.service';
 
 /**
- * Request body for joining the queue.
- */
-export interface JoinQueueRequest {
-  orderId: string;
-  outletId: string;
-}
-
-/**
  * Self-service kiosk controller.
  *
- * Provides public-facing endpoints for customers to check queue status
- * and join the queue after payment. No authentication required since
- * these are accessed via QR code scan on the kiosk.
- *
- * Endpoints:
- *   GET  /api/kiosk/queue-status?orderNumber= — Check queue position
- *   POST /api/kiosk/join-queue                — Join queue for a paid order
+ * Provides public-facing endpoints for customers to check queue status and
+ * place self-service orders (which enqueue on the vehicle_queue board). No
+ * authentication required for the public reads; ordering is kiosk-token gated.
  *
  * Requirements: 27.1, 27.2, 27.3
  */
@@ -77,23 +65,6 @@ export class KioskController {
     @Query('orderNumber') orderNumber: string,
   ): Promise<KioskQueueStatus> {
     return this.kioskService.getQueueStatus(orderNumber);
-  }
-
-  /**
-   * POST /api/kiosk/join-queue
-   *
-   * Join the queue for a paid order. Only orders in 'paid' or 'confirmed'
-   * status can join. Customers interact with this after completing payment
-   * on the kiosk interface.
-   *
-   * Requirement 27.2: Self-check-in, service selection, QRIS payment flow.
-   */
-  @Post('join-queue')
-  @HttpCode(HttpStatus.CREATED)
-  async joinQueue(
-    @Body() dto: JoinQueueRequest,
-  ): Promise<KioskQueueEntry> {
-    return this.kioskService.joinQueue(dto.orderId, dto.outletId);
   }
 
   // --- Self-service ordering (kiosk-token authorized) ------------------------

@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import {
   PageHeader, Panel, StatCard, TableWrap, thCls, tdCls, EmptyRow, Spinner,
-  StatusBadge, ErrorBanner, Modal, fmtIDR, fmtDateTime,
+  ErrorBanner, Modal, fmtIDR, fmtDateTime,
 } from '@/components/dashboard/ui';
 import { exportRows } from '@/components/dashboard/CsvTools';
 

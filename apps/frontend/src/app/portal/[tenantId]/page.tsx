@@ -7,6 +7,7 @@ import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
 import { portalApi, getPortalToken, setPortalToken, clearPortalToken, PortalAuthError } from '@/lib/portalApi';
 import { MembershipCard, type CardTemplate } from '@/components/dashboard/MembershipCard';
+import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 
 interface Plate { plate: string; brand?: string; model?: string }
 interface Membership {
@@ -579,6 +580,7 @@ function RenewView({ tenantId, me, onDone }: { tenantId: string; me: MemberResp;
       {err && <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700">{err}</div>}
       {!membership ? <p className="text-sm text-text-muted">{t('portal.renew.noMembership', 'No membership to renew.')}</p> : qr ? (
         <div className="card text-center space-y-3">
+          <PaymentSandboxNote className="text-left" />
           <p className="text-sm text-text-secondary">{t('portal.renew.scan', 'Scan with any QRIS app to pay')}</p>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qr)}`} alt="QRIS" width={220} height={220} className="mx-auto rounded-lg border border-border" />
@@ -657,6 +659,7 @@ function BuyMembershipView({ tenantId, onDone }: { tenantId: string; onDone: () 
       {err && <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700">{err}</div>}
       {buy ? (
         <div className="card text-center space-y-3">
+          <PaymentSandboxNote className="text-left" />
           <p className="text-sm text-text-secondary">{paid ? t('portal.buy.activating', 'Payment received — activating…') : t('portal.renew.scan', 'Scan with any QRIS app to pay')}</p>
           {!paid && (
             // eslint-disable-next-line @next/next/no-img-element

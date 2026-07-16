@@ -156,20 +156,41 @@ export class PaymentService {
    */
   async confirmPaymentByReference(reference: string): Promise<boolean> {
     // Match either the order id (reference_id) or the stored gateway transaction id.
+    // The `AND status = 'ordered'` guard makes this idempotent — a repeated webhook
+    // (or the sandbox auto-confirm racing a real one) matches 0 rows the second time.
     const res = await this.pool.query(
       `UPDATE orders
        SET status = 'paid', paid_at = NOW(), updated_at = NOW()
        WHERE (id::text = $1 OR payment_reference = $1) AND status = 'ordered'
-       RETURNING id`,
+       RETURNING id, tenant_id, outlet_id, order_number, total, payment_method`,
       [reference],
     );
     const updated = (res.rowCount ?? 0) > 0;
     if (updated) {
-      this.logger.log(`Order ${reference} marked paid via webhook`);
+      const row = res.rows[0]!;
+      this.logger.log(`Order ${row.id} marked paid via webhook`);
       void this.eventBus?.emit({
         type: DomainEventType.PaymentConfirmed,
-        payload: { reference, orderId: res.rows[0]?.id },
+        tenantId: row.tenant_id,
+        outletId: row.outlet_id,
+        payload: { reference, orderId: row.id },
         actor: 'payment-gateway',
+      });
+      // CRITICAL: also emit OrderPaid — this is the event the accounting poster,
+      // commission accrual, feedback request and realtime bridge subscribe to.
+      // Without it, gateway-confirmed (QRIS) orders never post to the ledger,
+      // unlike cash/EDC orders settled through OrderService.payOrder.
+      void this.eventBus?.emit({
+        type: DomainEventType.OrderPaid,
+        tenantId: row.tenant_id,
+        outletId: row.outlet_id,
+        actor: 'payment-gateway',
+        payload: {
+          orderId: row.id,
+          orderNumber: row.order_number,
+          total: parseFloat(row.total),
+          paymentMethod: row.payment_method,
+        },
       });
     } else {
       this.logger.warn(`Webhook: no pending order matched reference ${reference}`);

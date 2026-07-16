@@ -286,12 +286,22 @@ export class NotificationService {
 
     this.logger.log(`Notification queued: ${type} (jobId: ${jobId})`);
 
-    // In production, this would be:
-    // await this.notificationQueue.add(type, { ...data }, {
-    //   attempts: RETRY_CONFIG.maxAttempts,
-    //   backoff: { type: 'custom' },
-    //   jobId,
-    // });
+    // No external queue (BullMQ) is wired in this deployment. Rather than leave
+    // the job sitting in the in-memory array forever (which silently dropped
+    // e.g. voucher-book ticket delivery), drain it in-process immediately — a
+    // best-effort send matching the direct sendWhatsApp() callers.
+    // A future BullMQ worker would replace this with durable, retried delivery.
+    void this.processJob(job)
+      .then((r) => {
+        if (!r.success) this.logger.warn(`Queued notification ${jobId} delivery failed: ${r.error}`);
+      })
+      .catch((e) =>
+        this.logger.error(`Queued notification ${jobId} threw: ${e instanceof Error ? e.message : e}`),
+      )
+      .finally(() => {
+        const i = this.jobQueue.indexOf(job);
+        if (i >= 0) this.jobQueue.splice(i, 1);
+      });
 
     return jobId;
   }

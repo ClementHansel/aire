@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
+import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 import { useI18n } from '@/lib/i18n';
 
 interface ServiceDTO {
@@ -669,6 +670,7 @@ export default function NewOrderPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="card w-full max-w-md">
             <h3 className="section-title">{t('pos.new.payment', 'Payment')} — {order.orderNumber}</h3>
+            <PaymentSandboxNote className="mt-3" />
             <div className="mt-4 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span>{fmt(order.subtotal)}</span></div>
               <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.serviceCharge', 'Service charge')}</span><span>{fmt(order.serviceCharge)}</span></div>

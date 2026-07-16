@@ -250,10 +250,9 @@ export class MembershipSellService {
       this.formatDate(hDay),
     ];
 
-    // In production, this would enqueue delayed jobs via BullMQ.
-    // For now, we store the scheduled dates as metadata or emit events.
-    // This is a placeholder that can be extended when NotificationModule is implemented.
-
+    // Actual delivery is handled by MembershipLifecycleService.sendExpiryReminders(),
+    // a daily sweep that WhatsApps the H-30/H-7/H-day reminders idempotently. This
+    // method just returns the computed milestone dates for display on the sell flow.
     return { reminderDates };
   }
 

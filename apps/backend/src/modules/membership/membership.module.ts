@@ -12,10 +12,11 @@ import { MemberLookupService } from './member-lookup.service';
 import { MembershipLifecycleService } from './membership-lifecycle.service';
 import { MembershipIdentityService } from './membership-identity.service';
 import { OrderModule } from '../order/order.module';
+import { NotificationModule } from '../notification/notification.module';
 import { DatabasePoolProvider } from '../auth/database.provider';
 
 @Module({
-  imports: [OrderModule],
+  imports: [OrderModule, NotificationModule],
   controllers: [MembershipPlanController, MembershipSellController, MembershipAdminController, MemberLookupController],
   providers: [MembershipPlanService, MembershipPlateService, MembershipRenewalService, MembershipSellService, MembershipAdminService, MemberLookupService, MembershipLifecycleService, MembershipIdentityService, DatabasePoolProvider],
   exports: [MembershipPlanService, MembershipPlateService, MembershipRenewalService, MembershipSellService, MemberLookupService, MembershipLifecycleService, MembershipIdentityService],

@@ -38,7 +38,6 @@ export enum DomainEventType {
   // Procurement
   SupplierCreated = 'procurement.supplier_created',
   PurchaseOrderCreated = 'procurement.po_created',
-  PurchaseOrderReceived = 'procurement.po_received',
   GoodsReceived = 'procurement.goods_received',
   // Commission
   CommissionAccrued = 'commission.accrued',

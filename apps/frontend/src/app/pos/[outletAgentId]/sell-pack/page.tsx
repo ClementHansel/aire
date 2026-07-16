@@ -18,6 +18,7 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
+import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 import { useI18n } from '@/lib/i18n';
 
 type Tab = 'membership' | 'voucher';
@@ -498,6 +499,7 @@ export default function SellPackPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="card w-full max-w-md">
             <h3 className="section-title">{t('pos.sellpack.payment', 'Payment')} — {sale.order.orderNumber}</h3>
+            <PaymentSandboxNote className="mt-3" />
             <div className="mt-4 flex justify-between text-base font-semibold border-b border-border pb-3">
               <span>{sale.kind === 'membership' ? sale.planName : sale.kind === 'voucher' ? sale.templateName : `${t('pos.sellpack.renewal', 'Renewal')} · ${sale.memberName}`}</span>
               <span className="text-primary-600">{fmt(sale.order.total)}</span>
