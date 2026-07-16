@@ -79,6 +79,9 @@ export enum DomainEventType {
   LoanRepaid = 'hr.loan_repaid',
   PayrollGenerated = 'hr.payroll_generated',
   PayrollFinalized = 'hr.payroll_finalized',
+  // Branch devices / IoT edge (topology + AI monitoring alerts)
+  DeviceOffline = 'device.offline',
+  DeviceOnline = 'device.online',
 }
 
 /** Wildcard channel for subscribers that want every event. */

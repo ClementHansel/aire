@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter } from 'node:events';
+import type { DiscoveredDeviceType } from '../settings/settings.interfaces';
 
 /**
  * Envelope every inbound agent event is tagged with before it is re-emitted on
@@ -18,7 +19,7 @@ export interface DeviceEvent extends BridgeEventContext {
   scanId: string;
   device: {
     ip_address: string;
-    device_type: 'camera' | 'iot_controller' | 'router';
+    device_type: DiscoveredDeviceType;
     manufacturer: string | null;
     model: string | null;
     connection_params?: Record<string, unknown>;

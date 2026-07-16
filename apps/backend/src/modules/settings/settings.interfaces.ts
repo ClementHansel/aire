@@ -55,10 +55,26 @@ export interface ApprovalModes {
 /**
  * A network device found during discovery scanning.
  */
+/**
+ * Device kinds a branch-bridge scan can report. Must stay in sync with the
+ * bridge wire type (apps/branch-bridge/src/types.ts DeviceType) and the
+ * registry mapping (device-registry.service.ts DEVICE_TYPE_TO_CATEGORY).
+ */
+export type DiscoveredDeviceType =
+  | 'camera'
+  | 'nvr'
+  | 'printer'
+  | 'iot_controller'
+  | 'router'
+  | 'pos_terminal'
+  | 'kiosk'
+  | 'tablet'
+  | 'unknown';
+
 export interface DiscoveredDevice {
   device_id: string;
   ip_address: string;
-  device_type: 'camera' | 'iot_controller' | 'router';
+  device_type: DiscoveredDeviceType;
   manufacturer: string | null;
   model: string | null;
   suggested_label: string;

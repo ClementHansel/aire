@@ -1,6 +1,10 @@
 import net from 'node:net';
 import os from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Bonjour } from 'bonjour-service';
+
+const execFileAsync = promisify(execFile);
 import { Client as SsdpClient } from 'node-ssdp';
 import { Discovery, type OnvifProbeMatch } from 'onvif';
 import type {
@@ -13,27 +17,75 @@ import type {
 export const PORT_CAMERA_RTSP = 554;
 export const PORT_MQTT = 1883;
 export const PORT_HTTP = 80;
-export const PROBE_PORTS = [PORT_CAMERA_RTSP, PORT_MQTT, PORT_HTTP];
+/** NVR/DVR service ports (Hikvision 8000, Dahua 37777/37778, XMeye 34567). */
+export const NVR_PORTS = [8000, 37777, 37778, 34567];
+/** Network-printer ports (JetDirect/raw 9100, LPD 515, IPP 631). */
+export const PRINTER_PORTS = [9100, 515, 631];
+/**
+ * Generic web-admin ports that alone imply "a web-managed device" (router /
+ * appliance / camera-or-NVR web UI). HTTPS (443/8443) is deliberately NOT here:
+ * TLS alone is too ambiguous to classify (it's probed for info only).
+ */
+export const WEB_PORTS = [PORT_HTTP, 8080];
 
 /**
- * Classify a device by which of the probed ports are open.
- * Priority: RTSP (camera) > MQTT (iot_controller) > HTTP (router).
- * Returns null when no meaningful port is open.
+ * Every port we TCP-probe on the LAN. Order is not significant; classification
+ * is priority-based in classifyByPorts. Kept modest so a /24 sweep stays fast.
+ */
+export const PROBE_PORTS = [
+  PORT_CAMERA_RTSP,
+  PORT_MQTT,
+  ...NVR_PORTS,
+  ...PRINTER_PORTS,
+  ...WEB_PORTS,
+  443,
+  8443,
+];
+
+/**
+ * Classify a device by which of the probed ports are open, most-specific first:
+ * RTSP -> camera, NVR ports -> nvr, printer ports -> printer, MQTT ->
+ * iot_controller, any web port -> router (generic web-admin fallback; the real
+ * default gateway is re-tagged 'router' explicitly in runScan). null = nothing
+ * meaningful open. NOTE: the existing camera/mqtt/http(=80) contract is
+ * preserved for backward compatibility (see scanner.test.ts).
  */
 export function classifyByPorts(openPorts: number[]): DeviceType | null {
+  const has = (ports: number[]) => ports.some((p) => openPorts.includes(p));
   if (openPorts.includes(PORT_CAMERA_RTSP)) return 'camera';
+  if (has(NVR_PORTS)) return 'nvr';
+  if (has(PRINTER_PORTS)) return 'printer';
   if (openPorts.includes(PORT_MQTT)) return 'iot_controller';
-  if (openPorts.includes(PORT_HTTP)) return 'router';
+  if (has(WEB_PORTS)) return 'router';
   return null;
 }
 
 /**
- * Map an mDNS service type to a device type.
- * `_rtsp._tcp` -> camera, `_mqtt._tcp` -> iot_controller, `_http._tcp` -> router.
+ * Map an mDNS service type to a device type. Covers cameras, printers/scanners,
+ * casting-capable tablets/displays, IoT controllers, and a web-UI fallback.
  */
 export function classifyMdnsService(serviceType: string): DeviceType {
-  if (serviceType.includes('rtsp')) return 'camera';
-  if (serviceType.includes('mqtt')) return 'iot_controller';
+  const s = serviceType.toLowerCase();
+  if (s.includes('rtsp') || s.includes('onvif')) return 'camera';
+  if (
+    s.includes('ipp') ||
+    s.includes('printer') ||
+    s.includes('pdl-datastream') ||
+    s.includes('scanner') ||
+    s.includes('uscan')
+  ) {
+    return 'printer';
+  }
+  if (
+    s.includes('airplay') ||
+    s.includes('raop') ||
+    s.includes('googlecast') ||
+    s.includes('spotify-connect') ||
+    s.includes('androidtvremote')
+  ) {
+    return 'tablet';
+  }
+  if (s.includes('mqtt')) return 'iot_controller';
   return 'router';
 }
 
@@ -174,6 +226,98 @@ function hostFromUrl(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Read the OS ARP cache into an ip -> MAC map. A TCP connect (our port probe)
+ * populates the cache, so this is called AFTER the sweep. Best-effort: parses
+ * both Windows (`arp -a`, dashes) and Linux/mac (`ip neigh` / `arp -an`, colons).
+ */
+export async function readArpTable(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const parse = (text: string) => {
+    // Match "192.168.1.5 ... aa-bb-cc-dd-ee-ff" or "... aa:bb:cc:dd:ee:ff"
+    const re =
+      /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[^\n]*?([0-9a-fA-F]{2}([:-])[0-9a-fA-F]{2}(\3[0-9a-fA-F]{2}){4})/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const ip = m[1]!;
+      const mac = m[2]!.replace(/-/g, ':').toLowerCase();
+      if (mac !== 'ff:ff:ff:ff:ff:ff' && mac !== '00:00:00:00:00:00') {
+        map.set(ip, mac);
+      }
+    }
+  };
+  const cmds: [string, string[]][] =
+    process.platform === 'win32'
+      ? [['arp', ['-a']]]
+      : [
+          ['ip', ['neigh']],
+          ['arp', ['-an']],
+        ];
+  for (const [cmd, args] of cmds) {
+    try {
+      const { stdout } = await execFileAsync(cmd, args, { timeout: 4000 });
+      parse(stdout);
+      if (map.size > 0) break;
+    } catch {
+      /* try next command */
+    }
+  }
+  return map;
+}
+
+/**
+ * Tiny built-in OUI (first 3 MAC octets) -> vendor + likely device-type map for
+ * the hardware a car-wash branch actually runs. Not exhaustive; a null vendor
+ * just means "unknown", never an error.
+ */
+const OUI_VENDORS: Record<string, { vendor: string; hint?: DeviceType }> = {
+  // Cameras / NVRs
+  '44:19:b6': { vendor: 'Hikvision', hint: 'camera' },
+  'c0:56:e3': { vendor: 'Hikvision', hint: 'camera' },
+  '4c:bd:8f': { vendor: 'Hikvision', hint: 'camera' },
+  '3c:ef:8c': { vendor: 'Dahua', hint: 'camera' },
+  '90:02:a9': { vendor: 'Dahua', hint: 'camera' },
+  '00:40:8c': { vendor: 'Axis', hint: 'camera' },
+  'ac:cc:8e': { vendor: 'Axis', hint: 'camera' },
+  // Printers
+  '00:00:48': { vendor: 'Epson', hint: 'printer' },
+  '64:eb:8c': { vendor: 'Seiko Epson', hint: 'printer' },
+  '00:01:90': { vendor: 'Star Micronics', hint: 'printer' },
+  '00:07:4d': { vendor: 'Zebra', hint: 'printer' },
+  '00:80:77': { vendor: 'Brother', hint: 'printer' },
+  '3c:2a:f4': { vendor: 'Brother', hint: 'printer' },
+  '00:1b:a9': { vendor: 'Brother', hint: 'printer' },
+  '9c:93:4e': { vendor: 'Xerox', hint: 'printer' },
+  '00:15:99': { vendor: 'Samsung', hint: 'tablet' },
+  // IoT controllers (ESP32/ESP8266)
+  '24:0a:c4': { vendor: 'Espressif', hint: 'iot_controller' },
+  '30:ae:a4': { vendor: 'Espressif', hint: 'iot_controller' },
+  '7c:9e:bd': { vendor: 'Espressif', hint: 'iot_controller' },
+  'b4:e6:2d': { vendor: 'Espressif', hint: 'iot_controller' },
+  // Tablets / SBCs used as kiosks
+  'b8:27:eb': { vendor: 'Raspberry Pi', hint: 'kiosk' },
+  'dc:a6:32': { vendor: 'Raspberry Pi', hint: 'kiosk' },
+  'e4:5f:01': { vendor: 'Raspberry Pi', hint: 'kiosk' },
+  '3c:5a:b4': { vendor: 'Google', hint: 'tablet' },
+  '68:3e:34': { vendor: 'Apple', hint: 'tablet' },
+  '00:1c:b3': { vendor: 'Apple', hint: 'tablet' },
+  'f0:18:98': { vendor: 'Apple', hint: 'tablet' },
+  // Routers / networking
+  'b0:be:76': { vendor: 'TP-Link', hint: 'router' },
+  '50:c7:bf': { vendor: 'TP-Link', hint: 'router' },
+  '00:0e:8f': { vendor: 'ZTE', hint: 'router' },
+  'f4:6d:2f': { vendor: 'Ubiquiti', hint: 'router' },
+};
+
+/** Look up a MAC's vendor + device-type hint from the built-in OUI table. */
+export function vendorFromMac(
+  mac: string | null | undefined,
+): { vendor: string; hint?: DeviceType } | null {
+  if (!mac) return null;
+  const oui = mac.toLowerCase().split(':').slice(0, 3).join(':');
+  return OUI_VENDORS[oui] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +478,7 @@ async function scanTcpSubnet(
       const type = classifyByPorts(openPorts);
       if (type) {
         const cp: Record<string, unknown> = { open_ports: openPorts };
-        if (type === 'camera') cp.rtsp_url = `rtsp://${ip}:554/`;
+        if (type === 'camera' || type === 'nvr') cp.rtsp_url = `rtsp://${ip}:554/`;
         devices.push({
           ip_address: ip,
           device_type: type,
@@ -344,6 +488,28 @@ async function scanTcpSubnet(
         });
       }
     });
+    // Enrich with MAC + vendor from the ARP cache (populated by the probes above).
+    // A vendor OUI can also REFINE the type — e.g. a host with only a web port
+    // but an Espressif MAC is a controller, a Hikvision MAC a camera, etc.
+    const arp = await readArpTable();
+    for (const d of devices) {
+      const mac = arp.get(d.ip_address);
+      if (!mac) continue;
+      const cp = (d.connection_params ??= {} as Record<string, unknown>);
+      cp.mac = mac;
+      const v = vendorFromMac(mac);
+      if (v) {
+        d.manufacturer = d.manufacturer ?? v.vendor;
+        cp.vendor = v.vendor;
+        // Only let the vendor hint override a weak (web-fallback) classification.
+        if (v.hint && d.device_type === 'router' && v.hint !== 'router') {
+          d.device_type = v.hint;
+          if ((v.hint === 'camera' || v.hint === 'nvr') && !cp.rtsp_url) {
+            cp.rtsp_url = `rtsp://${d.ip_address}:554/`;
+          }
+        }
+      }
+    }
     return { protocol, devices };
   } catch (e) {
     return {
@@ -365,11 +531,18 @@ export function dedupeByIp(
       byIp.set(device.ip_address, device);
       continue;
     }
-    // Prefer a more specific type (camera > iot_controller > router) and merge params.
+    // Prefer a more specific type when the same IP is seen by multiple protocols.
+    // Higher rank = more specific/trustworthy; 'router'/'unknown' are weak fallbacks.
     const rank: Record<DeviceType, number> = {
-      camera: 3,
-      iot_controller: 2,
-      router: 1,
+      camera: 9,
+      nvr: 9,
+      printer: 8,
+      iot_controller: 7,
+      pos_terminal: 6,
+      kiosk: 6,
+      tablet: 5,
+      router: 2,
+      unknown: 1,
     };
     const merged: DiscoveredDeviceInput = {
       ...existing,

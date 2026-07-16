@@ -13,6 +13,9 @@ import {
   HeartbeatEvent,
   BridgeOfflineEvent,
 } from '../bridge/bridge.events';
+import type { DiscoveredDeviceType } from '../settings/settings.interfaces';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 /**
  * The categories a `branch_devices` row can take. `camera | controller |
@@ -23,10 +26,12 @@ import {
  */
 export type DeviceCategory =
   | 'camera'
+  | 'nvr'
   | 'controller'
   | 'printer'
   | 'kiosk'
   | 'pos_terminal'
+  | 'tablet'
   | 'router'
   | 'other';
 
@@ -84,7 +89,7 @@ export interface UpsertDeviceInput {
  */
 export interface DiscoveredDeviceForRegistry {
   device_id?: string;
-  device_type: 'camera' | 'iot_controller' | 'router';
+  device_type: DiscoveredDeviceType;
   ip_address?: string | null;
   mac_address?: string | null;
   manufacturer?: string | null;
@@ -116,8 +121,14 @@ const DEVICE_TYPE_TO_CATEGORY: Record<
   DeviceCategory
 > = {
   camera: 'camera',
+  nvr: 'nvr',
+  printer: 'printer',
   iot_controller: 'controller',
   router: 'router',
+  pos_terminal: 'pos_terminal',
+  kiosk: 'kiosk',
+  tablet: 'tablet',
+  unknown: 'other',
 };
 
 /**
@@ -139,9 +150,13 @@ const DEVICE_TYPE_TO_CATEGORY: Record<
 export class DeviceRegistryService implements OnModuleInit {
   private readonly logger = new Logger(DeviceRegistryService.name);
 
+  /** Last-known online state per bridge, for offline/online transition alerts. */
+  private readonly bridgeOnline = new Map<string, boolean>();
+
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() @Inject(BridgeEvents) private readonly bridgeEvents?: BridgeEvents,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   /**
@@ -158,12 +173,48 @@ export class DeviceRegistryService implements OnModuleInit {
     if (!this.bridgeEvents) return;
     // Heartbeat = the branch's agent is up → its devices are reachable.
     this.bridgeEvents.on('heartbeat', (e: HeartbeatEvent) =>
-      void this.setStatusForBridge(e.bridgeId, 'online'),
+      void this.handleBridgeLiveness(e.bridgeId, e.tenantId, e.outletId, true),
     );
     // The gateway emits this locally when an agent disconnects.
     this.bridgeEvents.on('bridge:offline', (e: BridgeOfflineEvent) =>
-      void this.setStatusForBridge(e.bridgeId, 'offline'),
+      void this.handleBridgeLiveness(e.bridgeId, e.tenantId, e.outletId, false),
     );
+  }
+
+  /**
+   * Update every device on a bridge and, on a state TRANSITION, emit a
+   * device.offline / device.online domain event so the AI monitoring feed +
+   * realtime dashboard can alert that a branch's edge went down / recovered.
+   * The initial heartbeat (undefined → online) is silent (not an incident).
+   */
+  private async handleBridgeLiveness(
+    bridgeId: string,
+    tenantId: string,
+    outletId: string,
+    online: boolean,
+  ): Promise<void> {
+    await this.setStatusForBridge(bridgeId, online ? 'online' : 'offline');
+    const prev = this.bridgeOnline.get(bridgeId);
+    if (prev === online) return; // no change
+    this.bridgeOnline.set(bridgeId, online);
+    if (prev === undefined && online) return; // first sighting, not an incident
+    if (!this.eventBus) return;
+    let devices: string[] = [];
+    try {
+      const r = await this.pool.query<{ name: string }>(
+        `SELECT name FROM branch_devices WHERE bridge_id = $1 ORDER BY name`,
+        [bridgeId],
+      );
+      devices = r.rows.map((row) => row.name);
+    } catch {
+      /* best-effort enrichment */
+    }
+    void this.eventBus.emit({
+      type: online ? DomainEventType.DeviceOnline : DomainEventType.DeviceOffline,
+      tenantId,
+      outletId,
+      payload: { bridgeId, deviceCount: devices.length, devices },
+    });
   }
 
   // ─── Registration ────────────────────────────────────────────────────────────

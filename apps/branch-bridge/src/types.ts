@@ -5,7 +5,16 @@
  * letter-for-letter. Kept local to this app (do NOT import from @aire/shared).
  */
 
-export type DeviceType = 'camera' | 'iot_controller' | 'router';
+export type DeviceType =
+  | 'camera'
+  | 'nvr'
+  | 'printer'
+  | 'iot_controller'
+  | 'router'
+  | 'pos_terminal'
+  | 'kiosk'
+  | 'tablet'
+  | 'unknown';
 
 /**
  * A discovered device reported to the cloud during a scan.

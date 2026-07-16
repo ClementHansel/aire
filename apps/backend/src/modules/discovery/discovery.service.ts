@@ -217,10 +217,16 @@ export class DiscoveryService implements OnModuleInit {
   ): string {
     const typeLabels: Record<DiscoveredDevice['device_type'], string> = {
       camera: 'Camera',
+      nvr: 'NVR',
+      printer: 'Printer',
       iot_controller: 'IoT Controller',
       router: 'Router',
+      pos_terminal: 'POS Terminal',
+      kiosk: 'Kiosk',
+      tablet: 'Tablet',
+      unknown: 'Device',
     };
-    const typeLabel = typeLabels[deviceType];
+    const typeLabel = typeLabels[deviceType] ?? 'Device';
     const mfgLabel = manufacturer && manufacturer.trim() ? manufacturer.trim() : 'Unknown';
     return `${typeLabel} - ${mfgLabel}`;
   }

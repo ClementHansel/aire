@@ -54,10 +54,12 @@ export interface TopologyTree {
  */
 const CATEGORY_ORDER: DeviceCategory[] = [
   'camera',
+  'nvr',
   'controller',
   'printer',
   'kiosk',
   'pos_terminal',
+  'tablet',
   'router',
   'other',
 ];
