@@ -146,6 +146,10 @@ services:
       # Must match WHATSAPP_API_KEY on the waha service below; WAHA rejects /api calls without it.
       WAHA_API_KEY: ${WAHA_API_KEY:-aire_waha_local_key}
       KAPSO_URL: ${KAPSO_URL:-https://app.kapso.ai/api/v1}
+      # Path (inside the container) to the branch-bridge installer zip served by
+      # GET /api/bridges/:id/installer. Mount the built package here; unset/missing
+      # → the endpoint returns 503 and the UI shows the copy-paste command instead.
+      BRANCH_BRIDGE_PACKAGE: ${BRANCH_BRIDGE_PACKAGE:-/opt/branch-bridge-package.zip}
       # Simulation bypass. Default false → real WAHA connection (production).
       # Set WAHA_MOCK=true in .env (the dev overlay defaults it true) to capture
       # outbound in wa_mock_outbox and test the whole pipeline without a live number.
@@ -248,6 +252,9 @@ services:
       WHATSAPP_HOOK_URL: http://backend:4000/api/whatsapp/webhook
       WHATSAPP_HOOK_EVENTS: message
       WAHA_PRINT_QR: "false"
+      # Auto-start every persisted session on boot so a linked number survives
+      # container restarts/redeploys without a fresh QR scan (data is on waha-data).
+      WHATSAPP_RESTART_ALL_SESSIONS: "true"
       # API-key auth. Recent WAHA images require this; the backend sends it as X-Api-Key.
       WHATSAPP_API_KEY: ${WAHA_API_KEY:-aire_waha_local_key}
     ports:
