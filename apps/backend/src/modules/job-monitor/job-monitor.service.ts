@@ -49,7 +49,7 @@ export class JobMonitorService {
       await this.pool.query(
         `INSERT INTO system_jobs
            (job_key, label, last_run_at, last_status, last_detail, last_duration_ms, interval_ms, run_count, error_count, updated_at)
-         VALUES ($1, $2, NOW(), $3, $4, $5, $6, 1, CASE WHEN $3 = 'error' THEN 1 ELSE 0 END, NOW())
+         VALUES ($1, $2, NOW(), $3::text, $4, $5, $6, 1, CASE WHEN $3::text = 'error' THEN 1 ELSE 0 END, NOW())
          ON CONFLICT (job_key) DO UPDATE SET
            label = EXCLUDED.label,
            last_run_at = NOW(),
