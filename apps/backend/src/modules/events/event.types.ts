@@ -18,14 +18,22 @@ export enum DomainEventType {
   // Memberships
   MembershipSold = 'membership.sold',
   MembershipActivated = 'membership.activated',
+  MembershipRenewed = 'membership.renewed',
+  MembershipSuspended = 'membership.suspended',
+  MembershipReactivated = 'membership.reactivated',
   MembershipEnteredGrace = 'membership.entered_grace',
   MembershipRevoked = 'membership.revoked',
   // Vouchers
   VoucherPackSold = 'voucher.pack_sold',
   VoucherPackIssued = 'voucher.pack_issued',
+  VoucherBookSold = 'voucher.book_sold',
   VoucherRedeemed = 'voucher.redeemed',
   // Customers
   CustomerCreated = 'customer.created',
+  // Bookings (scheduled appointments)
+  BookingCreated = 'booking.created',
+  BookingUpdated = 'booking.updated',
+  BookingCancelled = 'booking.cancelled',
   // Agent
   AgentProposalCreated = 'agent.proposal_created',
   AgentToolExecuted = 'agent.tool_executed',
@@ -38,6 +46,7 @@ export enum DomainEventType {
   // Procurement
   SupplierCreated = 'procurement.supplier_created',
   PurchaseOrderCreated = 'procurement.po_created',
+  PurchaseOrderCancelled = 'procurement.po_cancelled',
   GoodsReceived = 'procurement.goods_received',
   // Commission
   CommissionAccrued = 'commission.accrued',
@@ -82,6 +91,16 @@ export enum DomainEventType {
   // Branch devices / IoT edge (topology + AI monitoring alerts)
   DeviceOffline = 'device.offline',
   DeviceOnline = 'device.online',
+  // Tenant lifecycle (SaaS control-plane governance)
+  TenantCreated = 'tenant.created',
+  TenantSuspended = 'tenant.suspended',
+  TenantReactivated = 'tenant.reactivated',
+  TenantCancelled = 'tenant.cancelled',
+  TenantPastDue = 'tenant.past_due',
+  TenantPlanChanged = 'tenant.plan_changed',
+  TenantLimitReached = 'tenant.limit_reached',
+  // SaaS billing (platform subscription invoices)
+  SubscriptionInvoicePaid = 'billing.invoice_paid',
 }
 
 /** Wildcard channel for subscribers that want every event. */

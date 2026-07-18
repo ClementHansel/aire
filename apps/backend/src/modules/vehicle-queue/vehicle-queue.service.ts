@@ -1,6 +1,7 @@
-import { Injectable, Inject, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 export interface QueueEntry {
   id: string; plate: string | null; brand: string | null; model: string | null;
@@ -23,7 +24,34 @@ export interface AddArrivalDto {
  */
 @Injectable()
 export class VehicleQueueService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    @Optional() private readonly realtime?: RealtimeGateway,
+  ) {}
+
+  /**
+   * Push the current live queue for an outlet to the board / POS clients over
+   * Socket.IO. Best-effort — a failed push must never break the mutation. Kept
+   * a socket-only push (not a domain event) because queue churn is high-frequency
+   * and low business value; the `queue:updated` room event is the right channel.
+   */
+  private async pushQueue(tenantId: string, outletId: string): Promise<void> {
+    if (!this.realtime || !outletId) return;
+    try {
+      const entries = await this.list(tenantId, outletId);
+      this.realtime.emitQueueUpdated(outletId, {
+        queue: entries.map((e) => ({
+          id: e.id,
+          position: e.position,
+          orderId: e.orderId ?? '',
+          customerName: e.customerName ?? '',
+          status: e.status,
+        })),
+      });
+    } catch {
+      /* telemetry push, never part of the transaction */
+    }
+  }
 
   async list(tenantId: string, outletId: string, includeDone = false): Promise<QueueEntry[]> {
     const statusFilter = includeDone ? '' : `AND vq.status IN ('waiting','serving')`;
@@ -54,7 +82,9 @@ export class VehicleQueueService {
       [tenantId, dto.outletId, dto.plate ?? null, dto.brand ?? null, dto.model ?? null,
         dto.customerName ?? null, dto.customerPhone ?? null, dto.businessUnit ?? null, dto.note ?? null, position],
     );
-    return this.map(res.rows[0]);
+    const entry = this.map(res.rows[0]);
+    void this.pushQueue(tenantId, dto.outletId);
+    return entry;
   }
 
   async setStatus(tenantId: string, id: string, status: 'waiting' | 'serving' | 'done' | 'cancelled'): Promise<QueueEntry> {
@@ -77,7 +107,9 @@ export class VehicleQueueService {
       [id, tenantId, status],
     );
     if (res.rows.length === 0) throw new NotFoundException('Queue entry not found');
-    return this.map(res.rows[0]);
+    const entry = this.map(res.rows[0]);
+    void this.pushQueue(tenantId, res.rows[0].outlet_id);
+    return entry;
   }
 
   private map = (r: any): QueueEntry => ({

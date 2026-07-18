@@ -16,7 +16,8 @@ describe('PaymentWebhookController', () => {
 
   beforeEach(() => {
     registry = new PaymentProviderRegistry();
-    configResolver = new WebhookConfigResolver();
+    // Real resolver deps aren't exercised here — resolveConfig is spied below.
+    configResolver = new WebhookConfigResolver({ query: vi.fn() } as never, {} as never);
     paymentService = { confirmPaymentByReference: vi.fn().mockResolvedValue(true) };
 
     // Override configResolver to return known secrets
@@ -168,6 +169,61 @@ describe('PaymentWebhookController', () => {
       await expect(
         controller.handleXenditWebhook(payload, 'some_sig'),
       ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  // Multi-tenant hardening: the resolver maps a webhook back to the OWNING tenant
+  // by the order reference in the payload, then returns THAT tenant's config.
+  describe('WebhookConfigResolver (tenant resolution)', () => {
+    let mockPool: { query: ReturnType<typeof vi.fn> };
+    let mockPayment: { getTenantPaymentConfig: ReturnType<typeof vi.fn> };
+    let resolver: WebhookConfigResolver;
+
+    beforeEach(() => {
+      mockPool = { query: vi.fn() };
+      mockPayment = {
+        getTenantPaymentConfig: vi.fn().mockResolvedValue({
+          provider: 'xendit', apiKey: 'tenant_key', webhookSecret: 'tenant_secret',
+        }),
+      };
+      resolver = new WebhookConfigResolver(mockPool as never, mockPayment as never);
+    });
+
+    it('resolves the owning tenant from a Xendit reference_id and returns their config', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-42' }] });
+      const cfg = await resolver.resolveConfig('xendit', {
+        event: 'qr.payment', data: { reference_id: 'order-abc', status: 'PAID' },
+      });
+      // Looked up the order by the extracted reference, then loaded that tenant's config.
+      const [, params] = mockPool.query.mock.calls[0];
+      expect(params[0]).toContain('order-abc');
+      expect(mockPayment.getTenantPaymentConfig).toHaveBeenCalledWith('tenant-42');
+      expect(cfg?.webhookSecret).toBe('tenant_secret');
+    });
+
+    it('resolves from a Stripe metadata.order_id', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-7' }] });
+      await resolver.resolveConfig('stripe', {
+        type: 'payment_intent.succeeded',
+        data: { object: { id: 'pi_1', metadata: { order_id: 'order-xyz' } } },
+      });
+      const [, params] = mockPool.query.mock.calls[0];
+      expect(params[0]).toContain('order-xyz');
+      expect(params[0]).toContain('pi_1');
+      expect(mockPayment.getTenantPaymentConfig).toHaveBeenCalledWith('tenant-7');
+    });
+
+    it('returns null (fail closed) when no order matches', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      const cfg = await resolver.resolveConfig('midtrans', { order_id: 'ghost' });
+      expect(cfg).toBeNull();
+      expect(mockPayment.getTenantPaymentConfig).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the payload carries no reference at all', async () => {
+      const cfg = await resolver.resolveConfig('xendit', { event: 'ping' });
+      expect(cfg).toBeNull();
+      expect(mockPool.query).not.toHaveBeenCalled();
     });
   });
 });

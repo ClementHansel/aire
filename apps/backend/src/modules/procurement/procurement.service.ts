@@ -275,6 +275,11 @@ export class ProcurementService {
       `UPDATE purchase_orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
       [poId],
     );
+    void this.eventBus?.emit({
+      type: DomainEventType.PurchaseOrderCancelled,
+      tenantId, actor: 'system',
+      payload: { poId },
+    });
     return { id: poId, status: 'cancelled' };
   }
 

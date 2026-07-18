@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
+    "docs:build": "node scripts/build-docs.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint src/",

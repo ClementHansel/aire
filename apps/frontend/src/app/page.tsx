@@ -37,7 +37,14 @@ export default function LoginPage() {
       // admins land on the hub. POS is no longer a login destination — it runs on
       // a registered terminal (Dashboard → POS Terminals) where the cashier signs
       // in on the device itself.
-      const dest = session.user.role === 'cashier' ? '/employee' : '/hub';
+      // Honor a safe, same-site ?next= (e.g. a shared /docs deep link); otherwise
+      // employees land on self-service and everyone else on the hub.
+      let next = '';
+      if (typeof window !== 'undefined') {
+        const raw = new URLSearchParams(window.location.search).get('next');
+        if (raw && /^\/[^/]/.test(raw)) next = raw; // relative, single-leading-slash only
+      }
+      const dest = next || (session.user.role === 'cashier' ? '/employee' : '/hub');
       window.location.href = dest;
     } catch (err) {
       const message = err instanceof Error ? err.message : t('auth.login.failed', 'Login failed');

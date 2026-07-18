@@ -788,6 +788,12 @@ export class OrderService {
 
   /**
    * Delete (cancel) an order. Blocked once day-locked. Writes an audit log entry.
+   *
+   * A PAID order cannot be deleted here — money has been collected, so it must go
+   * through the cashier `voidOrder` path (which requires a reason, enforces the
+   * void-authorization rules, and surfaces the refund warning). deleteOrder is for
+   * unpaid/draft orders only; this keeps a single audited path for reversing booked
+   * revenue and prevents a silent back-office delete of a settled sale.
    */
   async deleteOrder(orderId: string, user: JWTPayload): Promise<{ id: string }> {
     const cur = await this.pool.query(
@@ -799,39 +805,163 @@ export class OrderService {
     const row = cur.rows[0];
     if (!row) throw new BadRequestException('Order not found');
     if (row.shift_status === 'closed') throw new BadRequestException('Order is day-locked (its shift is closed) and cannot be deleted');
+    if (['paid', 'confirmed', 'completed'].includes(row.status)) {
+      throw new BadRequestException('This order has been paid. Void it from the POS (a void records the reason and handles the refund) instead of deleting.');
+    }
 
-    // Restock recipe stock deducted for this order — only when transitioning out of
-    // a non-cancelled state, so a repeated cancel never double-restocks.
-    if (row.status !== 'cancelled') {
-      const moves = await this.pool.query<{ item_id: string; quantity: string }>(
-        `SELECT item_id, quantity FROM inventory_movements
-         WHERE reference = $1 AND type = 'sale' AND tenant_id = $2`,
-        [row.order_number, user.tenant_id],
+    // Full reversal in one transaction so a cancelled order never lands in a
+    // half-state: restock, restore vouchers/tickets/promotions, reverse membership
+    // usage + settlement (shared with voidOrder), then flip status + audit atomically.
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Only reverse side-effects when transitioning OUT of a non-cancelled state,
+      // so a repeated cancel never double-restocks (the restock is the one
+      // non-idempotent step; the rest are self-guarding). emitStockAdjusted:true
+      // preserves deleteOrder's per-line InventoryStockAdjusted on the domain bus.
+      if (row.status !== 'cancelled') {
+        await this.reverseOrderSideEffects(client, orderId, row.order_number, user, {
+          label: 'Cancel',
+          source: 'order_cancel',
+          emitStockAdjusted: true,
+        });
+      }
+
+      await client.query(
+        `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [orderId, user.tenant_id],
       );
-      for (const m of moves.rows) {
-        const qty = parseFloat(m.quantity);
-        await this.pool.query(
-          `UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
-          [qty, m.item_id],
-        );
-        await this.pool.query(
-          `INSERT INTO inventory_movements (tenant_id, item_id, type, quantity, reason, reference, actor)
-           VALUES ($1, $2, 'sale_return', $3, $4, $5, $6)`,
-          [user.tenant_id, m.item_id, qty, `Cancel ${row.order_number}`, row.order_number, user.sub],
-        );
+      await client.query(
+        `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+         VALUES ($1, $2, 'order.delete', 'order', $3, $4, $5)`,
+        [user.tenant_id, user.sub, orderId, JSON.stringify({ status: row.status, total: row.total }), JSON.stringify({ status: 'cancelled' })],
+      );
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    // Surface the cancellation on the domain bus (AI feed / monitoring). Paid
+    // orders are refused above, so this is always an unpaid cancellation: wasPaid
+    // is false and the accounting/commission consumers of OrderVoided no-op — but
+    // emitting keeps deleteOrder consistent with voidOrder's event surface.
+    void this.eventBus?.emit({
+      type: DomainEventType.OrderVoided,
+      tenantId: user.tenant_id,
+      actor: user.sub,
+      payload: { orderId, wasPaid: false },
+    });
+    return { id: orderId };
+  }
+
+  /**
+   * Fully reverse an order's side-effects inside a caller-supplied transaction:
+   * restock recipe stock, restore redeemed voucher codes + roll back their packs,
+   * restore shareable voucher tickets, restore promotion quota + drop grants, and
+   * reverse membership usage + void its still-pending settlement entries. Shared by
+   * voidOrder (POS cashier path) and deleteOrder (back-office path) so both perform
+   * an identical, consistent reversal.
+   *
+   * Every step is idempotent EXCEPT the inventory restock (it always adds stock +
+   * writes a sale_return), so callers MUST only invoke this while the order is not
+   * already cancelled: voidOrder throws on a cancelled order; deleteOrder guards on
+   * `status !== 'cancelled'`.
+   *
+   * `opts.label` distinguishes the sale_return reason ('Void' vs 'Cancel'). When
+   * `opts.emitStockAdjusted` is set, an InventoryStockAdjusted domain event fires
+   * once per restocked line (deleteOrder's historical behavior, surfacing the
+   * movement to the AI feed / monitoring). voidOrder passes it false so its external
+   * event surface stays exactly as before (it never emitted per-line adjustments).
+   */
+  private async reverseOrderSideEffects(
+    client: PoolClient,
+    orderId: string,
+    orderNumber: string,
+    user: JWTPayload,
+    opts: { label: string; source?: string; emitStockAdjusted?: boolean },
+  ): Promise<void> {
+    // 1. Restock recipe stock deducted at sale.
+    const moves = await client.query<{ item_id: string; quantity: string }>(
+      `SELECT item_id, quantity FROM inventory_movements
+       WHERE reference = $1 AND type = 'sale' AND tenant_id = $2`,
+      [orderNumber, user.tenant_id],
+    );
+    for (const m of moves.rows) {
+      const qty = parseFloat(m.quantity);
+      await client.query(
+        `UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
+        [qty, m.item_id],
+      );
+      await client.query(
+        `INSERT INTO inventory_movements (tenant_id, item_id, type, quantity, reason, reference, actor)
+         VALUES ($1, $2, 'sale_return', $3, $4, $5, $6)`,
+        [user.tenant_id, m.item_id, qty, `${opts.label} ${orderNumber}`, orderNumber, user.sub],
+      );
+      if (opts.emitStockAdjusted) {
+        void this.eventBus?.emit({
+          type: DomainEventType.InventoryStockAdjusted,
+          tenantId: user.tenant_id,
+          actor: user.sub,
+          payload: { itemId: m.item_id, type: 'adjustment', quantity: qty, source: opts.source ?? 'order_cancel', reference: orderNumber },
+        });
       }
     }
 
-    await this.pool.query(
-      `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+    // 2. Restore redeemed voucher codes + roll back their packs' usage.
+    const restored = await client.query<{ pack_id: string }>(
+      `UPDATE voucher_codes SET status = 'active', redeemed_at = NULL, order_id = NULL
+       WHERE order_id = $1 RETURNING pack_id`,
+      [orderId],
+    );
+    for (const c of restored.rows) {
+      await client.query(
+        `UPDATE voucher_packs
+         SET uses_count = GREATEST(uses_count - 1, 0),
+             status = CASE WHEN status = 'fully_redeemed' THEN 'active' ELSE status END,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [c.pack_id],
+      );
+    }
+    // Shareable voucher tickets.
+    await client.query(
+      `UPDATE voucher_tickets SET status = 'active', redeemed_at = NULL, redeemed_order_id = NULL, redeemed_outlet_id = NULL
+       WHERE redeemed_order_id = $1 AND tenant_id = $2`,
       [orderId, user.tenant_id],
     );
-    await this.pool.query(
-      `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
-       VALUES ($1, $2, 'order.delete', 'order', $3, $4, $5)`,
-      [user.tenant_id, user.sub, orderId, JSON.stringify({ status: row.status, total: row.total }), JSON.stringify({ status: 'cancelled' })],
+
+    // 3. Restore promotion quota + drop the grant rows for this order.
+    const grants = await client.query<{ promotion_id: string }>(
+      `SELECT promotion_id FROM promotion_grants WHERE order_id = $1`,
+      [orderId],
     );
-    return { id: orderId };
+    for (const g of grants.rows) {
+      await client.query(
+        `UPDATE promotions SET used_quota = GREATEST(used_quota - 1, 0), updated_at = NOW() WHERE id = $1`,
+        [g.promotion_id],
+      );
+    }
+    await client.query(`DELETE FROM promotion_grants WHERE order_id = $1`, [orderId]);
+
+    // 4. Reverse membership usage + void any still-pending settlement it accrued.
+    const usages = await client.query<{ id: string }>(
+      `UPDATE membership_usages SET reversed = true, reversed_at = NOW()
+       WHERE order_id = $1 AND reversed = false RETURNING id`,
+      [orderId],
+    );
+    if (usages.rows.length > 0) {
+      const ids = usages.rows.map((u) => u.id);
+      await client.query(
+        `UPDATE settlement_entries SET status = 'void'
+         WHERE usage_id = ANY($1::uuid[]) AND status = 'pending'`,
+        [ids],
+      );
+    }
   }
 
   /**
@@ -906,76 +1036,15 @@ export class OrderService {
     try {
       await client.query('BEGIN');
 
-      // 1. Restock recipe stock deducted at sale (idempotent: only out of a
-      //    non-cancelled state, mirrors deleteOrder).
-      const moves = await client.query<{ item_id: string; quantity: string }>(
-        `SELECT item_id, quantity FROM inventory_movements
-         WHERE reference = $1 AND type = 'sale' AND tenant_id = $2`,
-        [row.order_number, user.tenant_id],
-      );
-      for (const m of moves.rows) {
-        const qty = parseFloat(m.quantity);
-        await client.query(
-          `UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
-          [qty, m.item_id],
-        );
-        await client.query(
-          `INSERT INTO inventory_movements (tenant_id, item_id, type, quantity, reason, reference, actor)
-           VALUES ($1, $2, 'sale_return', $3, $4, $5, $6)`,
-          [user.tenant_id, m.item_id, qty, `Void ${row.order_number}`, row.order_number, user.sub],
-        );
-      }
-
-      // 2. Restore redeemed voucher codes + roll back their packs' usage.
-      const restored = await client.query<{ pack_id: string }>(
-        `UPDATE voucher_codes SET status = 'active', redeemed_at = NULL, order_id = NULL
-         WHERE order_id = $1 RETURNING pack_id`,
-        [orderId],
-      );
-      for (const c of restored.rows) {
-        await client.query(
-          `UPDATE voucher_packs
-           SET uses_count = GREATEST(uses_count - 1, 0),
-               status = CASE WHEN status = 'fully_redeemed' THEN 'active' ELSE status END,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [c.pack_id],
-        );
-      }
-      // Shareable voucher tickets.
-      await client.query(
-        `UPDATE voucher_tickets SET status = 'active', redeemed_at = NULL, redeemed_order_id = NULL, redeemed_outlet_id = NULL
-         WHERE redeemed_order_id = $1 AND tenant_id = $2`,
-        [orderId, user.tenant_id],
-      );
-
-      // 3. Restore promotion quota + drop the grant rows for this order.
-      const grants = await client.query<{ promotion_id: string }>(
-        `SELECT promotion_id FROM promotion_grants WHERE order_id = $1`,
-        [orderId],
-      );
-      for (const g of grants.rows) {
-        await client.query(
-          `UPDATE promotions SET used_quota = GREATEST(used_quota - 1, 0), updated_at = NOW() WHERE id = $1`,
-          [g.promotion_id],
-        );
-      }
-      await client.query(`DELETE FROM promotion_grants WHERE order_id = $1`, [orderId]);
-
-      // 4. Reverse membership usage + void any still-pending settlement it accrued.
-      const usages = await client.query<{ id: string }>(
-        `UPDATE membership_usages SET reversed = true, reversed_at = NOW()
-         WHERE order_id = $1 AND reversed = false RETURNING id`,
-        [orderId],
-      );
-      if (usages.rows.length > 0) {
-        const ids = usages.rows.map((u) => u.id);
-        await client.query(
-          `UPDATE settlement_entries SET status = 'void'
-           WHERE usage_id = ANY($1::uuid[]) AND status = 'pending'`,
-          [ids],
-        );
-      }
+      // Steps 1-4: restock, restore vouchers/tickets, restore promotions, reverse
+      // membership usage + settlement — shared with deleteOrder. voidOrder is only
+      // reached for a non-cancelled order (guarded above), so the non-idempotent
+      // restock is safe. emitStockAdjusted:false keeps voidOrder's historical event
+      // surface unchanged (it never emitted per-line InventoryStockAdjusted).
+      await this.reverseOrderSideEffects(client, orderId, row.order_number, user, {
+        label: 'Void',
+        emitStockAdjusted: false,
+      });
 
       // 5. Cancel the order.
       await client.query(

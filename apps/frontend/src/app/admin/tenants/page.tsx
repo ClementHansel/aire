@@ -13,13 +13,13 @@ import { LegalEntityFields, BranchFields, EMPTY_LEGAL, EMPTY_BRANCH, type LegalE
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-type TenantStatus = 'active' | 'suspended' | 'cancelled';
+type TenantStatus = 'active' | 'past_due' | 'suspended' | 'cancelled';
 interface Tenant {
   id: string; name: string; slug: string; plan: string; status: TenantStatus;
   outlets: number; users: number; orders30d: number; revenue30d: number; lastOrderAt: string | null;
 }
 const STATUS_BADGE: Record<TenantStatus, string> = {
-  active: 'bg-green-50 text-green-700', suspended: 'bg-amber-50 text-amber-700', cancelled: 'bg-rose-50 text-rose-700',
+  active: 'bg-green-50 text-green-700', past_due: 'bg-amber-50 text-amber-700', suspended: 'bg-amber-50 text-amber-700', cancelled: 'bg-rose-50 text-rose-700',
 };
 
 function TenantModal({ initial, onClose, onSaved }: { initial: Tenant | null; onClose: () => void; onSaved: () => void }) {
@@ -225,7 +225,7 @@ export default function AdminTenantsPage() {
       <div className="flex flex-wrap items-center gap-3">
         <input className="input-field max-w-xs" placeholder={t('admin.tenants.searchPlaceholder', 'Search name / slug…')} value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="input-field max-w-[160px]" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="all">{t('admin.tenants.allStatuses', 'All statuses')}</option><option value="active">{t('admin.tenants.statusActive', 'Active')}</option><option value="suspended">{t('admin.tenants.statusSuspended', 'Suspended')}</option><option value="cancelled">{t('admin.tenants.statusCancelled', 'Cancelled')}</option>
+          <option value="all">{t('admin.tenants.allStatuses', 'All statuses')}</option><option value="active">{t('admin.tenants.statusActive', 'Active')}</option><option value="past_due">{t('admin.tenants.statusPastDue', 'Past due')}</option><option value="suspended">{t('admin.tenants.statusSuspended', 'Suspended')}</option><option value="cancelled">{t('admin.tenants.statusCancelled', 'Cancelled')}</option>
         </select>
       </div>
 
@@ -251,7 +251,7 @@ export default function AdminTenantsPage() {
               ) : filtered.map((tenant) => (
                 <tr key={tenant.id} data-testid={`tenant-row-${tenant.id}`} className="hover:bg-surface-sunken/50">
                   <td className={cn(tdCls, 'font-medium')}><Link href={`/admin/tenants/${tenant.slug}`} className="text-primary-600 hover:underline">{tenant.name}</Link></td>
-                  <td className={tdCls}><span className={cn('badge capitalize', STATUS_BADGE[tenant.status])}>{tenant.status}</span></td>
+                  <td className={tdCls}><span className={cn('badge capitalize', STATUS_BADGE[tenant.status])}>{tenant.status.replace(/_/g, ' ')}</span></td>
                   <td className={cn(tdCls, 'capitalize')}>{tenant.plan}</td>
                   <td className={cn(tdCls, 'text-right tabular-nums')}>{tenant.outlets}</td>
                   <td className={cn(tdCls, 'text-right tabular-nums')}>{tenant.users}</td>
@@ -260,8 +260,8 @@ export default function AdminTenantsPage() {
                   <td className={cn(tdCls, 'text-xs text-text-muted whitespace-nowrap')}>{tenant.lastOrderAt ? fmtDate(tenant.lastOrderAt) : '—'}</td>
                   <td className={cn(tdCls, 'text-right whitespace-nowrap')}>
                     <button className="btn-ghost text-xs" onClick={() => setModal({ open: true, editing: tenant })}>{t('admin.tenants.edit', 'Edit')}</button>
-                    {tenant.status === 'active' && <button className="btn-ghost text-xs text-amber-600" onClick={() => act(() => api.patch(`/admin/tenants/${tenant.id}/suspend`))}>{t('admin.tenants.suspend', 'Suspend')}</button>}
-                    {tenant.status === 'suspended' && <button className="btn-ghost text-xs text-green-600" onClick={() => act(() => api.patch(`/admin/tenants/${tenant.id}/reactivate`))}>{t('admin.tenants.reactivate', 'Reactivate')}</button>}
+                    {(tenant.status === 'active' || tenant.status === 'past_due') && <button className="btn-ghost text-xs text-amber-600" onClick={() => act(() => api.patch(`/admin/tenants/${tenant.id}/suspend`))}>{t('admin.tenants.suspend', 'Suspend')}</button>}
+                    {(tenant.status === 'suspended' || tenant.status === 'cancelled') && <button className="btn-ghost text-xs text-green-600" onClick={() => act(() => api.patch(`/admin/tenants/${tenant.id}/reactivate`))}>{t('admin.tenants.reactivate', 'Reactivate')}</button>}
                   </td>
                 </tr>
               ))}

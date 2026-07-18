@@ -4,6 +4,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { NotificationService, NotificationType } from '../notification/notification.service';
+import { JobMonitorService } from '../job-monitor';
 import { MEMBERSHIP_GRACE_DAYS } from '@aire/shared';
 
 export type MembershipEventType =
@@ -37,6 +38,7 @@ export class MembershipLifecycleService implements OnModuleInit {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
     @Optional() private readonly notifications?: NotificationService,
+    @Optional() private readonly jobMonitor?: JobMonitorService,
   ) {}
 
   onModuleInit(): void {
@@ -48,8 +50,19 @@ export class MembershipLifecycleService implements OnModuleInit {
 
   /** One maintenance pass: advance statuses first, then send expiry reminders. */
   private async sweep(): Promise<void> {
-    await this.runTransitions().catch((e) => this.logger.warn(`transition run failed: ${e}`));
+    const started = Date.now();
+    const t = await this.runTransitions().catch((e) => {
+      this.logger.warn(`transition run failed: ${e}`);
+      return null;
+    });
     await this.sendExpiryReminders().catch((e) => this.logger.warn(`expiry reminder run failed: ${e}`));
+    void this.jobMonitor?.recordRun('membership-lifecycle', {
+      label: 'Membership lifecycle (grace/expiry)',
+      status: t ? 'ok' : 'error',
+      durationMs: Date.now() - started,
+      intervalMs: TRANSITION_INTERVAL_MS,
+      detail: t ? `${t.toGrace} → grace, ${t.toRevoked} → revoked` : 'transition run failed',
+    });
   }
 
   /**

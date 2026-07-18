@@ -35,6 +35,11 @@ import {
 import { PlatformInvoiceService, InvoiceStatus } from './platform-invoice.service';
 import { PlatformUserService, CreatePlatformUserDto } from './platform-user.service';
 import { PlatformAnnouncementService, CreateAnnouncementDto } from './platform-announcement.service';
+import { TenantLifecycleService } from './tenant-lifecycle.service';
+import { PlatformOpsService, OpsSeverity } from './platform-ops.service';
+import { PlatformTaxService, PlatformTaxConfig } from './platform-tax.service';
+import { EntitlementService } from '../entitlement';
+import { JobMonitorService } from '../job-monitor';
 
 /**
  * Admin Controller.
@@ -57,6 +62,11 @@ export class AdminController {
     private readonly invoices: PlatformInvoiceService,
     private readonly platformUsers: PlatformUserService,
     private readonly announcements: PlatformAnnouncementService,
+    private readonly lifecycle: TenantLifecycleService,
+    private readonly entitlements: EntitlementService,
+    private readonly ops: PlatformOpsService,
+    private readonly tax: PlatformTaxService,
+    private readonly jobs: JobMonitorService,
     private readonly auth: AuthService,
     private readonly audit: AuditService,
   ) {}
@@ -261,10 +271,19 @@ export class AdminController {
   @Put('tenants/:id')
   @Roles(Role.PlatformSuperAdmin)
   async updateTenant(
+    @CurrentUser() admin: JWTPayload,
     @Param('id') id: string,
     @Body() dto: UpdateTenantDto,
   ): Promise<TenantRecord> {
-    return this.adminService.updateTenant(await this.adminService.resolveTenantId(id), dto);
+    const tenantId = await this.adminService.resolveTenantId(id);
+    // Capture the plan before the edit so a change can be recorded for MRR analytics.
+    const before = dto.plan !== undefined ? (await this.adminService.listTenants()).find((t) => t.id === tenantId)?.plan ?? null : null;
+    const updated = await this.adminService.updateTenant(tenantId, dto);
+    if (dto.plan !== undefined && dto.plan !== before) {
+      this.entitlements.invalidate(tenantId);
+      await this.lifecycle.recordPlanChange(tenantId, before, updated.plan, admin.sub);
+    }
+    return updated;
   }
 
   /** GET /api/admin/tenants/:id/modules — module states (super-admin only). */
@@ -300,15 +319,54 @@ export class AdminController {
   /** PATCH /api/admin/tenants/:id/suspend — suspend tenant (super-admin only). */
   @Patch('tenants/:id/suspend')
   @Roles(Role.PlatformSuperAdmin)
-  async suspendTenant(@Param('id') id: string): Promise<TenantRecord> {
-    return this.adminService.suspendTenant(await this.adminService.resolveTenantId(id));
+  async suspendTenant(
+    @CurrentUser() admin: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { reason?: string } = {},
+  ): Promise<TenantRecord> {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    return this.lifecycle.suspend(tenantId, { reason: body?.reason, actorUserId: admin.sub, source: 'admin' });
   }
 
   /** PATCH /api/admin/tenants/:id/reactivate — reactivate tenant (super-admin only). */
   @Patch('tenants/:id/reactivate')
   @Roles(Role.PlatformSuperAdmin)
-  async reactivateTenant(@Param('id') id: string): Promise<TenantRecord> {
-    return this.adminService.reactivateTenant(await this.adminService.resolveTenantId(id));
+  async reactivateTenant(
+    @CurrentUser() admin: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { reason?: string } = {},
+  ): Promise<TenantRecord> {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    return this.lifecycle.reactivate(tenantId, { reason: body?.reason, actorUserId: admin.sub, source: 'admin' });
+  }
+
+  /** PATCH /api/admin/tenants/:id/cancel — cancel tenant (super-admin only). */
+  @Patch('tenants/:id/cancel')
+  @Roles(Role.PlatformSuperAdmin)
+  async cancelTenant(
+    @CurrentUser() admin: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { reason?: string } = {},
+  ): Promise<TenantRecord> {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    return this.lifecycle.cancel(tenantId, { reason: body?.reason, actorUserId: admin.sub, source: 'admin' });
+  }
+
+  /** GET /api/admin/tenants/:id/status-events — status-change history (super-admin only). */
+  @Get('tenants/:id/status-events')
+  @Roles(Role.PlatformSuperAdmin)
+  async tenantStatusEvents(@Param('id') id: string) {
+    return this.lifecycle.history(await this.adminService.resolveTenantId(id));
+  }
+
+  /**
+   * GET /api/admin/tenants/:id/entitlements — plan limits vs live usage. Available
+   * to a tenant owner for their OWN tenant (self-serve usage view) and to the
+   * super-admin for any tenant.
+   */
+  @Get('tenants/:id/entitlements')
+  async tenantEntitlements(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.entitlements.snapshot((await this.effTenantIdResolved(user, id))!);
   }
 
   /** GET /api/admin/config — platform configuration (read; owners see it read-only). */
@@ -391,6 +449,74 @@ export class AdminController {
   @Roles(Role.PlatformSuperAdmin)
   async analytics(@Query('months') months?: string) {
     return this.metrics.getGrowthAnalytics(months ? parseInt(months, 10) : 12);
+  }
+
+  // ── Ops & alert feed (super-admin only) ──────────────────────────────────────
+
+  /** GET /api/admin/ops-feed — cross-tenant activity/alert stream from domain_events. */
+  @Get('ops-feed')
+  @Roles(Role.PlatformSuperAdmin)
+  async opsFeed(
+    @Query('severity') severity?: OpsSeverity,
+    @Query('tenantId') tenantId?: string,
+    @Query('types') types?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.ops.feed({
+      severity,
+      tenantId,
+      types: types ? types.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+      page: page ? parseInt(page, 10) : 1,
+      pageSize: pageSize ? parseInt(pageSize, 10) : 50,
+    });
+  }
+
+  /** GET /api/admin/alerts-summary — severity counts (24h/7d) for the overview widget. */
+  @Get('alerts-summary')
+  @Roles(Role.PlatformSuperAdmin)
+  async alertsSummary() {
+    return this.ops.alertsSummary();
+  }
+
+  // ── Background-job monitor (super-admin only) ────────────────────────────────
+
+  /** GET /api/admin/jobs — heartbeat status of scheduled background jobs. */
+  @Get('jobs')
+  @Roles(Role.PlatformSuperAdmin)
+  async jobsStatus() {
+    return this.jobs.list();
+  }
+
+  // ── Platform tax profile / Faktur Pajak (super-admin only) ───────────────────
+
+  /** GET /api/admin/platform-tax — Airin's PPN tax profile. */
+  @Get('platform-tax')
+  @Roles(Role.PlatformSuperAdmin)
+  async getPlatformTax() {
+    return this.tax.getConfig();
+  }
+
+  /** PUT /api/admin/platform-tax — update the platform tax profile (audited). */
+  @Put('platform-tax')
+  @Roles(Role.PlatformSuperAdmin)
+  async setPlatformTax(@CurrentUser() admin: JWTPayload, @Body() body: Partial<PlatformTaxConfig>) {
+    const next = await this.tax.setConfig(body ?? {});
+    await this.audit.log({
+      tenantId: admin.tenant_id ?? admin.sub, userId: admin.sub,
+      operation: 'config_change', entityType: 'platform_tax', entityId: 'default',
+      afterValue: { enabled: next.enabled, rate: next.rate },
+    });
+    return next;
+  }
+
+  /** POST /api/admin/invoices/:id/faktur — set the official DJP Faktur Pajak serial. */
+  @Post('invoices/:id/faktur')
+  @Roles(Role.PlatformSuperAdmin)
+  async setInvoiceFaktur(@Param('id') id: string, @Body() body: { fakturNumber: string }) {
+    if (!body?.fakturNumber?.trim()) throw new BadRequestException('fakturNumber is required');
+    await this.tax.setFakturNumber(id, body.fakturNumber);
+    return { ok: true, fakturNumber: body.fakturNumber.trim() };
   }
 
   // ── Platform invoices (super-admin only) ─────────────────────────────────────

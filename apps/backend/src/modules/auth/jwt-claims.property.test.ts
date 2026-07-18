@@ -117,6 +117,10 @@ describe('Property 3: JWT Claims Completeness', () => {
     } as any;
 
     mockPool = { query: vi.fn() };
+    // Default for any query beyond the per-test findUserByEmail Once mock — notably
+    // login()'s tenant-lifecycle status lookup, which must resolve to 'active' so
+    // the login proceeds (the per-test mockResolvedValueOnce still wins the 1st call).
+    mockPool.query.mockResolvedValue({ rows: [{ status: 'active' }] });
     mockRedis.set.mockResolvedValue('OK');
 
     authService = new AuthService(jwtService, configService, mockPool as any);

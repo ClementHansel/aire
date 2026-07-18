@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import {
   Home, LayoutDashboard, Building2, LifeBuoy, Wallet, CreditCard, BrainCircuit,
   RadioTower, HeartPulse, Workflow, Settings, LogOut, Sun, Moon,
-  LineChart, ScrollText, Users, Megaphone, type LucideIcon,
+  LineChart, ScrollText, Users, Megaphone, BookOpen, Activity, type LucideIcon,
 } from 'lucide-react';
 import { isImpersonating, stopImpersonation, isAuthenticated, getUser, logout, type AuthUser } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
@@ -59,10 +59,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Platform', titleKey: 'admin.nav.section.platform',
     items: [
+      { href: '/admin/ops', label: 'Ops feed', labelKey: 'admin.nav.ops', icon: Activity, superOnly: true },
       { href: '/admin/users', label: 'Platform Users', labelKey: 'admin.nav.users', icon: Users, superOnly: true },
       { href: '/admin/announcements', label: 'Announcements', labelKey: 'admin.nav.announcements', icon: Megaphone, superOnly: true },
       { href: '/admin/audit', label: 'Audit Log', labelKey: 'admin.nav.audit', icon: ScrollText, superOnly: true },
       { href: '/admin/config', label: 'Platform Config', labelKey: 'admin.nav.config', icon: Settings },
+      { href: '/docs', label: 'Documentation', labelKey: 'admin.nav.docs', icon: BookOpen },
     ],
   },
 ];

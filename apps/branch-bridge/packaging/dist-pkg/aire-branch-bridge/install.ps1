@@ -42,32 +42,74 @@ function Assert-Admin {
   }
 }
 
+# Pinned portable-runtime downloads used when the branch PC lacks them. These
+# make the installer turnkey on a bare Windows PC (no manual Node/ffmpeg step).
+$NODE_VERSION = 'v20.18.1'
+$NODE_URL = "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-win-x64.zip"
+$FFMPEG_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+
+function Download-And-Extract($url, $dest) {
+  $tmpZip = Join-Path $env:TEMP ("aire-dl-" + [Guid]::NewGuid().ToString('N') + '.zip')
+  Write-Host "  downloading $url ..."
+  $old = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+  try { Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing } finally { $ProgressPreference = $old }
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  Expand-Archive -Path $tmpZip -DestinationPath $dest -Force
+  Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+}
+
 function Resolve-Node {
+  # 1) A node already on PATH (>=18) wins. 2) A previously bundled portable node.
+  # 3) Otherwise download a portable Node into the install dir — no manual step.
   $cmd = Get-Command node -ErrorAction SilentlyContinue
-  if (-not $cmd) {
-    throw "Node.js 18+ was not found. Install it first: winget install OpenJS.NodeJS.LTS  (then re-run this installer)."
+  if ($cmd) {
+    $ver = (& node --version).TrimStart('v')
+    if ([int]($ver.Split('.')[0]) -ge 18) { return $cmd.Source }
+    Write-Warning "Found Node $ver (<18); downloading a portable Node $NODE_VERSION instead."
   }
-  $ver = (& node --version).TrimStart('v')
-  if ([int]($ver.Split('.')[0]) -lt 18) { throw "Node.js 18+ required; found $ver." }
-  return $cmd.Source
+  $portable = Join-Path $InstallDir "node\node-$NODE_VERSION-win-x64\node.exe"
+  if (Test-Path $portable) { return $portable }
+  Write-Host "Node.js not found — fetching a portable runtime ($NODE_VERSION)..."
+  Download-And-Extract $NODE_URL (Join-Path $InstallDir 'node')
+  if (-not (Test-Path $portable)) { throw "Failed to provision a portable Node.js (download/extract). Install Node 18+ manually and re-run." }
+  return $portable
 }
 
 function Resolve-Ffmpeg {
-  # Prefer a bundled static ffmpeg shipped in the installer, else PATH, else warn.
+  # ffmpeg is REQUIRED for any live/recorded CCTV. Prefer a bundled/​PATH copy,
+  # else auto-download a static build so CCTV works without a manual step.
   $bundled = Join-Path $Source 'ffmpeg\ffmpeg.exe'
   if (Test-Path $bundled) { return $bundled }
+  $installed = Join-Path $InstallDir 'ffmpeg\ffmpeg.exe'
+  if (Test-Path $installed) { return $installed }
   $onPath = Get-Command ffmpeg -ErrorAction SilentlyContinue
   if ($onPath) { return $onPath.Source }
-  # -Webcam relies on ffmpeg to capture the camera, so make it a hard requirement.
-  if ($Webcam) {
-    throw "ffmpeg is required for -Webcam but was not found. Install it (winget install Gyan.FFmpeg), then re-run."
+  Write-Host "ffmpeg not found — fetching a static build (needed for CCTV)..."
+  try {
+    $tmp = Join-Path $InstallDir 'ffmpeg-dl'
+    Download-And-Extract $FFMPEG_URL $tmp
+    $exe = Get-ChildItem -Path $tmp -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1
+    if (-not $exe) { throw "ffmpeg.exe not found in the downloaded archive." }
+    New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir 'ffmpeg') | Out-Null
+    # Copy ffmpeg + ffprobe (channel probing uses ffprobe) next to each other.
+    Copy-Item $exe.FullName -Destination (Join-Path $InstallDir 'ffmpeg\ffmpeg.exe') -Force
+    $probe = Get-ChildItem -Path $tmp -Recurse -Filter 'ffprobe.exe' | Select-Object -First 1
+    if ($probe) { Copy-Item $probe.FullName -Destination (Join-Path $InstallDir 'ffmpeg\ffprobe.exe') -Force }
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return (Join-Path $InstallDir 'ffmpeg\ffmpeg.exe')
+  } catch {
+    if ($Webcam) { throw "ffmpeg is required for -Webcam and auto-download failed: $($_.Exception.Message)" }
+    Write-Warning "Could not auto-provision ffmpeg ($($_.Exception.Message)). CCTV will not work until ffmpeg is installed; IoT bay sensors still work."
+    return 'ffmpeg'
   }
-  Write-Warning "ffmpeg not found. Live/recorded CCTV will not work until it is installed (winget install Gyan.FFmpeg). IoT bay sensors work without it."
-  return 'ffmpeg'
 }
 
 Write-Host "== Aire Branch Bridge installer ==" -ForegroundColor Cyan
 Assert-Admin
+
+# Create the install dir up front so Node/ffmpeg can be provisioned into it.
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
 $nodePath = Resolve-Node
 $ffmpegPath = Resolve-Ffmpeg
 Write-Host "Node:   $nodePath"
@@ -75,7 +117,6 @@ Write-Host "ffmpeg: $ffmpegPath"
 
 # --- Copy the agent into the install dir ---
 Write-Host "Installing to $InstallDir ..."
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 foreach ($item in @('dist', 'node_modules', 'package.json', 'package-lock.json', 'ffmpeg')) {
   $src = Join-Path $Source $item
   if (Test-Path $src) {

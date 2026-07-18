@@ -440,15 +440,17 @@ export class AdminMetricsService {
   // ── Growth analytics (platform-wide) ────────────────────────────────────────
 
   /**
-   * SaaS growth metrics for the Analytics page. Note: without a status-change
-   * history we approximate churn from the CURRENT snapshot (cancelled/suspended
-   * counts) and cohort retention from signup month vs still-active — surfaced
-   * honestly in the UI. MRR by plan reads monthly-equivalent prices from
-   * platform_plans.
+   * SaaS growth metrics for the Analytics page. Churn + monthly movements are now
+   * derived from the tenant_status_events HISTORY (migration 070), not a snapshot
+   * guess — a cancellation is counted in the month it actually happened. (Caveat:
+   * the migration backfills one baseline event per tenant at signup, so months
+   * before 070 shipped attribute a currently-cancelled tenant's cancellation to
+   * its signup month; going forward transitions are exact.) MRR by plan reads
+   * monthly-equivalent prices from platform_plans.
    */
   async getGrowthAnalytics(months = 12) {
     const win = `${months} months`;
-    const [cohort, snapshot, byPlan] = await Promise.all([
+    const [cohort, snapshot, byPlan, movements, churnWin] = await Promise.all([
       this.pool.query(
         `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
                 COUNT(*)::int AS signups,
@@ -461,6 +463,7 @@ export class AdminMetricsService {
       this.pool.query(
         `SELECT COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE status='active')::int AS active,
+                COUNT(*) FILTER (WHERE status='past_due')::int AS past_due,
                 COUNT(*) FILTER (WHERE status='suspended')::int AS suspended,
                 COUNT(*) FILTER (WHERE status='cancelled')::int AS cancelled
            FROM tenants`,
@@ -472,20 +475,44 @@ export class AdminMetricsService {
            FROM tenants t LEFT JOIN platform_plans pp ON pp.code = t.plan
            GROUP BY 1 ORDER BY 2 DESC`,
       ),
+      // Real monthly cancellations/suspensions from the status history.
+      this.pool
+        .query(
+          `SELECT to_char(date_trunc('month', created_at),'YYYY-MM') AS month,
+                  COUNT(*) FILTER (WHERE to_status='cancelled')::int AS cancellations,
+                  COUNT(*) FILTER (WHERE to_status='suspended')::int AS suspensions
+             FROM tenant_status_events
+            WHERE created_at > NOW() - $1::interval AND from_status IS NOT NULL
+            GROUP BY 1 ORDER BY 1`,
+          [win],
+        )
+        .catch(() => ({ rows: [] as { month: string; cancellations: number; suspensions: number }[] })),
+      // Trailing-window churn: cancellations in-window over the exposed base.
+      this.pool
+        .query<{ cancellations: string }>(
+          `SELECT COUNT(*)::text AS cancellations FROM tenant_status_events
+            WHERE to_status='cancelled' AND from_status IS NOT NULL AND created_at > NOW() - $1::interval`,
+          [win],
+        )
+        .catch(() => ({ rows: [{ cancellations: '0' }] })),
     ]);
 
-    const snap = snapshot.rows[0] as { total: number; active: number; suspended: number; cancelled: number };
+    const snap = snapshot.rows[0] as { total: number; active: number; past_due: number; suspended: number; cancelled: number };
     const plans = byPlan.rows.map((x: any) => {
       const monthlyPrice = this.num(x.monthly_price);
       return { plan: x.plan, activeTenants: x.active_tenants, monthlyPrice, mrr: monthlyPrice * x.active_tenants };
     });
     const totalMrr = plans.reduce((s, p) => s + p.mrr, 0);
-    // Simple churn proxy: cancelled share of all tenants ever created.
-    const churnRate = snap.total > 0 ? (snap.cancelled / snap.total) * 100 : 0;
+    // Churn = cancellations in the window / exposed base (active now + those churned in-window).
+    const cancellationsInWin = parseInt(churnWin.rows[0]?.cancellations ?? '0', 10);
+    const exposedBase = snap.active + cancellationsInWin;
+    const churnRate = exposedBase > 0 ? (cancellationsInWin / exposedBase) * 100 : 0;
 
     return {
       snapshot: snap,
       churnRate,
+      churnBasis: 'history' as const,
+      cancellationsInWindow: cancellationsInWin,
       totalMrr,
       arr: totalMrr * 12,
       cohorts: cohort.rows.map((x: any) => ({
@@ -493,6 +520,11 @@ export class AdminMetricsService {
         signups: x.signups,
         stillActive: x.still_active,
         retentionPct: x.signups > 0 ? Math.round((x.still_active / x.signups) * 100) : 0,
+      })),
+      movements: movements.rows.map((x: any) => ({
+        month: x.month,
+        cancellations: x.cancellations,
+        suspensions: x.suspensions,
       })),
       mrrByPlan: plans,
     };

@@ -1,10 +1,13 @@
-import { Injectable, Inject, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Inject, Optional, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { AccountingService } from '../accounting/accounting.service';
 import { AccountingPoster } from '../accounting/accounting-poster.service';
 import { PayrollService } from '../hr/payroll.service';
 import { ACC } from '../accounting/chart-of-accounts.defaults';
+import { JobMonitorService } from '../job-monitor';
+
+const FINANCE_AUTOMATION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export interface FinanceSettings {
   payrollWorkingDays: number;
@@ -54,14 +57,28 @@ export class FinanceSetupService implements OnModuleInit, OnModuleDestroy {
     private readonly accounting: AccountingService,
     private readonly poster: AccountingPoster,
     private readonly payroll: PayrollService,
+    @Optional() private readonly jobMonitor?: JobMonitorService,
   ) {}
 
   onModuleInit(): void {
     // Self-owned automation heartbeat (single-node, in-memory — same pattern as
     // membership-lifecycle). Runs a few times a day; all actions are idempotent.
     if (process.env.DISABLE_FINANCE_AUTOMATION === 'true') return;
-    this.timer = setInterval(() => { void this.runAutomationAllTenants(); }, 6 * 60 * 60 * 1000);
+    this.timer = setInterval(() => { void this.runAutomationTracked(); }, FINANCE_AUTOMATION_INTERVAL_MS);
     if (typeof this.timer.unref === 'function') this.timer.unref();
+  }
+
+  /** Run the automation sweep, recording a heartbeat for the admin jobs monitor. */
+  private runAutomationTracked(): Promise<unknown> {
+    if (this.jobMonitor) {
+      return this.jobMonitor.track(
+        'finance-automation',
+        'Finance automation (payroll & book-close)',
+        FINANCE_AUTOMATION_INTERVAL_MS,
+        () => this.runAutomationAllTenants(),
+      );
+    }
+    return this.runAutomationAllTenants();
   }
   onModuleDestroy(): void { if (this.timer) clearInterval(this.timer); }
 

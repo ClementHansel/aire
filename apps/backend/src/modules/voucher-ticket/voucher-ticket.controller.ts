@@ -15,7 +15,7 @@ export class VoucherTicketController {
   @Post('sell')
   @HttpCode(HttpStatus.CREATED)
   sell(@CurrentUser() user: JWTPayload, @Body() dto: SellBookDto) {
-    return this.service.sellBook(user.tenant_id, { ...dto, outletId: dto.outletId ?? user.outlet_id! });
+    return this.service.sellBook(user, { ...dto, outletId: dto.outletId ?? user.outlet_id! });
   }
 
   @Get('validate')

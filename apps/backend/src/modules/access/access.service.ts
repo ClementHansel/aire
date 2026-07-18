@@ -2,6 +2,7 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { EntitlementService } from '../entitlement';
 
 /**
  * Catalog of assignable permission keys, grouped for the RBAC editor UI.
@@ -66,7 +67,10 @@ const BASE_ROLES = ['platform_super_admin', 'tenant_owner', 'outlet_admin', 'cas
 
 @Injectable()
 export class AccessService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly entitlements: EntitlementService,
+  ) {}
 
   getPermissionCatalog() {
     return PERMISSION_CATALOG;
@@ -132,6 +136,8 @@ export class AccessService {
     if (!dto.name?.trim() || !dto.email?.trim() || !dto.password) throw new BadRequestException('name, email, password required');
     const role = dto.role ?? 'cashier';
     if (!BASE_ROLES.includes(role)) throw new BadRequestException('invalid role');
+    // Plan entitlement: block if the tenant is at its staff-login (seat) cap.
+    await this.entitlements.assertWithin(tenantId, 'users');
     const hash = await bcrypt.hash(dto.password, 10);
     const client = await this.pool.connect();
     try {

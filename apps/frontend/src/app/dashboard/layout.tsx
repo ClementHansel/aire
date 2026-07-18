@@ -26,7 +26,7 @@ import {
 // TENANT_MODULES). Items without a `module` are core and always shown.
 // `permission` (optional) hides the item from users whose custom role lacks that
 // granular RBAC key. Items without one are shown to everyone (subject to `module`).
-interface NavItem { id: string; label: string; href: string; icon: LucideIcon; module?: string; permission?: string }
+interface NavItem { id: string; label: string; href: string; icon: LucideIcon; module?: string; permission?: string; roles?: AuthUser['role'][] }
 interface NavSection { title: string | null; items: NavItem[] }
 
 // Grouped navigation. Sections keep related tools together and prevent the
@@ -116,9 +116,11 @@ const navSections: NavSection[] = [
     title: 'Administration',
     items: [
       { id: 'users', label: 'Users & Roles', href: '/dashboard/users', icon: KeyRound, permission: 'users.write' },
+      { id: 'billing', label: 'Billing', href: '/dashboard/billing', icon: CreditCard, roles: ['tenant_owner'] },
       { id: 'audit', label: 'Audit Log', href: '/dashboard/audit', icon: ScrollText },
       // Payment Gateway now lives as a tab inside Settings (/dashboard/settings?tab=payment).
       { id: 'settings', label: 'Settings', href: '/dashboard/settings', icon: Settings },
+      { id: 'docs', label: 'Help & Docs', href: '/docs', icon: BookOpen },
     ],
   },
 ];
@@ -185,17 +187,21 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Role-gated items (e.g. Billing → tenant_owner only) are cosmetic — the server
+  // enforces access on every endpoint. Undefined `roles` = visible to all roles.
+  const roleAllows = (item: NavItem) => !item.roles || (user != null && item.roles.includes(user.role));
+
   // Hide nav for modules the tenant has disabled; drop sections left empty.
   const visibleSections = navSections
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) => moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission),
+        (item) => moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
       ),
     }))
     .filter((section) => section.items.length > 0);
   const visibleMobileItems = mobileItems.filter(
-    (item) => moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission),
+    (item) => moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
   );
 
   if (!checked) {

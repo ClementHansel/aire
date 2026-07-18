@@ -25,7 +25,8 @@ the **arrival queue**, sell memberships and vouchers, manage stock, or handle HR
 8. [Close your shift](#8-close-your-shift)
 9. [Inventory & stock (Outlet Admin)](#9-inventory--stock-outlet-admin)
 10. [HR & payroll (HR staff)](#10-hr--payroll-hr-staff)
-11. [Quick reference](#11-quick-reference)
+11. [Your own self-service page (every employee)](#11-your-own-self-service-page)
+12. [Quick reference](#12-quick-reference)
 
 ---
 
@@ -215,7 +216,33 @@ These live in the **Dashboard** (not the POS):
 
 ---
 
-## 11. Quick reference
+## 11. Your own self-service page
+
+Every employee — not just HR — has a personal self-service page at **`/employee`**. Sign in with your
+own account and open it from the Hub. It's *your* information only; you can't see anyone else's.
+
+![The employee self-service page — your schedule, attendance, payslips, leave and loans.](images/emp-self-service.png)
+
+Across the top are tabs:
+
+- **Home** — today at a glance: your **shift**, whether you've **clocked in/out**, and hours worked.
+- **Schedule** — your upcoming shifts (date, times, branch).
+- **Attendance** — your clock-in/out history and hours per day.
+- **Payslips** — each finalized payslip, with the full breakdown (base salary, days worked, bonuses,
+  deductions, advances, loan repayments, unpaid-leave deduction, and **net pay**).
+- **Leave** — request time off (start/end dates, type, reason) and see whether each request is
+  **pending / approved / rejected**, and whether it's paid.
+- **Loans** — any staff loan or advance you've been given: the principal, remaining balance, monthly
+  installment, and the repayments already taken from your pay.
+- **Profile** — your own details (role, branch, employment type, contact info).
+
+> **Cashier vs. self-service.** The **POS** is where you *work* (sell, queue, shifts). This
+> **`/employee`** page is where you check *your own* schedule, attendance and pay. Two different
+> screens, both signed in as you.
+
+---
+
+## 12. Quick reference
 
 | I want to… | Go to |
 |------------|-------|

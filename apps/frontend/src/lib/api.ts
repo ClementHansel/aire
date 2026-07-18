@@ -108,6 +108,25 @@ export async function apiFetch<T = unknown>(
   const body = await res.json().catch(() => null);
 
   if (!res.ok) {
+    // A tenant-side call rejected because the whole account is blocked. Fail
+    // closed: hand the user the full-page notice instead of a broken dashboard.
+    // Skipped on the platform-admin surface (/admin), whose own endpoints never
+    // emit these codes — this only fires for the tenant app (incl. impersonation).
+    if (
+      res.status === 403 && body &&
+      (body.error === 'TENANT_SUSPENDED' || body.error === 'TENANT_CANCELLED') &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/admin') &&
+      window.location.pathname !== '/account-suspended'
+    ) {
+      try {
+        sessionStorage.setItem(
+          'aire_tenant_block',
+          JSON.stringify({ error: body.error, message: body.message || '' }),
+        );
+      } catch { /* sessionStorage may be unavailable; the page falls back to a generic message */ }
+      window.location.href = '/account-suspended';
+    }
     const message =
       (body && (body.message || body.error)) || `Request failed (${res.status})`;
     throw new ApiError(res.status, message, body);

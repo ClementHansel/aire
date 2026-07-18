@@ -1,4 +1,4 @@
-import { Injectable, Inject, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, Inject, Optional, UnauthorizedException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -21,6 +21,8 @@ import {
 } from '@aire/shared';
 import { DATABASE_POOL } from './database.provider';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export interface RegisterRequest {
   tenantName: string;
@@ -40,14 +42,24 @@ export interface UserRow {
   is_active: boolean;
 }
 
+/** Machine-readable error codes for tenant-lifecycle rejections (FE branches on these). */
+export const ERR_TENANT_SUSPENDED = 'TENANT_SUSPENDED';
+export const ERR_TENANT_CANCELLED = 'TENANT_CANCELLED';
+
+/** How long a resolved tenant status is trusted before re-reading (per request path). */
+const TENANT_STATUS_TTL_MS = 15_000;
+
 @Injectable()
 export class AuthService {
   private redis: Redis;
+  /** Short-lived tenant-status cache so lifecycle enforcement costs ~0 per request. */
+  private readonly tenantStatusCache = new Map<string, { status: string; at: number }>();
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     @Inject(DATABASE_POOL) private readonly pool: Pool,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {
     const redisUrl = this.configService.get<string>('REDIS_URL');
     if (redisUrl) {
@@ -77,6 +89,9 @@ export class AuthService {
     if (!passwordValid) {
       throw new UnauthorizedException(ERR_AUTH_INVALID_CREDENTIALS);
     }
+
+    // Lifecycle gate: a suspended/cancelled tenant's users cannot start a session.
+    await this.assertTenantOperational(user.role, user.tenant_id);
 
     const accessToken = this.issueAccessToken(user);
     const refreshToken = await this.issueRefreshToken(user.id);
@@ -147,6 +162,13 @@ export class AuthService {
       // Seed a default chart of accounts so the ledger auto-posting has accounts
       // to book against from day one (non-fatal — also lazily seeded on first post).
       await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
+
+      void this.eventBus?.emit({
+        type: DomainEventType.TenantCreated,
+        tenantId,
+        actor: 'self_signup',
+        payload: { name: tenantName, slug, plan: 'standard', source: 'self_signup' },
+      });
 
       const user = userRes.rows[0]!;
       const accessToken = this.issueAccessToken(user);
@@ -248,7 +270,53 @@ export class AuthService {
    * Returns the payload if valid, otherwise null.
    */
   async validateJwtPayload(payload: JWTPayload): Promise<JWTPayload | null> {
+    // Runs on EVERY authenticated request — the central lifecycle gate. A tenant
+    // suspended (or cancelled) mid-session is cut off within TENANT_STATUS_TTL_MS,
+    // not only at next login. Throws ForbiddenException, which JwtAuthGuard
+    // re-raises verbatim (see auth.guard.ts).
+    await this.assertTenantOperational(payload.role, payload.tenant_id ?? null);
     return payload;
+  }
+
+  /**
+   * Reject requests from a tenant that is no longer operational. Platform
+   * super-admins (no tenant, or the super-admin role) are never gated. `past_due`
+   * is a soft dunning state and still operates — only `suspended`/`cancelled`
+   * block. Reads are cached for TENANT_STATUS_TTL_MS.
+   */
+  private async assertTenantOperational(role: string | undefined, tenantId: string | null): Promise<void> {
+    if (role === 'platform_super_admin' || !tenantId) return;
+    const status = await this.getTenantStatusCached(tenantId);
+    if (status === 'suspended') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: ERR_TENANT_SUSPENDED,
+        message: 'This account is suspended. Please contact billing to restore access.',
+      });
+    }
+    if (status === 'cancelled') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: ERR_TENANT_CANCELLED,
+        message: 'This account has been cancelled.',
+      });
+    }
+  }
+
+  /** Resolve a tenant's status with a short TTL cache; missing tenant → 'cancelled'. */
+  private async getTenantStatusCached(tenantId: string): Promise<string> {
+    const hit = this.tenantStatusCache.get(tenantId);
+    const now = Date.now();
+    if (hit && now - hit.at < TENANT_STATUS_TTL_MS) return hit.status;
+    const res = await this.pool.query<{ status: string }>('SELECT status FROM tenants WHERE id = $1', [tenantId]);
+    const status = res.rows[0]?.status ?? 'cancelled';
+    this.tenantStatusCache.set(tenantId, { status, at: now });
+    return status;
+  }
+
+  /** Drop a tenant from the status cache so a lifecycle change takes effect at once. */
+  invalidateTenantStatus(tenantId: string): void {
+    this.tenantStatusCache.delete(tenantId);
   }
 
   /**

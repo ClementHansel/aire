@@ -16,12 +16,15 @@ interface Overview {
 }
 interface Activity { at: string; operation: string; entityType: string; tenantName: string | null }
 interface Timeseries { revenue: { day: string; revenue: number; orders: number }[]; tenants: { day: string; n: number }[] }
+interface AlertBucket { critical: number; warning: number; info: number }
+interface AlertsSummary { last24h: AlertBucket; last7d: AlertBucket }
 
 export default function AdminOverviewPage() {
   const { t } = useI18n();
   const [ov, setOv] = useState<Overview | null>(null);
   const [activity, setActivity] = useState<Activity[]>([]);
   const [ts, setTs] = useState<Timeseries | null>(null);
+  const [alerts, setAlerts] = useState<AlertsSummary | null>(null);
   const [error, setError] = useState('');
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -29,12 +32,13 @@ export default function AdminOverviewPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [o, a, series] = await Promise.all([
+      const [o, a, series, al] = await Promise.all([
         api.get<Overview>('/admin/overview'),
         api.get<Activity[]>('/admin/activity?limit=15'),
         api.get<Timeseries>('/admin/timeseries?days=30'),
+        api.get<AlertsSummary>('/admin/alerts-summary').catch(() => null),
       ]);
-      setOv(o); setActivity(a); setTs(series);
+      setOv(o); setActivity(a); setTs(series); setAlerts(al);
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('admin.home.failedToLoad', 'Failed to load');
       if (msg.includes('403') || msg.toLowerCase().includes('forbidden')) setForbidden(true);
@@ -63,6 +67,34 @@ export default function AdminOverviewPage() {
       />
 
       <ErrorBanner message={error} onDismiss={() => setError('')} />
+
+      {alerts && (alerts.last24h.critical > 0 || alerts.last24h.warning > 0 || alerts.last7d.critical > 0 || alerts.last7d.warning > 0) && (
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4" data-testid="admin-alerts-widget">
+          <Link href="/admin/ops?severity=critical" className="block">
+            <StatCard
+              label={t('admin.home.alertsCritical24h', 'Critical alerts (24h)')}
+              value={String(alerts.last24h.critical)}
+              tone={alerts.last24h.critical > 0 ? 'negative' : 'default'}
+              hint={t('admin.home.alerts7dHint', '{n} in 7d').replace('{n}', String(alerts.last7d.critical))}
+            />
+          </Link>
+          <Link href="/admin/ops?severity=warning" className="block">
+            <StatCard
+              label={t('admin.home.alertsWarning24h', 'Warnings (24h)')}
+              value={String(alerts.last24h.warning)}
+              tone={alerts.last24h.warning > 0 ? 'warning' : 'default'}
+              hint={t('admin.home.alerts7dHint', '{n} in 7d').replace('{n}', String(alerts.last7d.warning))}
+            />
+          </Link>
+          <Link href="/admin/ops" className="block sm:col-span-2 lg:col-span-2">
+            <StatCard
+              label={t('admin.home.alertsInfo24h', 'Info events (24h)')}
+              value={String(alerts.last24h.info)}
+              hint={t('admin.home.alertsOpenFeed', 'Open the ops & alert feed →')}
+            />
+          </Link>
+        </section>
+      )}
 
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label={t('admin.home.statTenants', 'Tenants')} value={ov ? String(ov.tenants.total) : '—'} loading={loading} hint={ov ? t('admin.home.newTenantsHint', '{n} new in 30d').replace('{n}', String(ov.tenants.new30d)) : undefined} />

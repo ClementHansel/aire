@@ -79,21 +79,44 @@ export class PosCheckoutService {
   }
 
   /**
-   * Create a pending order for a pack purchase (no line items) and log the
-   * initial status. Returns the created order id/number/total plus customer id.
+   * Create an order for a pack purchase (no line items) and log the initial
+   * status. Returns the created order id/number/total plus customer id.
    * Runs inside the provided transaction client.
+   *
+   * By default the order is created pending ('ordered') and settled later by the
+   * standard payment flow. Pass `paidNow: true` to create it already settled
+   * ('paid', with payment_method/amount_received/paid_at) — used when the sale is
+   * a completed cash transaction (e.g. shareable voucher books, where codes are
+   * delivered at sell time). NOTE: `paidNow` writes the paid row but does NOT emit
+   * OrderPaid — the caller must emit it AFTER COMMIT so the accounting poster (which
+   * reads the committed order) does not race the transaction.
    */
   async createPackOrder(
     client: PoolClient,
     user: JWTPayload,
-    params: { customerId: string; customerName: string; customerPhone: string; total: number; note: string },
+    params: {
+      customerId: string | null;
+      customerName: string;
+      customerPhone: string;
+      total: number;
+      note: string;
+      paidNow?: boolean;
+      paymentMethod?: string;
+    },
   ): Promise<Omit<PackOrderResult, 'customerId'>> {
     const orderNumber = await this.generateOrderNumber(client, user.outlet_id!);
+    const paidNow = params.paidNow === true;
+    const status = paidNow ? 'paid' : 'ordered';
+    const paymentMethod = paidNow ? (params.paymentMethod ?? 'cash') : null;
+    const amountReceived = paidNow ? params.total : null;
+
     const res = await client.query<{ id: string; order_number: string; total: string }>(
       `INSERT INTO orders
         (tenant_id, outlet_id, operator_id, customer_id, order_number, status,
-         customer_name, customer_phone, subtotal, total, note)
-       VALUES ($1, $2, $3, $4, $5, 'ordered', $6, $7, $8, $8, $9)
+         customer_name, customer_phone, subtotal, total, note,
+         payment_method, amount_received, paid_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12,
+               CASE WHEN $6 = 'paid' THEN NOW() ELSE NULL END)
        RETURNING id, order_number, total`,
       [
         user.tenant_id,
@@ -101,18 +124,21 @@ export class PosCheckoutService {
         user.sub,
         params.customerId,
         orderNumber,
+        status,
         params.customerName,
         params.customerPhone,
         params.total,
         params.note,
+        paymentMethod,
+        amountReceived,
       ],
     );
     const order = res.rows[0]!;
 
     await client.query(
       `INSERT INTO order_status_logs (order_id, from_status, to_status, operator_id, created_at)
-       VALUES ($1, 'ordered', 'ordered', $2, NOW())`,
-      [order.id, user.sub],
+       VALUES ($1, 'ordered', $2, $3, NOW())`,
+      [order.id, status, user.sub],
     );
 
     return { id: order.id, orderNumber: order.order_number, total: parseFloat(order.total) };

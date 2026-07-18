@@ -9,10 +9,14 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { TENANT_MODULES } from '@aire/shared';
 import { BranchModal } from '@/components/admin/BranchModal';
-import { PageHeader, StatCard, Panel, Modal, Field, ErrorBanner, fmtIDR, fmtDate, fmtDateTime } from '@/components/dashboard/ui';
+import { PageHeader, StatCard, Panel, Modal, Field, ErrorBanner, StatusBadge, TableWrap, EmptyRow, thCls, tdCls, fmtIDR, fmtDate, fmtDateTime } from '@/components/dashboard/ui';
 
+interface TenantRow {
+  id: string; name: string; slug: string; plan: string; status: string; tenant_code?: string | null; created_at: string;
+  status_reason?: string | null; status_changed_at?: string | null;
+}
 interface Detail {
-  tenant: { id: string; name: string; slug: string; plan: string; status: string; tenant_code?: string | null; created_at: string };
+  tenant: TenantRow;
   outlets: { id: string; name: string; code: string | null; is_active: boolean; phone: string | null }[];
   users: { id: string; name: string; email: string; role: string }[];
   stats: { orders30d: number; revenue30d: number; activeMembers: number; customers: number };
@@ -30,6 +34,10 @@ export default function TenantDetailPage() {
   const [confirmImpersonate, setConfirmImpersonate] = useState(false);
   const [resetPw, setResetPw] = useState(false);
 
+  // Bumped after any lifecycle action to force the usage + status-history panels
+  // (keyed on it) to remount and refetch alongside the reloaded tenant header.
+  const [lifecycleKey, setLifecycleKey] = useState(0);
+
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try { setD(await api.get<Detail>(`/admin/tenants/${id}/detail`)); }
@@ -37,6 +45,8 @@ export default function TenantDetailPage() {
     finally { setLoading(false); }
   }, [id, t]);
   useEffect(() => { if (!isAuthenticated()) { window.location.href = '/'; return; } load(); }, [load]);
+
+  const afterLifecycle = useCallback(() => { setLifecycleKey((k) => k + 1); load(); }, [load]);
 
   const impersonate = async () => {
     setBusy(true); setError('');
@@ -82,6 +92,13 @@ export default function TenantDetailPage() {
         <StatCard label={t('admin.tenantDetail.activeMembers', 'Active members')} value={String(d.stats.activeMembers)} />
         <StatCard label={t('admin.tenantDetail.customers', 'Customers')} value={String(d.stats.customers)} />
       </section>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <LifecyclePanel tenant={d.tenant} onChanged={afterLifecycle} />
+        <PlanUsagePanel key={`usage-${lifecycleKey}`} tenantId={d.tenant.id} />
+      </div>
+
+      <StatusHistoryPanel key={`history-${lifecycleKey}`} tenantId={d.tenant.id} />
 
       <div className="grid lg:grid-cols-2 gap-4">
         <Panel
@@ -272,6 +289,238 @@ function SupportNotesPanel({ tenantId }: { tenantId: string }) {
             </li>
           ))}
         </ul>
+      )}
+    </Panel>
+  );
+}
+
+/* ── Plan & usage ────────────────────────────────────────────────────── */
+
+interface Resource { key: string; label: string; used: number; limit: number | null; unlimited: boolean; remaining: number | null; exceeded: boolean }
+interface Entitlements { tenantId: string; plan: string; resources: Resource[] }
+
+/** A resource is over budget when the backend flags it or usage hit the cap. */
+function isOver(r: Resource): boolean {
+  return r.exceeded || (!r.unlimited && r.limit != null && r.limit > 0 && r.used >= r.limit);
+}
+
+/**
+ * Per-tenant entitlement usage (seats, branches, etc.) against the plan limits.
+ * Each row shows used / limit with a meter; capped resources turn red once
+ * usage reaches or passes the limit.
+ */
+function PlanUsagePanel({ tenantId }: { tenantId: string }) {
+  const { t } = useI18n();
+  const [data, setData] = useState<Entitlements | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    setLoading(true); setErr('');
+    api.get<Entitlements>(`/admin/tenants/${tenantId}/entitlements`)
+      .then(setData)
+      .catch((e) => setErr(e instanceof Error ? e.message : t('admin.tenantDetail.usageFailed', 'Failed to load usage')))
+      .finally(() => setLoading(false));
+  }, [tenantId, t]);
+
+  return (
+    <Panel
+      title={t('admin.tenantDetail.planUsage', 'Plan & usage')}
+      description={data ? `${t('admin.tenantDetail.plan', 'Plan')}: ${data.plan}` : undefined}
+    >
+      {err && <div className="rounded-lg bg-red-50 border border-red-200 p-2 text-xs text-red-700 mb-3">{err}</div>}
+      {loading ? (
+        <p className="text-sm text-text-muted">{t('admin.tenantDetail.loadingUsage', 'Loading usage…')}</p>
+      ) : !data || data.resources.length === 0 ? (
+        <p className="text-sm text-text-muted">{t('admin.tenantDetail.noUsage', 'No metered resources for this plan.')}</p>
+      ) : (
+        <ul className="space-y-3.5" data-testid="tenant-usage">
+          {data.resources.map((r) => {
+            const over = isOver(r);
+            const pct = r.unlimited || r.limit == null || r.limit <= 0
+              ? (r.used > 0 ? 100 : 0)
+              : Math.min(100, Math.round((r.used / r.limit) * 100));
+            return (
+              <li key={r.key} data-testid={`usage-${r.key}`}>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="font-medium text-text-primary">{r.label}</span>
+                  <span className={cn('tabular-nums', over ? 'text-rose-600 font-semibold' : 'text-text-secondary')}>
+                    {r.unlimited || r.limit == null
+                      ? `${r.used} · ${t('admin.tenantDetail.unlimited', 'Unlimited')}`
+                      : `${r.used} / ${r.limit}`}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-sunken">
+                  <div
+                    className={cn('h-full rounded-full transition-[width]', over ? 'bg-rose-500' : 'bg-primary-500')}
+                    style={{ width: `${r.unlimited ? 8 : pct}%` }}
+                  />
+                </div>
+                {over && (
+                  <p className="mt-1 text-xs text-rose-600">{t('admin.tenantDetail.overLimit', 'Over plan limit')}</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+/* ── Lifecycle (status + suspend / reactivate / cancel) ──────────────── */
+
+type LifecycleAction = 'suspend' | 'reactivate' | 'cancel';
+
+/**
+ * Current tenant status + the state-machine actions available from it.
+ * Suspend applies to active/past_due; Reactivate to suspended/past_due/cancelled;
+ * Cancel to anything not already cancelled. Each opens a Modal to capture an
+ * optional reason before calling the matching endpoint.
+ */
+function LifecyclePanel({ tenant, onChanged }: { tenant: TenantRow; onChanged: () => void }) {
+  const { t } = useI18n();
+  const [action, setAction] = useState<LifecycleAction | null>(null);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSuper = getUser()?.role === 'platform_super_admin';
+  const status = tenant.status;
+
+  const open = (a: LifecycleAction) => { setAction(a); setReason(''); setErr(''); };
+
+  const submit = async () => {
+    if (!action) return;
+    setBusy(true); setErr('');
+    try {
+      await api.patch(`/admin/tenants/${tenant.id}/${action}`, { reason: reason.trim() || undefined });
+      setAction(null);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t('admin.tenantDetail.lifecycleFailed', 'Action failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canSuspend = status === 'active' || status === 'past_due';
+  const canReactivate = status === 'suspended' || status === 'past_due' || status === 'cancelled';
+  const canCancel = status !== 'cancelled';
+
+  const LABELS: Record<LifecycleAction, string> = {
+    suspend: t('admin.tenantDetail.suspend', 'Suspend'),
+    reactivate: t('admin.tenantDetail.reactivate', 'Reactivate'),
+    cancel: t('admin.tenantDetail.cancel2', 'Cancel subscription'),
+  };
+
+  return (
+    <Panel title={t('admin.tenantDetail.lifecycle', 'Lifecycle')}>
+      <div className="flex items-center gap-2">
+        <StatusBadge status={status} />
+      </div>
+      {tenant.status_reason && (
+        <p className="mt-3 text-sm text-text-secondary"><span className="text-text-muted">{t('admin.tenantDetail.statusReason', 'Reason')}:</span> {tenant.status_reason}</p>
+      )}
+      {tenant.status_changed_at && (
+        <p className="mt-1 text-xs text-text-muted">{t('admin.tenantDetail.statusChanged', 'Changed')} {fmtDateTime(tenant.status_changed_at)}</p>
+      )}
+
+      {isSuper ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {canSuspend && <button className="btn-secondary text-xs text-amber-700" onClick={() => open('suspend')}>{LABELS.suspend}</button>}
+          {canReactivate && <button className="btn-secondary text-xs text-green-700" onClick={() => open('reactivate')}>{LABELS.reactivate}</button>}
+          {canCancel && <button className="btn-secondary text-xs text-rose-700" onClick={() => open('cancel')}>{LABELS.cancel}</button>}
+        </div>
+      ) : (
+        <p className="mt-4 text-xs text-text-muted">{t('admin.tenantDetail.lifecycleSuperOnly', 'Lifecycle changes require a Platform Super Admin.')}</p>
+      )}
+
+      {action && (
+        <Modal
+          title={LABELS[action]}
+          onClose={() => setAction(null)}
+          footer={
+            <>
+              <button className="btn-secondary" onClick={() => setAction(null)} disabled={busy}>{t('admin.tenantDetail.cancel', 'Cancel')}</button>
+              <button className="btn-primary" onClick={submit} disabled={busy}>{busy ? t('admin.tenantDetail.working', 'Working…') : LABELS[action]}</button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <ErrorBanner message={err} />
+            <p className="text-sm text-text-secondary">
+              {action === 'suspend' && t('admin.tenantDetail.suspendConfirm', 'Suspend this tenant? Their staff will be blocked from the app until reactivated. This is audited.')}
+              {action === 'reactivate' && t('admin.tenantDetail.reactivateConfirm', 'Reactivate this tenant? They regain access to the app. This is audited.')}
+              {action === 'cancel' && t('admin.tenantDetail.cancelConfirm', 'Cancel this tenant’s subscription? They lose access to the app. This is audited.')}
+            </p>
+            <Field label={t('admin.tenantDetail.reasonOptional', 'Reason (optional)')}>
+              <textarea className="input-field min-h-[64px]" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('admin.tenantDetail.reasonPlaceholder', 'Add context for the audit log…')} autoFocus />
+            </Field>
+          </div>
+        </Modal>
+      )}
+    </Panel>
+  );
+}
+
+/* ── Status history ──────────────────────────────────────────────────── */
+
+interface StatusEvent {
+  id: string; fromStatus: string | null; toStatus: string; reason: string | null;
+  source: 'admin' | 'billing' | 'system'; actorUserId: string | null; actorName: string | null; createdAt: string;
+}
+
+const SOURCE_BADGE: Record<StatusEvent['source'], string> = {
+  admin: 'bg-sky-50 text-sky-700', billing: 'bg-violet-50 text-violet-700', system: 'bg-surface-sunken text-text-secondary',
+};
+
+/** Append-only audit of tenant status transitions (newest first, per the API). */
+function StatusHistoryPanel({ tenantId }: { tenantId: string }) {
+  const { t } = useI18n();
+  const [events, setEvents] = useState<StatusEvent[] | null>(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    setErr('');
+    api.get<StatusEvent[]>(`/admin/tenants/${tenantId}/status-events`)
+      .then(setEvents)
+      .catch((e) => { setEvents([]); setErr(e instanceof Error ? e.message : t('admin.tenantDetail.historyFailed', 'Failed to load status history')); });
+  }, [tenantId, t]);
+
+  return (
+    <Panel title={t('admin.tenantDetail.statusHistory', 'Status history')} bodyClassName="p-0">
+      {err && <div className="px-5 pt-4"><ErrorBanner message={err} /></div>}
+      {events === null ? (
+        <p className="px-5 py-6 text-sm text-text-muted">{t('admin.tenantDetail.loadingHistory', 'Loading history…')}</p>
+      ) : (
+        <TableWrap>
+          <thead>
+            <tr className="border-b border-border">
+              <th className={cn(thCls, 'text-left')}>{t('admin.tenantDetail.when', 'When')}</th>
+              <th className={cn(thCls, 'text-left')}>{t('admin.tenantDetail.change', 'Change')}</th>
+              <th className={cn(thCls, 'text-left')}>{t('admin.tenantDetail.source', 'Source')}</th>
+              <th className={cn(thCls, 'text-left')}>{t('admin.tenantDetail.actor', 'Actor')}</th>
+              <th className={cn(thCls, 'text-left')}>{t('admin.tenantDetail.reason', 'Reason')}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {events.length === 0 ? (
+              <EmptyRow colSpan={5}>{t('admin.tenantDetail.noHistory', 'No status changes recorded.')}</EmptyRow>
+            ) : events.map((ev) => (
+              <tr key={ev.id} className="hover:bg-surface-sunken/50">
+                <td className={cn(tdCls, 'whitespace-nowrap text-xs text-text-muted')}>{fmtDateTime(ev.createdAt)}</td>
+                <td className={cn(tdCls, 'whitespace-nowrap')}>
+                  <span className="text-text-muted capitalize">{ev.fromStatus ? ev.fromStatus.replace(/_/g, ' ') : '—'}</span>
+                  <span className="mx-1.5 text-text-muted">→</span>
+                  <StatusBadge status={ev.toStatus} />
+                </td>
+                <td className={tdCls}><span className={cn('badge capitalize', SOURCE_BADGE[ev.source] ?? 'bg-surface-sunken text-text-secondary')}>{ev.source}</span></td>
+                <td className={cn(tdCls, 'whitespace-nowrap')}>{ev.actorName ?? '—'}</td>
+                <td className={cn(tdCls, 'text-text-secondary')}>{ev.reason || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
       )}
     </Panel>
   );

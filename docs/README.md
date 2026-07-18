@@ -21,6 +21,8 @@ customer self-service (kiosk + portal), and AI/WhatsApp automation in fully isol
 | [04 · Database](tech/04-database.md) | PostgreSQL stack, migration system, full table catalog by domain, tenancy model, key enums/constraints |
 | [05 · API Reference](tech/05-api-reference.md) | Every HTTP endpoint grouped by module, with required role and purpose |
 | [06 · Membership — End-to-End](tech/06-membership-lifecycle.md) | The complete membership flow and status cycle, sale → activation → benefits → grace → revoked → renewal, identity numbering, settlement, portal |
+| [07 · Branch-Bridge Protocol](tech/07-branch-bridge-protocol.md) | The on-premise branch-bridge agent: device discovery, live/recorded CCTV, and how it talks to the cloud |
+| [08 · Device Registry & Topology](tech/08-device-registry-topology.md) | The device registry, network topology model, and how discovered IoT/CCTV devices are mapped per branch |
 
 ## 2. User manuals (by point of view)
 

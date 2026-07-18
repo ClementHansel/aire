@@ -22,11 +22,12 @@ Your workspace is the **Platform Admin** area at `/admin`. Everything in this ma
 5. [Open and manage one business](#5-open-and-manage-one-business)
 6. [Turn features on and off (modules)](#6-turn-features-on-and-off-modules)
 7. [Subscription plans & pricing](#7-subscription-plans--pricing)
-8. [Billing & estimated revenue](#8-billing--estimated-revenue)
+8. [Billing & invoices](#8-billing--invoices)
 9. [Monitoring & system health](#9-monitoring--system-health)
 10. [AI usage & the AI flow catalog](#10-ai-usage--the-ai-flow-catalog)
-11. [Support & impersonation](#11-support--impersonation)
-12. [Everyday checklists](#12-everyday-checklists)
+11. [Support, impersonation & "view as"](#11-support--impersonation)
+12. [Announcements, Config & Platform Users](#12-announcements-config--platform-users)
+13. [Everyday checklists](#13-everyday-checklists)
 
 ---
 
@@ -54,7 +55,7 @@ Every Platform Admin page has the same **left sidebar**. It's grouped so related
 | **TENANTS** | **Tenants**, **Support** | Create/manage businesses; help a business in trouble |
 | **GROWTH** | **Analytics**, **Billing**, **Subscription Plans**, **AI Usage** | Money & adoption |
 | **OPERATIONS** | **Monitoring**, **System Health**, **Agent Flows** | Keep the platform running |
-| **PLATFORM** | **Platform Users** | Other admin accounts |
+| **PLATFORM** | **Platform Users**, **Announcements**, **Audit Log**, **Platform Config** | Admin accounts, tenant-wide notices, the audit trail, and global settings |
 
 At the **bottom-left** you'll always find your name, the **EN/ID** language toggle, a **Dark mode**
 switch, and **Sign out**.
@@ -105,27 +106,44 @@ ever issue — it never changes).
    up branding, branches and staff. (What they do next is the
    [Tenant Owner manual](02-tenant-owner-manual.md).)
 
+> **The Create Tenant wizard has four steps:** **Account + owner login** (business name, slug, and the
+> owner's name/email/password) → **Modules** (which features the business starts with) → **Legal
+> entity** (optional PT) → **Branch** (their first outlet). At the end the business exists, has its
+> tenant code, and the owner can sign in immediately.
+
 > **Businesses can also self-register.** If you send someone to `/register`, they create their own
 > tenant + owner login and get a tenant code automatically — you don't have to create it by hand.
 > You'll still see them appear in the Tenants list.
+
+![Self-registration — a prospective owner creates their own business and login at `/register`.](images/reg-01-register.png)
 
 ---
 
 ## 5. Open and manage one business
 
-Click any business name (or **Edit**) in the Tenants list to open its **detail page**
-(`/admin/tenants/[id]`). From here you can see its branches, users and stats, and take action:
+A tenant's actions live on **two pages** — the **list** (`/admin/tenants`) and the **detail page**
+(click the business name to open `/admin/tenants/[slug]`).
 
-- **Add branches** for the tenant (useful during onboarding).
+**On the Tenants list** (per-row or in the create wizard):
+- **+ Create Tenant** — the 4-step wizard (see §4).
+- **Edit** — change the business **name, slug, or subscription plan**.
+- **Suspend** (when active) / **Reactivate** (when suspended).
+
+**On the tenant detail page** you see its **stats** (orders 30d, revenue 30d, active members,
+customers), its **branches** and **users**, and can:
+- **🔑 Reset owner password** — set a new password and get the owner's email to hand back to them.
+- **👤 Impersonate** the owner to troubleshoot (see §11).
+- **+ Add branch** for the tenant (useful during onboarding).
 - **Toggle feature modules** on/off (see §6).
-- **Impersonate the owner** to troubleshoot (see §11).
-- **Suspend / Reactivate** the whole business.
+- **Support notes** — internal notes about this business (pin the important ones). **These are never
+  shown to the tenant** — they're your private support memory.
 
 **Suspend vs. delete:** always prefer **Suspend**. Suspending blocks the business but keeps all its
-history, and you can **Reactivate** it later in one click. Both actions are recorded in the audit
-log (who did it, and the before/after state).
+history, and you can **Reactivate** it later in one click. All of these actions — suspend, reactivate,
+impersonate, password reset, module changes — are recorded in the **audit log** (who did it, and the
+before/after state).
 
-![Drilling into one tenant — branches, users, modules and lifecycle actions.](images/admin-tenant-detail.png)
+![Drilling into one tenant — stats, branches, users, modules, password reset and support notes.](images/admin-tenant-detail.png)
 
 ---
 
@@ -171,6 +189,13 @@ Each plan has:
 **Deactivating** a plan stops it being offered to new tenants but leaves businesses already on it
 untouched.
 
+> **Important — what a plan actually enforces today.** A plan's **price** drives the MRR/billing
+> estimate, and its **features / limits** are shown on the plan card as a description of the tier — but
+> the system does **not** auto-block a tenant for exceeding a plan limit. The one control that is truly
+> enforced is the per-tenant **Modules** toggle set (§6): that's what hides features from a business.
+> So when you put a business on a plan, also **set its Modules to match** — the plan is the promise,
+> the modules are the switch.
+
 > ⚠️ **Don't confuse two kinds of "plan".**
 > - **Subscription plans** (here, `/admin/plans`) = what the *platform* charges *businesses*.
 > - **Membership plans** (`/dashboard/memberships`, owner-side) = what a *business* sells to *its
@@ -180,15 +205,25 @@ untouched.
 
 ---
 
-## 8. Billing & estimated revenue
+## 8. Billing & invoices
 
-**Menu → Billing** (`/admin/billing`). This rolls up your recurring revenue by plan.
+**Menu → Billing** (`/admin/billing`). Two tabs.
 
+**Overview tab** — your recurring revenue:
 - **Estimated MRR** = (plan price) × (number of active businesses on that plan). Annual plans are
-  divided by 12 so everything is expressed as a monthly figure.
-- The same MRR number appears on the Overview.
+  divided by 12 so everything is expressed as a monthly figure. The same MRR number appears on the
+  Overview, and an **Annual run rate** tile shows MRR × 12.
+- A **By plan** table breaks it down: price, tenants, active count, and MRR per plan.
+- MRR is an **estimate** computed from plan price × active tenants — it's a planning figure, not a
+  billed amount.
 
 ![Billing — MRR rolled up by subscription plan.](images/admin-billing.png)
+
+**Invoices tab** — the actual per-tenant invoices:
+- Tiles for **Outstanding / Overdue / Paid this month**.
+- Enter a **period** (`YYYY-MM`) and click **Generate drafts** to raise an invoice per active tenant.
+- Filter by status and, per row, move an invoice along its lifecycle: **Send** a draft → **Mark paid**
+  or flag **Overdue** → **Void** if needed. These are real, persisted invoices.
 
 ---
 
@@ -246,9 +281,62 @@ The **audit log** (`/admin/audit`, and each business has its own) records these 
 
 ![The audit log of sensitive platform actions.](images/admin-audit.png)
 
+### 11.1 "View as" — preview any tenant's world from the Hub
+Beyond raw impersonation, the **Hub** gives super-admins a quick way to *preview* a business exactly as
+its own people see it. At the top of the Hub is a **"Viewing tenant"** picker — choose the business you
+want to inspect, then use the preview tiles:
+
+- **Owner Dashboard** — opens `/dashboard` as that business's owner.
+- **Employee View** — pick one of the tenant's staff (or *"pick one for me"*) and open their
+  self-service `/employee` view.
+- **Customer / Member Portal** — pick a customer and open their member `/portal`.
+
+While previewing, a floating amber banner — **"👁️ Viewing as … · {business}"** — follows you
+everywhere, with an **Exit preview** button to drop straight back to your own admin session. Like
+impersonation, every "view as" is **role-gated to super-admins and audited**.
+
+> **Impersonate vs. View as.** *Impersonate* (from a tenant detail page) is the deep, full-session
+> route for reproducing a bug. *View as* (from the Hub) is the fast, switch-between route for checking
+> what owners / staff / customers of a given tenant actually see — handy for QA and support triage.
+
 ---
 
-## 12. Everyday checklists
+## 12. Announcements, Config & Platform Users
+
+### 12.1 Announcements — notices to tenants
+**Menu → Announcements** (`/admin/announcements`). Broadcast a notice to businesses — a maintenance
+window, a new feature, a policy change.
+
+![Announcements — targeted notices to tenants.](images/admin-announcements.png)
+
+1. Click **+ New announcement**.
+2. Enter a **title** and **body**, pick a **severity** (Info / Warning / Critical), and choose the
+   **audience**: **All tenants**, **By plan** (a plan cohort), or **One tenant**.
+3. Save as a draft, then **Publish** when you're ready (you can **Unpublish**, **Edit** or **Delete**
+   later). Only **published** announcements are visible to tenants.
+
+### 12.2 Platform Config — global defaults & feature flags
+**Menu → Platform Config** (`/admin/config`). Platform-wide settings that apply across *all* tenants:
+
+![Platform Config — default plans and feature flags.](images/admin-config.png)
+
+- **Default plans** — the comma-separated list of plans offered to new tenants.
+- **Subscription plans** — a shortcut to manage pricing on the **Subscription Plans** page (§7).
+- **Feature flags** — global on/off switches (each a key you can toggle, add, or remove). New flags
+  start **disabled**.
+
+Click **Save changes** to apply.
+
+### 12.3 Platform Users — other admins
+**Menu → Platform Users** (`/admin/users`). The other people who can sign in to Platform Admin. Add or
+manage fellow platform operators here. Keep this list tight — everyone here can see and act across
+**every** business.
+
+![Platform Users — the other admin accounts.](images/admin-users.png)
+
+---
+
+## 13. Everyday checklists
 
 **Onboard a new business**
 1. **Tenants → + Create Tenant** (or point them at `/register`).

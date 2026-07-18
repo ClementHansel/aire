@@ -65,6 +65,9 @@ describe('AuthService', () => {
     } as any;
 
     mockPool = { query: vi.fn() };
+    // Fallback for queries past the per-test Once mocks — chiefly the tenant-lifecycle
+    // status lookup added to login()/validateJwtPayload(); 'active' lets auth proceed.
+    mockPool.query.mockResolvedValue({ rows: [{ status: 'active' }] });
 
     authService = new AuthService(jwtService, configService, mockPool as any);
   });

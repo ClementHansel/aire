@@ -208,6 +208,8 @@ const statusTones: Record<string, string> = {
   draft: 'bg-amber-50 text-amber-700',
   pending: 'bg-amber-50 text-amber-700',
   late: 'bg-amber-50 text-amber-700',
+  past_due: 'bg-amber-50 text-amber-700',
+  suspended: 'bg-amber-50 text-amber-700',
   rejected: 'bg-rose-50 text-rose-700',
   cancelled: 'bg-rose-50 text-rose-700',
   absent: 'bg-rose-50 text-rose-700',
@@ -216,7 +218,9 @@ const statusTones: Record<string, string> = {
 
 export function StatusBadge({ status }: { status: string }) {
   const key = (status || '').toLowerCase();
-  return <span className={cn('badge capitalize', statusTones[key] ?? 'bg-surface-sunken text-text-secondary')}>{status || '—'}</span>;
+  // Underscored codes (e.g. "past_due") read as "past due" rather than "Past_due".
+  const label = (status || '—').replace(/_/g, ' ');
+  return <span className={cn('badge capitalize', statusTones[key] ?? 'bg-surface-sunken text-text-secondary')}>{label}</span>;
 }
 
 /* ── Modal ──────────────────────────────────────────────────────────── */

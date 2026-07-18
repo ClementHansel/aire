@@ -8,15 +8,23 @@ import { PlatformPlanService } from './platform-plan.service';
 import { PlatformInvoiceService } from './platform-invoice.service';
 import { PlatformUserService } from './platform-user.service';
 import { PlatformAnnouncementService } from './platform-announcement.service';
+import { TenantLifecycleService } from './tenant-lifecycle.service';
+import { PlatformBillingPaymentService } from './platform-billing-payment.service';
+import { TenantBillingService } from './tenant-billing.service';
+import { TenantBillingController, PlatformPaymentWebhookController } from './tenant-billing.controller';
+import { PlatformOpsService } from './platform-ops.service';
+import { PlatformTaxService } from './platform-tax.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
 import { AuthModule } from '../auth';
 import { AuditModule } from '../audit';
 import { LegalEntityModule } from '../legal-entity';
 import { OutletModule } from '../outlet/outlet.module';
+import { EntitlementModule } from '../entitlement';
+import { PaymentModule } from '../payment/payment.module';
 
 @Module({
-  imports: [AuthModule, AuditModule, LegalEntityModule, OutletModule],
-  controllers: [AdminController, PlatformFeedController],
+  imports: [AuthModule, AuditModule, LegalEntityModule, OutletModule, EntitlementModule, PaymentModule],
+  controllers: [AdminController, PlatformFeedController, TenantBillingController, PlatformPaymentWebhookController],
   providers: [
     AdminService,
     AdminMetricsService,
@@ -25,6 +33,11 @@ import { OutletModule } from '../outlet/outlet.module';
     PlatformInvoiceService,
     PlatformUserService,
     PlatformAnnouncementService,
+    TenantLifecycleService,
+    PlatformBillingPaymentService,
+    TenantBillingService,
+    PlatformOpsService,
+    PlatformTaxService,
     DatabasePoolProvider,
   ],
   exports: [AdminService],

@@ -1,6 +1,7 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { EntitlementService } from '../entitlement';
 
 /**
  * Outlet settings stored as JSONB in the database.
@@ -88,13 +89,20 @@ const OUTLET_COLUMNS =
  */
 @Injectable()
 export class OutletService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly entitlements: EntitlementService,
+  ) {}
 
   /**
    * Creates a new outlet for a tenant.
    * Requirement 3.1: Creating outlets within a tenant.
    */
   async create(dto: CreateOutletDto): Promise<OutletRecord> {
+    // Plan entitlement: block if the tenant is at its outlet cap. The first branch
+    // during provisioning always fits (every plan allows >= 1).
+    await this.entitlements.assertWithin(dto.tenantId, 'outlets');
+
     // Derive a 3-letter branch code from the name when not supplied.
     const code = (dto.code ?? dto.name.replace(/[^A-Za-z]/g, '').slice(0, 3)).toUpperCase();
     // Agent id must be unique; auto-generate from the code when not provided.

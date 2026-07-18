@@ -127,10 +127,19 @@ You'll get a WhatsApp message when it's **confirmed** (or if it's declined).
 
 Many businesses let you chat with them on **WhatsApp**. An assistant can answer about **your own**
 membership status, orders, queue position, vouchers, and bookings — plus general info like prices and
-opening hours.
+opening hours. Just message their WhatsApp number as you normally would.
 
-It only ever sees **your** information (never other customers' details) and will hand you over to a
-real person whenever you ask, or when it can't help.
+**Things you can ask, for example:**
+- *"Is my membership still active?"* / *"When does my membership expire?"*
+- *"How much is a full detail for an SUV?"* or *"What plans do you have?"*
+- *"Where is my car in the queue?"*
+- *"Do I have any vouchers left?"*
+- *"Can I book a wash tomorrow at 10?"* — the assistant proposes it; a staff member confirms, and you
+  get a WhatsApp message once it's confirmed.
+
+It only ever sees **your** information (never other customers' details, and never the business's
+private financials) and will **hand you over to a real person** whenever you ask, or when it can't
+help. If you'd rather talk to a human from the start, just say so.
 
 ---
 

@@ -5,7 +5,98 @@ import { api } from '@/lib/api';
 import { isAuthenticated, getUser, logout } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { PageHeader, Panel, ErrorBanner } from '@/components/dashboard/ui';
+import { PageHeader, Panel, Field, ErrorBanner } from '@/components/dashboard/ui';
+
+interface PlatformTaxConfig { enabled: boolean; npwp: string; name: string; address: string; rate: number }
+
+/* ── Platform tax (PPN / Faktur Pajak) ──────────────────────────────────── */
+// Self-contained so it owns its own load/save cycle, independent of the
+// feature-flag/plans form above (which has its own single Save button).
+function PlatformTaxPanel() {
+  const { t } = useI18n();
+  const [cfg, setCfg] = useState<PlatformTaxConfig | null>(null);
+  // Rate is edited as a percentage (11) but stored as a fraction (0.11).
+  const [ratePct, setRatePct] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const data = await api.get<PlatformTaxConfig>('/admin/platform-tax');
+      setCfg({
+        enabled: Boolean(data.enabled), npwp: data.npwp ?? '', name: data.name ?? '',
+        address: data.address ?? '', rate: Number(data.rate) || 0,
+      });
+      setRatePct(String(+((Number(data.rate) || 0) * 100).toFixed(4)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('admin.config.tax.failedToLoad', 'Failed to load tax settings'));
+    } finally { setLoading(false); }
+  }, [t]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const rate = Math.max(0, Number(ratePct) || 0) / 100;
+      const updated = await api.put<PlatformTaxConfig>('/admin/platform-tax', {
+        enabled: cfg.enabled, npwp: cfg.npwp, name: cfg.name, address: cfg.address, rate,
+      });
+      setCfg({
+        enabled: Boolean(updated.enabled), npwp: updated.npwp ?? '', name: updated.name ?? '',
+        address: updated.address ?? '', rate: Number(updated.rate) || 0,
+      });
+      setRatePct(String(+((Number(updated.rate) || 0) * 100).toFixed(4)));
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('admin.config.tax.saveFailed', 'Save failed'));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Panel
+      title={t('admin.config.tax.title', 'Platform tax (PPN)')}
+      description={t('admin.config.tax.desc', 'Seller identity and PPN rate applied to the invoices the platform issues to tenants (Faktur Pajak).')}
+      actions={<button className="btn-primary text-sm" onClick={save} disabled={saving || loading}>{saving ? t('admin.config.tax.saving', 'Saving…') : t('admin.config.tax.save', 'Save tax settings')}</button>}
+    >
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
+      {saved && <div className="mb-3 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{t('admin.config.tax.savedMsg', 'Tax settings saved.')}</div>}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between border border-border rounded-lg px-3 py-2.5">
+          <div>
+            <p className="text-sm font-medium text-text-primary">{t('admin.config.tax.enabled', 'Charge PPN on invoices')}</p>
+            <p className="text-xs text-text-muted">{t('admin.config.tax.enabledHint', 'When on, invoices include PPN and can carry a Faktur Pajak serial.')}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCfg((c) => c && { ...c, enabled: !c.enabled })}
+            disabled={loading || !cfg}
+            className={cn('badge', cfg?.enabled ? 'bg-green-50 text-green-700' : 'bg-surface-sunken text-text-secondary')}
+          >
+            {cfg?.enabled ? t('admin.config.enabled', 'Enabled') : t('admin.config.disabled', 'Disabled')}
+          </button>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label={t('admin.config.tax.name', 'Seller name')}>
+            <input className="input-field" value={cfg?.name ?? ''} disabled={loading || !cfg} onChange={(e) => setCfg((c) => c && { ...c, name: e.target.value })} placeholder="PT Airin Teknologi" />
+          </Field>
+          <Field label={t('admin.config.tax.npwp', 'NPWP')}>
+            <input className="input-field font-mono" value={cfg?.npwp ?? ''} disabled={loading || !cfg} onChange={(e) => setCfg((c) => c && { ...c, npwp: e.target.value })} placeholder="00.000.000.0-000.000" />
+          </Field>
+        </div>
+        <Field label={t('admin.config.tax.address', 'Seller address')}>
+          <textarea className="input-field" rows={2} value={cfg?.address ?? ''} disabled={loading || !cfg} onChange={(e) => setCfg((c) => c && { ...c, address: e.target.value })} />
+        </Field>
+        <Field label={t('admin.config.tax.rate', 'PPN rate (%)')} hint={t('admin.config.tax.rateHint', 'Percentage, e.g. 11 for 11%.')}>
+          <input className="input-field max-w-[140px] tabular-nums" type="number" min={0} step="0.1" value={ratePct} disabled={loading || !cfg} onChange={(e) => setRatePct(e.target.value)} />
+        </Field>
+      </div>
+    </Panel>
+  );
+}
 
 interface PricingTier { plan: string; price: number }
 interface PlatformConfig { defaultPlans: string[]; pricingTiers: PricingTier[]; featureFlags: Record<string, boolean> }
@@ -107,6 +198,8 @@ export default function AdminConfigPage() {
         <Panel title={t('admin.config.subscriptionPlans', 'Subscription plans')} description={t('admin.config.subscriptionPlansDesc', 'The plans the platform charges tenants (price, billing cycle, features, limits) now live on their own page — separate from the membership plans each tenant sells to its customers.')}>
           <a href="/admin/plans" className="btn-secondary text-sm inline-block">{t('admin.config.managePlans', 'Manage subscription plans')} →</a>
         </Panel>
+
+        <PlatformTaxPanel />
 
         <Panel title={t('admin.config.featureFlags', 'Feature flags')} description={t('admin.config.featureFlagsDesc', 'Toggle platform-wide features.')}>
           <div className="space-y-2 mb-3">

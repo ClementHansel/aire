@@ -1,6 +1,8 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export type BookingStatus = 'booked' | 'confirmed' | 'done' | 'cancelled';
 const STATUSES: BookingStatus[] = ['booked', 'confirmed', 'done', 'cancelled'];
@@ -40,7 +42,10 @@ const COLS = `b.id, b.outlet_id, b.customer_name, b.customer_phone, b.license_pl
 
 @Injectable()
 export class BookingService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    @Optional() private readonly eventBus?: EventBusService,
+  ) {}
 
   private map(r: any): BookingRecord {
     return {
@@ -99,7 +104,13 @@ export class BookingService {
         dto.notes ?? null,
       ],
     );
-    return this.getOne(tenantId, res.rows[0].id);
+    const booking = await this.getOne(tenantId, res.rows[0].id);
+    void this.eventBus?.emit({
+      type: DomainEventType.BookingCreated,
+      tenantId, outletId: booking.outletId, actor: 'staff',
+      payload: { bookingId: booking.id, customerName: booking.customerName, serviceId: booking.serviceId, scheduledAt: booking.scheduledAt },
+    });
+    return booking;
   }
 
   async getOne(tenantId: string, id: string): Promise<BookingRecord> {
@@ -136,11 +147,24 @@ export class BookingService {
       vals,
     );
     if (res.rowCount === 0) throw new NotFoundException('Booking not found');
-    return this.getOne(tenantId, id);
+    const booking = await this.getOne(tenantId, id);
+    // A status move to 'cancelled' is a distinct lifecycle signal; everything
+    // else is a generic update.
+    void this.eventBus?.emit({
+      type: dto.status === 'cancelled' ? DomainEventType.BookingCancelled : DomainEventType.BookingUpdated,
+      tenantId, outletId: booking.outletId, actor: 'staff',
+      payload: { bookingId: booking.id, status: booking.status },
+    });
+    return booking;
   }
 
   async remove(tenantId: string, id: string): Promise<void> {
     const res = await this.pool.query(`DELETE FROM bookings WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
     if (res.rowCount === 0) throw new NotFoundException('Booking not found');
+    void this.eventBus?.emit({
+      type: DomainEventType.BookingCancelled,
+      tenantId, actor: 'staff',
+      payload: { bookingId: id, deleted: true },
+    });
   }
 }

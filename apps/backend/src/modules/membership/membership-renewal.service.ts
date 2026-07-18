@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { JWTPayload, MembershipStatus } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
@@ -6,6 +6,8 @@ import { Membership, MembershipRow } from './interfaces';
 import { MembershipPlanService } from './membership-plan.service';
 import { MembershipLifecycleService } from './membership-lifecycle.service';
 import { PosCheckoutService } from '../order/pos-checkout.service';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export interface RenewalResult {
   type: 'extension' | 'new_parallel';
@@ -19,6 +21,7 @@ export class MembershipRenewalService {
     private readonly planService: MembershipPlanService,
     private readonly lifecycle: MembershipLifecycleService,
     private readonly checkout: PosCheckoutService,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   /** All of a customer's memberships (for the extend-vs-new decision). */
@@ -143,6 +146,11 @@ export class MembershipRenewalService {
       );
       const row = result.rows[0]!;
       await this.lifecycle.recordEvent(this.pool, row.tenant_id, row.id, 'renewed', { orderId, planId, type: 'extension' }, null);
+      void this.eventBus?.emit({
+        type: DomainEventType.MembershipRenewed,
+        tenantId: row.tenant_id, actor: 'pos',
+        payload: { membershipId: row.id, planId, orderId, type: 'extension' },
+      });
 
       return {
         type: 'extension',
@@ -166,6 +174,11 @@ export class MembershipRenewalService {
     );
     const row = result.rows[0]!;
     await this.lifecycle.recordEvent(this.pool, row.tenant_id, row.id, 'renewed', { orderId, planId, type: 'new_parallel' }, null);
+    void this.eventBus?.emit({
+      type: DomainEventType.MembershipRenewed,
+      tenantId: row.tenant_id, actor: 'pos',
+      payload: { membershipId: row.id, planId, orderId, type: 'new_parallel' },
+    });
 
     return {
       type: 'new_parallel',

@@ -47,7 +47,10 @@ export class PaymentService {
     const provider = (p.provider || this.config.get('PAYMENT_PROVIDER') || 'xendit') as TenantPaymentConfig['provider'];
     return {
       provider,
-      apiKey: p.apiKey || this.config.get(`${provider.toUpperCase()}_API_KEY`) || '',
+      // Default to the sandbox stand-in ('mock') when no key is configured, so the
+      // POS QRIS flow works end-to-end before the payment vendor is approved. A real
+      // key (tenant setting or env) overrides it with zero code changes.
+      apiKey: p.apiKey || this.config.get(`${provider.toUpperCase()}_API_KEY`) || 'mock',
       webhookSecret: p.webhookSecret || this.config.get(`${provider.toUpperCase()}_WEBHOOK_SECRET`) || '',
     };
   }
@@ -125,6 +128,14 @@ export class PaymentService {
       `UPDATE orders SET payment_method = 'qris_dynamic', payment_reference = $1, updated_at = NOW() WHERE id = $2`,
       [result.transactionId, orderId],
     );
+
+    // A charge has been initiated with the gateway (awaiting the confirm webhook).
+    // Completes the payment lifecycle on the feed: charged → confirmed.
+    void this.eventBus?.emit({
+      type: DomainEventType.PaymentCharged,
+      tenantId,
+      payload: { orderId: order.id, transactionId: result.transactionId, amount, method: 'qris_dynamic' },
+    });
 
     // Sandbox stand-in: no live gateway will send a webhook, so simulate the
     // customer scanning and paying by confirming the order through the exact

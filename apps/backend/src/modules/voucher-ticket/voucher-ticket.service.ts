@@ -1,7 +1,11 @@
 import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
+import { JWTPayload } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { NotificationService, NotificationType } from '../notification';
+import { PosCheckoutService } from '../order/pos-checkout.service';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export interface SellBookDto {
   outletId: string;
@@ -13,6 +17,8 @@ export interface SellBookDto {
   benefitValue?: number;
   unitPrice?: number;
   expiryDate?: string | null;
+  /** Tender used to settle the sale. Defaults to cash. */
+  paymentMethod?: string;
 }
 
 export interface VoucherTicket {
@@ -28,13 +34,31 @@ export interface VoucherTicket {
 export class VoucherTicketService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly checkout: PosCheckoutService,
     @Optional() private readonly notifications?: NotificationService,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
-  async sellBook(tenantId: string, dto: SellBookDto): Promise<{ bookId: string; codes: string[] }> {
-    if (!dto.outletId) throw new BadRequestException('outletId is required');
+  /**
+   * Sell a book of shareable voucher tickets. The sale is a completed, PAID cash
+   * transaction: it creates a real order (settled immediately) so the revenue
+   * books through the standard OrderPaid → accounting path (Dr Cash/Bank, Cr
+   * Sales), exactly like a voucher-pack sale. Codes are generated and returned in
+   * the same call so the POS can deliver them to the buyer right away.
+   */
+  async sellBook(user: JWTPayload, dto: SellBookDto): Promise<{ bookId: string; codes: string[] }> {
+    const tenantId = user.tenant_id;
+    const outletId = dto.outletId ?? user.outlet_id ?? undefined;
+    if (!outletId) throw new BadRequestException('outletId is required');
     const qty = Number(dto.quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty > 1000) throw new BadRequestException('quantity must be 1–1000');
+
+    const unitPrice = dto.unitPrice ?? 0;
+    const total = unitPrice * qty;
+    const paymentMethod = dto.paymentMethod ?? 'cash';
+    // Book the cash into the sale's branch (which may differ from the operator's
+    // home outlet); operator/tenant come from the authenticated user.
+    const orderUser: JWTPayload = { ...user, outlet_id: outletId };
 
     const client = await this.pool.connect();
     try {
@@ -42,7 +66,7 @@ export class VoucherTicketService {
 
       const outletRes = await client.query<{ code: string | null }>(
         'SELECT code FROM outlets WHERE id = $1 AND tenant_id = $2',
-        [dto.outletId, tenantId],
+        [outletId, tenantId],
       );
       if (outletRes.rows.length === 0) throw new NotFoundException('Branch not found');
       const branchCode = (outletRes.rows[0]!.code || 'XXX').toUpperCase().slice(0, 3).padEnd(3, 'X');
@@ -55,18 +79,40 @@ export class VoucherTicketService {
         `INSERT INTO voucher_counters (outlet_id, period, last_number) VALUES ($1, $2, $3)
          ON CONFLICT (outlet_id, period) DO UPDATE SET last_number = voucher_counters.last_number + EXCLUDED.last_number
          RETURNING last_number`,
-        [dto.outletId, period, qty],
+        [outletId, period, qty],
       );
       const high = counterRes.rows[0]!.last_number;
       const start = high - qty + 1;
 
+      // Route the sale through a real, immediately-PAID order so the cash books
+      // via OrderPaid → accounting. Upsert the buyer as a customer when we have a
+      // phone; otherwise it is a walk-in and the order carries no customer.
+      let customerId: string | null = null;
+      if (dto.buyerPhone && dto.buyerName) {
+        customerId = await this.checkout.upsertCustomer(
+          client,
+          tenantId,
+          dto.buyerName.trim(),
+          dto.buyerPhone.trim(),
+        );
+      }
+      const order = await this.checkout.createPackOrder(client, orderUser, {
+        customerId,
+        customerName: dto.buyerName?.trim() || 'Walk-in',
+        customerPhone: dto.buyerPhone?.trim() || '',
+        total,
+        note: `Voucher Book: ${qty} tickets`,
+        paidNow: true,
+        paymentMethod,
+      });
+
       const bookRes = await client.query<{ id: string }>(
-        `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date, order_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [
-          tenantId, dto.outletId, dto.buyerName ?? null, dto.buyerPhone ?? null, qty,
+          tenantId, outletId, dto.buyerName ?? null, dto.buyerPhone ?? null, qty,
           dto.benefitType ?? 'service', dto.benefitServiceId ?? null, dto.benefitValue ?? 0,
-          dto.unitPrice ?? 0, dto.expiryDate ?? null,
+          unitPrice, dto.expiryDate ?? null, order.id,
         ],
       );
       const bookId = bookRes.rows[0]!.id;
@@ -78,11 +124,39 @@ export class VoucherTicketService {
         await client.query(
           `INSERT INTO voucher_tickets (tenant_id, book_id, outlet_id, code, expiry_date)
            VALUES ($1, $2, $3, $4, $5)`,
-          [tenantId, bookId, dto.outletId, code, dto.expiryDate ?? null],
+          [tenantId, bookId, outletId, code, dto.expiryDate ?? null],
         );
       }
 
       await client.query('COMMIT');
+
+      // Cash now books through the order: emit OrderPaid AFTER commit so the
+      // accounting poster (commission/feedback too) read committed rows and post
+      // Dr Cash/Bank, Cr Sales — mirrors OrderService.payOrder for a cash sale.
+      if (total > 0) {
+        void this.eventBus?.emit({
+          type: DomainEventType.OrderPaid,
+          tenantId,
+          outletId,
+          actor: user.sub,
+          payload: {
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            total,
+            paymentMethod,
+          },
+        });
+      }
+
+      // Shareable voucher-book sale — mirror VoucherPackSold so the AI feed /
+      // monitoring and revenue tracking see the sale at sell time.
+      void this.eventBus?.emit({
+        type: DomainEventType.VoucherBookSold,
+        tenantId,
+        outletId,
+        actor: 'pos',
+        payload: { bookId, orderId: order.id, quantity: qty, unitPrice, total },
+      });
 
       // Best-effort WhatsApp delivery of the code list to the buyer.
       if (dto.buyerPhone && this.notifications) {
@@ -129,7 +203,17 @@ export class VoucherTicketService {
       [tenantId, code.trim().toUpperCase(), orderId ?? null, outletId ?? null],
     );
     if (res.rows.length === 0) throw new BadRequestException('Voucher is not available for redemption');
-    return this.mapTicket(res.rows[0]);
+    const ticket = this.mapTicket(res.rows[0]);
+    // Shareable tickets bypass the order voucher path, so emit here too — keeps
+    // VoucherRedeemed complete across both voucher kinds (pack codes + books).
+    void this.eventBus?.emit({
+      type: DomainEventType.VoucherRedeemed,
+      tenantId,
+      outletId: outletId ?? null,
+      actor: 'pos',
+      payload: { ticketId: ticket.id, code: ticket.code, orderId: orderId ?? null, source: 'ticket' },
+    });
+    return ticket;
   }
 
   async listBooks(tenantId: string): Promise<Record<string, unknown>[]> {

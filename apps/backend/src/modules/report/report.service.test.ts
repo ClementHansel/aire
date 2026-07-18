@@ -55,7 +55,7 @@ describe('ReportService', () => {
         ],
       });
 
-      const result = await reportService.getSummary({
+      const result = await reportService.getSummary('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
       });
@@ -98,7 +98,7 @@ describe('ReportService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const result = await reportService.getSummary({
+      const result = await reportService.getSummary('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
       });
@@ -131,7 +131,7 @@ describe('ReportService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await reportService.getSummary({
+      await reportService.getSummary('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
         outletIds: ['outlet-123'],
@@ -162,14 +162,14 @@ describe('ReportService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await reportService.getSummary({
+      await reportService.getSummary('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
       });
 
-      // Each query should only have 2 params (dateFrom, dateTo)
+      // Each query should have 3 params (dateFrom, dateTo, tenantId)
       for (const call of mockPool.query.mock.calls) {
-        expect(call[1]).toHaveLength(2);
+        expect(call[1]).toHaveLength(3);
       }
     });
   });
@@ -203,7 +203,7 @@ describe('ReportService', () => {
         ],
       });
 
-      const csv = await reportService.exportCsv({
+      const csv = await reportService.exportCsv('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-01',
       });
@@ -223,7 +223,7 @@ describe('ReportService', () => {
     it('should return only headers when no orders exist', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const csv = await reportService.exportCsv({
+      const csv = await reportService.exportCsv('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-01',
       });
@@ -252,7 +252,7 @@ describe('ReportService', () => {
         ],
       });
 
-      const csv = await reportService.exportCsv({
+      const csv = await reportService.exportCsv('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-01',
       });
@@ -266,7 +266,7 @@ describe('ReportService', () => {
     it('should pass outletIds filter to query when provided', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await reportService.exportCsv({
+      await reportService.exportCsv('tenant-1', {
         dateFrom: '2024-01-01',
         dateTo: '2024-01-31',
         outletIds: ['outlet-456'],

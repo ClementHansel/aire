@@ -1,7 +1,9 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { MembershipLifecycleService } from './membership-lifecycle.service';
+import { EventBusService } from '../events/event-bus.service';
+import { DomainEventType } from '../events/event.types';
 
 export interface MembershipListRow {
   id: string;
@@ -35,6 +37,7 @@ export class MembershipAdminService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly lifecycle: MembershipLifecycleService,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   async list(tenantId: string, statusFilter?: string): Promise<MembershipListRow[]> {
@@ -88,6 +91,11 @@ export class MembershipAdminService {
       throw new BadRequestException(`Only active memberships can be suspended (current: ${exists.rows[0].status})`);
     }
     await this.lifecycle.recordEvent(this.pool, tenantId, id, 'suspended', reason ? { reason } : null, actorId ?? null);
+    void this.eventBus?.emit({
+      type: DomainEventType.MembershipSuspended,
+      tenantId, actor: actorId ?? null,
+      payload: { membershipId: id, reason: reason ?? null },
+    });
   }
 
   /** Reactivate a suspended membership. */
@@ -103,6 +111,11 @@ export class MembershipAdminService {
       throw new BadRequestException(`Only suspended memberships can be reactivated (current: ${exists.rows[0].status})`);
     }
     await this.lifecycle.recordEvent(this.pool, tenantId, id, 'reactivated', null, actorId ?? null);
+    void this.eventBus?.emit({
+      type: DomainEventType.MembershipReactivated,
+      tenantId, actor: actorId ?? null,
+      payload: { membershipId: id },
+    });
   }
 
   /** Event history for the CRM membership detail view. */

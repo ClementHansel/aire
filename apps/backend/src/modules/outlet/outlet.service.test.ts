@@ -5,11 +5,14 @@ import { OutletService, CreateOutletDto, UpdateOutletDto } from './outlet.servic
 describe('OutletService', () => {
   let service: OutletService;
   let mockPool: { query: ReturnType<typeof vi.fn> };
+  let mockEntitlements: { assertWithin: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockPool = { query: vi.fn() };
-    service = new OutletService(mockPool as any);
+    // Entitlement guard is a no-op in these unit tests (limits enforced elsewhere).
+    mockEntitlements = { assertWithin: vi.fn().mockResolvedValue(undefined) };
+    service = new OutletService(mockPool as any, mockEntitlements as any);
   });
 
   const mockOutletRow = {

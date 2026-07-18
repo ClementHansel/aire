@@ -21,6 +21,7 @@ import { AgentModule } from './modules/agent';
 import { PaymentModule } from './modules/payment';
 import { VoucherModule } from './modules/voucher';
 import { EventsModule } from './modules/events';
+import { JobMonitorModule } from './modules/job-monitor';
 import { MonitoringModule } from './modules/monitoring';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { FinanceModule } from './modules/finance/finance.module';
@@ -74,6 +75,7 @@ import { BarcodeModule } from './modules/barcode/barcode.module';
     ScopeModule,
     PermissionsModule,
     EventsModule,
+    JobMonitorModule,
     MonitoringModule,
     AgentModule,
     AuthModule,

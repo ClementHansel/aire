@@ -25,7 +25,7 @@ export default function PovBanner() {
   const tenant = meta?.tenantName ? ` · ${meta.tenantName}` : '';
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 rounded-full border border-amber-300 bg-amber-50 px-4 py-2 shadow-lg">
+    <div className="pov-banner fixed bottom-4 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 rounded-full border border-amber-300 bg-amber-50 px-4 py-2 shadow-lg">
       <span className="text-sm text-amber-900">
         👁️ {t('pov.banner.viewingAs', 'Viewing as')} <strong>{label}</strong>{tenant}
       </span>

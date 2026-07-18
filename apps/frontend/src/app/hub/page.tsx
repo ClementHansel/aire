@@ -204,6 +204,14 @@ export default function HubPage() {
           href: '/admin',
           accent: 'bg-slate-100 text-slate-700',
         },
+        {
+          id: 'docs',
+          label: t('auth.hub.docs', 'Documentation'),
+          description: t('auth.hub.docsFullDesc', 'All user manuals and the full technical reference'),
+          icon: '📚',
+          href: '/docs',
+          accent: 'bg-amber-50 text-amber-700',
+        },
       ]
     : [
         {
@@ -229,6 +237,14 @@ export default function HubPage() {
           icon: '🖥️',
           href: `/kiosk/${slug || user?.tenantId || ''}`,
           accent: 'bg-violet-50 text-violet-700',
+        },
+        {
+          id: 'docs',
+          label: t('auth.hub.docs', 'Documentation'),
+          description: t('auth.hub.docsDesc', 'Step-by-step user manuals — read online or download as PDF'),
+          icon: '📚',
+          href: '/docs',
+          accent: 'bg-amber-50 text-amber-700',
         },
       ];
 

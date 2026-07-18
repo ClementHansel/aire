@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, Inject, Optional, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 import { resolveTenantModules, TENANT_MODULE_KEYS } from '@aire/shared';
@@ -9,11 +9,12 @@ import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defa
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 import { LegalEntityService } from '../legal-entity/legal-entity.service';
 import { OutletService } from '../outlet/outlet.service';
+import { EventBusService, DomainEventType } from '../events';
 
 /**
  * Tenant status values matching database CHECK constraint.
  */
-export type TenantStatus = 'active' | 'suspended' | 'cancelled';
+export type TenantStatus = 'active' | 'past_due' | 'suspended' | 'cancelled';
 
 /**
  * Tenant record as returned from the database.
@@ -119,6 +120,7 @@ export class AdminService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly legalEntities: LegalEntityService,
     private readonly outlets: OutletService,
+    @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
   /**
@@ -292,6 +294,13 @@ export class AdminService {
       branchId = outlet.id;
     }
 
+    void this.eventBus?.emit({
+      type: DomainEventType.TenantCreated,
+      tenantId,
+      actor: 'admin',
+      payload: { name: row.name, slug: row.slug, plan: row.plan, source: 'admin' },
+    });
+
     return { ...mapRowToTenant(row), ownerCreated, legalEntityId, branchId };
   }
 
@@ -345,64 +354,9 @@ export class AdminService {
     return mapRowToTenant(row);
   }
 
-  /**
-   * Suspend a tenant. Sets status to 'suspended'.
-   * Requirement: 4.2
-   */
-  async suspendTenant(tenantId: string): Promise<TenantRecord> {
-    const result = await this.pool.query<TenantRow>(
-      `UPDATE tenants SET status = 'suspended', updated_at = NOW()
-       WHERE id = $1 AND status = 'active'
-       RETURNING id, name, slug, plan, status, settings, created_at, updated_at`,
-      [tenantId],
-    );
-
-    const row = result.rows[0];
-    if (!row) {
-      // Check if the tenant exists but isn't in 'active' state
-      const existing = await this.pool.query<{ status: string }>(
-        `SELECT status FROM tenants WHERE id = $1`,
-        [tenantId],
-      );
-      if (existing.rows.length === 0) {
-        throw new NotFoundException(`Tenant ${tenantId} not found`);
-      }
-      throw new BadRequestException(
-        `Tenant ${tenantId} cannot be suspended (current status: ${existing.rows[0]!.status})`,
-      );
-    }
-
-    return mapRowToTenant(row);
-  }
-
-  /**
-   * Reactivate a suspended tenant. Sets status back to 'active'.
-   * Requirement: 4.2
-   */
-  async reactivateTenant(tenantId: string): Promise<TenantRecord> {
-    const result = await this.pool.query<TenantRow>(
-      `UPDATE tenants SET status = 'active', updated_at = NOW()
-       WHERE id = $1 AND status = 'suspended'
-       RETURNING id, name, slug, plan, status, settings, created_at, updated_at`,
-      [tenantId],
-    );
-
-    const row = result.rows[0];
-    if (!row) {
-      const existing = await this.pool.query<{ status: string }>(
-        `SELECT status FROM tenants WHERE id = $1`,
-        [tenantId],
-      );
-      if (existing.rows.length === 0) {
-        throw new NotFoundException(`Tenant ${tenantId} not found`);
-      }
-      throw new BadRequestException(
-        `Tenant ${tenantId} cannot be reactivated (current status: ${existing.rows[0]!.status})`,
-      );
-    }
-
-    return mapRowToTenant(row);
-  }
+  // Tenant status transitions (suspend / reactivate / cancel / past_due) now live
+  // in TenantLifecycleService — the single writer of tenants.status, which also
+  // records history + emits domain events + invalidates the auth status cache.
 
   /**
    * Get the enabled/disabled state of every module for a tenant.

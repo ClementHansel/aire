@@ -52,8 +52,61 @@ export class RealtimeBridge implements OnModuleInit, OnModuleDestroy {
           severity: 'warning',
         });
       }),
+      this.eventBus.on(DomainEventType.FeedbackAlert, (e) => {
+        const outletId = e.outletId;
+        if (!outletId) return;
+        const p = e.payload as { rating?: number; nps?: number; reason?: string };
+        this.gateway.emitNotificationAlert(outletId, {
+          type: 'feedback_alert',
+          message: p.reason === 'detractor'
+            ? `Detractor feedback received (NPS ${p.nps ?? '?'})`
+            : `Low rating received (${p.rating ?? '?'}★)`,
+          severity: 'warning',
+        });
+      }),
+      this.eventBus.on(DomainEventType.DeviceOffline, (e) => {
+        const outletId = e.outletId;
+        if (!outletId) return;
+        const p = e.payload as { bridgeId: string };
+        this.gateway.emitNotificationAlert(outletId, {
+          type: 'device_offline',
+          message: `Branch bridge went offline (${p.bridgeId})`,
+          severity: 'error',
+        });
+      }),
+      this.eventBus.on(DomainEventType.DeviceOnline, (e) => {
+        const outletId = e.outletId;
+        if (!outletId) return;
+        const p = e.payload as { bridgeId: string };
+        this.gateway.emitNotificationAlert(outletId, {
+          type: 'device_online',
+          message: `Branch bridge back online (${p.bridgeId})`,
+          severity: 'info',
+        });
+      }),
+      this.eventBus.on(DomainEventType.BookingCreated, (e) => {
+        const outletId = e.outletId;
+        if (!outletId) return;
+        const p = e.payload as { customerName?: string; scheduledAt?: string };
+        const when = p.scheduledAt ? new Date(p.scheduledAt).toLocaleString('id-ID') : '';
+        this.gateway.emitNotificationAlert(outletId, {
+          type: 'booking_created',
+          message: `New booking: ${p.customerName ?? 'customer'}${when ? ` @ ${when}` : ''}`,
+          severity: 'info',
+        });
+      }),
+      this.eventBus.on(DomainEventType.BookingCancelled, (e) => {
+        const outletId = e.outletId;
+        if (!outletId) return; // deletes carry no outlet; only status→cancelled updates do
+        const p = e.payload as { bookingId: string };
+        this.gateway.emitNotificationAlert(outletId, {
+          type: 'booking_cancelled',
+          message: `Booking cancelled (${p.bookingId})`,
+          severity: 'warning',
+        });
+      }),
     );
-    this.logger.log('Realtime bridge subscribed (order.paid → socket, inventory.low_stock → socket)');
+    this.logger.log('Realtime bridge subscribed (order.paid, low_stock, feedback_alert, device on/offline, booking created/cancelled → socket)');
   }
 
   onModuleDestroy(): void {

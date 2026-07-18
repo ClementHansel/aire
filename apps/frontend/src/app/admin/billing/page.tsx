@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { isAuthenticated, getUser, logout } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { PageHeader, StatCard, Panel, Tabs, ErrorBanner, TableWrap, EmptyRow, TableSkeleton, thCls, tdCls, fmtIDR, fmtDate } from '@/components/dashboard/ui';
+import { PageHeader, StatCard, Panel, Tabs, Modal, Field, ErrorBanner, TableWrap, EmptyRow, TableSkeleton, thCls, tdCls, fmtIDR, fmtDate } from '@/components/dashboard/ui';
 
 interface Tenant { id: string; name: string; plan: string; status: 'active' | 'suspended' | 'cancelled' }
 interface PlatformConfig { pricingTiers: { plan: string; price: number }[] }
@@ -17,6 +17,8 @@ interface Invoice {
   id: string; tenantId: string; tenantName: string | null; period: string; planCode: string | null;
   amount: number; currency: string; status: InvoiceStatus; issuedAt: string | null; dueDate: string | null;
   paidAt: string | null; notes: string | null;
+  // Tax fields: `amount` is the tax base (DPP); `total` is the payable amount.
+  taxRate: number | null; taxAmount: number | null; total: number | null; fakturNumber: string | null;
 }
 interface InvoiceSummary { outstanding: number; overdue: number; paidThisMonth: number; countByStatus: Record<InvoiceStatus, number> }
 
@@ -110,6 +112,44 @@ function OverviewTab() {
   );
 }
 
+/* ── Faktur Pajak serial modal ─────────────────────────────────────────── */
+function FakturModal({ invoice, onClose, onSaved }: { invoice: Invoice; onClose: () => void; onSaved: () => void }) {
+  const { t } = useI18n();
+  const [value, setValue] = useState(invoice.fakturNumber ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    setSaving(true); setError('');
+    try {
+      await api.post(`/admin/invoices/${invoice.id}/faktur`, { fakturNumber: value.trim() });
+      onSaved();
+    } catch (err) { setError(err instanceof Error ? err.message : t('admin.billing.fakturFailed', 'Failed to set Faktur number')); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal
+      title={t('admin.billing.setFaktur', 'Set Faktur Pajak serial')}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}>{t('admin.billing.cancel', 'Cancel')}</button>
+          <button className="btn-primary" onClick={save} disabled={saving || !value.trim()}>{saving ? t('admin.billing.saving', 'Saving…') : t('admin.billing.saveFaktur', 'Save')}</button>
+        </>
+      }
+    >
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
+      <p className="mb-4 text-sm text-text-muted">
+        {t('admin.billing.fakturFor', 'Invoice for')} <span className="font-medium text-text-primary">{invoice.tenantName ?? '—'}</span> · <span className="font-mono">{invoice.period}</span>
+      </p>
+      <Field label={t('admin.billing.fakturNumber', 'Faktur Pajak number')} hint={t('admin.billing.fakturHint', 'The official tax invoice serial, e.g. 010.000-24.00000001.')}>
+        <input className="input-field font-mono" value={value} onChange={(e) => setValue(e.target.value)} placeholder="010.000-24.00000001" autoFocus />
+      </Field>
+    </Modal>
+  );
+}
+
 /* ── Invoices tab (real issued invoices + payment status) ─────────────────── */
 function InvoicesTab() {
   const { t } = useI18n();
@@ -121,6 +161,7 @@ function InvoicesTab() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [fakturFor, setFakturFor] = useState<Invoice | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -184,7 +225,10 @@ function InvoicesTab() {
               <tr className="border-b border-border">
                 <th className={cn(thCls, 'text-left')}>{t('admin.billing.tenant', 'Tenant')}</th>
                 <th className={cn(thCls, 'text-left')}>{t('admin.billing.periodCol', 'Period')}</th>
-                <th className={cn(thCls, 'text-right')}>{t('admin.billing.amount', 'Amount')}</th>
+                <th className={cn(thCls, 'text-right')}>{t('admin.billing.amountDpp', 'Amount (DPP)')}</th>
+                <th className={cn(thCls, 'text-right')}>{t('admin.billing.taxPpn', 'Tax (PPN)')}</th>
+                <th className={cn(thCls, 'text-right')}>{t('admin.billing.totalCol', 'Total')}</th>
+                <th className={cn(thCls, 'text-left')}>{t('admin.billing.faktur', 'Faktur')}</th>
                 <th className={cn(thCls, 'text-left')}>{t('admin.billing.due', 'Due')}</th>
                 <th className={cn(thCls, 'text-left')}>{t('admin.billing.status', 'Status')}</th>
                 <th className={cn(thCls, 'text-right')}>{t('admin.billing.actions', 'Actions')}</th>
@@ -192,18 +236,26 @@ function InvoicesTab() {
             </thead>
             <tbody className="divide-y divide-border">
               {invoices.length === 0 ? (
-                <EmptyRow colSpan={6}>{t('admin.billing.noInvoices', 'No invoices. Generate drafts for a period to start.')}</EmptyRow>
+                <EmptyRow colSpan={9}>{t('admin.billing.noInvoices', 'No invoices. Generate drafts for a period to start.')}</EmptyRow>
               ) : invoices.map((inv) => (
                 <tr key={inv.id} className="hover:bg-surface-sunken/50">
                   <td className={cn(tdCls, 'font-medium')}>{inv.tenantName ?? '—'}<span className="block text-xs text-text-muted capitalize font-normal">{inv.planCode ?? '—'}</span></td>
                   <td className={cn(tdCls, 'font-mono text-xs')}>{inv.period}</td>
                   <td className={cn(tdCls, 'text-right tabular-nums')}>{fmtIDR(inv.amount)}</td>
+                  <td className={cn(tdCls, 'text-right tabular-nums text-text-muted')}>
+                    {inv.taxAmount != null && inv.taxAmount > 0 ? (
+                      <span>{fmtIDR(inv.taxAmount)}<span className="block text-2xs font-normal">{inv.taxRate != null ? `${+(inv.taxRate * 100).toFixed(2)}%` : ''}</span></span>
+                    ) : '—'}
+                  </td>
+                  <td className={cn(tdCls, 'text-right tabular-nums font-medium')}>{fmtIDR(inv.total ?? inv.amount)}</td>
+                  <td className={cn(tdCls, 'font-mono text-xs')}>{inv.fakturNumber ?? <span className="text-text-muted">—</span>}</td>
                   <td className={cn(tdCls, 'text-xs text-text-muted whitespace-nowrap')}>{fmtDate(inv.dueDate)}</td>
                   <td className={tdCls}><span className={cn('badge capitalize', INVOICE_BADGE[inv.status])}>{inv.status}</span></td>
                   <td className={cn(tdCls, 'text-right whitespace-nowrap')}>
                     {inv.status === 'draft' && <button className="btn-ghost text-xs text-sky-600" onClick={() => setStatus(inv, 'sent')}>{t('admin.billing.markSent', 'Send')}</button>}
                     {(inv.status === 'sent' || inv.status === 'overdue') && <button className="btn-ghost text-xs text-green-600" onClick={() => setStatus(inv, 'paid')}>{t('admin.billing.markPaid', 'Mark paid')}</button>}
                     {inv.status === 'sent' && <button className="btn-ghost text-xs text-amber-600" onClick={() => setStatus(inv, 'overdue')}>{t('admin.billing.markOverdue', 'Overdue')}</button>}
+                    <button className="btn-ghost text-xs" onClick={() => setFakturFor(inv)}>{inv.fakturNumber ? t('admin.billing.editFaktur', 'Faktur') : t('admin.billing.addFaktur', 'Faktur')}</button>
                     {inv.status !== 'paid' && inv.status !== 'void' && <button className="btn-ghost text-xs text-rose-600" onClick={() => setStatus(inv, 'void')}>{t('admin.billing.void', 'Void')}</button>}
                   </td>
                 </tr>
@@ -212,6 +264,14 @@ function InvoicesTab() {
           </TableWrap>
         )}
       </Panel>
+
+      {fakturFor && (
+        <FakturModal
+          invoice={fakturFor}
+          onClose={() => setFakturFor(null)}
+          onSaved={() => { setFakturFor(null); setMsg(t('admin.billing.fakturSaved', 'Faktur number saved.')); load(); }}
+        />
+      )}
     </div>
   );
 }

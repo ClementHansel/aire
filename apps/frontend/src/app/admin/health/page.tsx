@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { PageHeader, StatCard, Panel, Modal, ErrorBanner, TableWrap, TableSkeleton, thCls, tdCls, fmtDateTime } from '@/components/dashboard/ui';
+import { PageHeader, StatCard, Panel, Modal, ErrorBanner, TableWrap, EmptyRow, TableSkeleton, thCls, tdCls, fmtDateTime } from '@/components/dashboard/ui';
 
 interface Health {
   db: { ok: boolean; latencyMs: number };
@@ -18,6 +18,31 @@ interface ContainerInfo {
   health: 'healthy' | 'unhealthy' | 'starting' | null;
 }
 interface ContainersResp { available: boolean; containers: ContainerInfo[] }
+interface JobInfo {
+  jobKey: string; label: string; lastRunAt: string | null;
+  lastStatus: 'ok' | 'error' | 'running' | 'unknown'; lastDetail: string | null;
+  lastDurationMs: number | null; intervalMs: number | null; runCount: number;
+  errorCount: number; stale: boolean; healthy: boolean; updatedAt: string | null;
+}
+
+// Compact human duration: 820 -> "820 ms", 4200 -> "4.2 s", 65000 -> "1m 5s".
+function fmtDuration(ms: number | null | undefined): string {
+  if (ms == null) return '—';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)} s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${Math.round(s - m * 60)}s`;
+}
+
+function JobStatusBadge({ job }: { job: JobInfo }) {
+  const { t } = useI18n();
+  if (job.lastStatus === 'running') return <span className="badge bg-sky-50 text-sky-700">{t('admin.health.jobRunning', '● Running')}</span>;
+  if (job.lastStatus === 'error' || !job.healthy) return <span className="badge bg-rose-50 text-rose-700">{t('admin.health.jobError', '● Error')}</span>;
+  if (job.stale) return <span className="badge bg-amber-50 text-amber-700">{t('admin.health.jobStale', '● Stale')}</span>;
+  if (job.lastStatus === 'ok') return <span className="badge bg-green-50 text-green-700">{t('admin.health.jobOk', '● Healthy')}</span>;
+  return <span className="badge bg-surface-sunken text-text-secondary">{t('admin.health.jobUnknown', '● Unknown')}</span>;
+}
 
 function Pill({ ok }: { ok: boolean }) {
   const { t } = useI18n();
@@ -63,6 +88,7 @@ export default function AdminHealthPage() {
   const { t } = useI18n();
   const [h, setH] = useState<Health | null>(null);
   const [containers, setContainers] = useState<ContainersResp | null>(null);
+  const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [logsFor, setLogsFor] = useState<ContainerInfo | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -70,12 +96,14 @@ export default function AdminHealthPage() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [health, cont] = await Promise.all([
+      const [health, cont, jobList] = await Promise.all([
         api.get<Health>('/admin/health'),
         api.get<ContainersResp>('/admin/health/containers').catch(() => ({ available: false, containers: [] })),
+        api.get<JobInfo[]>('/admin/jobs').catch(() => [] as JobInfo[]),
       ]);
       setH(health);
       setContainers(cont);
+      setJobs(jobList);
     }
     catch (err) { setError(err instanceof Error ? err.message : t('admin.health.failedToLoad', 'Failed to load')); }
     finally { setLoading(false); }
@@ -135,6 +163,39 @@ export default function AdminHealthPage() {
                       </td>
                       <td className={cn(tdCls, 'text-xs text-text-muted whitespace-nowrap')}>{c.status}</td>
                       <td className={cn(tdCls, 'text-right')}><button className="btn-ghost text-xs" onClick={() => setLogsFor(c)}>{t('admin.health.viewLogs', 'Logs')}</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </TableWrap>
+            )}
+          </Panel>
+
+          <Panel title={t('admin.health.jobs', 'Background jobs')} bodyClassName={jobs.length > 0 ? 'p-0' : 'p-5'}>
+            {jobs.length === 0 ? (
+              <p className="text-sm text-text-muted">{t('admin.health.noJobs', 'No background jobs have run yet.')}</p>
+            ) : (
+              <TableWrap>
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className={cn(thCls, 'text-left')}>{t('admin.health.jobCol', 'Job')}</th>
+                    <th className={cn(thCls, 'text-left')}>{t('admin.health.jobLastRun', 'Last run')}</th>
+                    <th className={cn(thCls, 'text-left')}>{t('admin.health.jobStatus', 'Status')}</th>
+                    <th className={cn(thCls, 'text-left')}>{t('admin.health.jobDetail', 'Last detail')}</th>
+                    <th className={cn(thCls, 'text-right')}>{t('admin.health.jobDuration', 'Duration')}</th>
+                    <th className={cn(thCls, 'text-right')}>{t('admin.health.jobRuns', 'Runs / Errors')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {jobs.length === 0 ? (
+                    <EmptyRow colSpan={6}>{t('admin.health.noJobs', 'No background jobs have run yet.')}</EmptyRow>
+                  ) : jobs.map((j) => (
+                    <tr key={j.jobKey} className="hover:bg-surface-sunken/50">
+                      <td className={cn(tdCls, 'font-medium')}>{j.label}<span className="block text-xs text-text-muted font-mono font-normal">{j.jobKey}</span></td>
+                      <td className={cn(tdCls, 'text-xs text-text-muted whitespace-nowrap')}>{fmtDateTime(j.lastRunAt)}</td>
+                      <td className={tdCls}><JobStatusBadge job={j} /></td>
+                      <td className={cn(tdCls, 'text-xs text-text-muted max-w-[280px] truncate')} title={j.lastDetail ?? undefined}>{j.lastDetail ?? '—'}</td>
+                      <td className={cn(tdCls, 'text-right tabular-nums whitespace-nowrap')}>{fmtDuration(j.lastDurationMs)}</td>
+                      <td className={cn(tdCls, 'text-right tabular-nums whitespace-nowrap')}>{j.runCount}<span className={cn('ml-1', j.errorCount > 0 ? 'text-rose-600' : 'text-text-muted')}>/ {j.errorCount}</span></td>
                     </tr>
                   ))}
                 </tbody>
