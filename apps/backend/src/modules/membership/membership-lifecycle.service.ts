@@ -184,7 +184,9 @@ export class MembershipLifecycleService implements OnModuleInit {
         });
         // Record after enqueue so the milestone isn't reminded again (delivery is
         // fire-and-forget; a failed send is logged by NotificationService).
-        await this.recordEvent(this.pool, r.tenant_id, r.id, 'reminder', { milestone: r.days_left }, 'system');
+        // actor is a uuid column — system-generated events carry null (like the
+        // grace/revoked transitions above); the system origin is noted in payload.
+        await this.recordEvent(this.pool, r.tenant_id, r.id, 'reminder', { milestone: r.days_left, source: 'system' }, null);
         sent++;
       } catch (e) {
         this.logger.warn(`expiry reminder for membership ${r.id} failed: ${e instanceof Error ? e.message : e}`);
