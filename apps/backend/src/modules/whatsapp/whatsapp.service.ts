@@ -333,6 +333,12 @@ export class WhatsappService implements OnModuleInit {
       if (resolved) { tenantId = resolved.tenantId; outletId = resolved.outletId; }
     }
     if (!tenantId || !params.from || !params.text) return;
+
+    // Ignore non-conversational WhatsApp system chats: status/story updates
+    // (`status@broadcast`), broadcast lists (`…@broadcast`) and channel
+    // "newsletters" (`…@newsletter`) are not customers and must never get a reply.
+    if (/@(broadcast|newsletter)$/i.test(params.from) || params.from.startsWith('status@')) return;
+
     const cfg = await this.config(tenantId, outletId);
 
     // GROUP GATE: in a group chat (`from` = …@g.us) the bot must stay silent

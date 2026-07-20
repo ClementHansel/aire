@@ -205,6 +205,17 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
     expect(pool.outbox[0]!.chat_id).toBe(GROUP);   // reply goes back to the group thread
   });
 
+  it('ignores WhatsApp status/broadcast + newsletter system chats (no reply, no log)', async () => {
+    const pool = createPool();
+    const runtime = stubRuntime();
+    const svc = new WhatsappService(pool as never, runtime);
+    await svc.handleInbound({ tenantId: TENANT_ID, from: 'status@broadcast', text: 'story update' });
+    await svc.handleInbound({ tenantId: TENANT_ID, from: '12345@newsletter', text: 'channel post' });
+    expect(runtime.generate).not.toHaveBeenCalled();
+    expect(pool.messages).toHaveLength(0);
+    expect(pool.outbox).toHaveLength(0);
+  });
+
   it('detects an inline @<number> mention even without a mentions array', async () => {
     const pool = createPool();
     const runtime = stubRuntime('ok');
