@@ -11,7 +11,6 @@ import {
   type PublicTenantSettings, type SettingsPatch,
 } from '@/lib/settings';
 import WhatsAppSection from './WhatsAppSection';
-import { AIAutomationSection } from './AIAutomationSection';
 import AutomationControlsSection, {
   type AutomationControlsState, type AutomationKey, type ApprovalMode,
 } from './AutomationControlsSection';
@@ -26,12 +25,14 @@ import { AccountingPeriodsSection } from './AccountingPeriodsSection';
  * WhatsApp agent, payment gateway). "Payment Gateway" is folded in here.
  */
 
-type TabId = 'general' | 'whatsapp' | 'ai' | 'automation' | 'devices' | 'payment' | 'accounting';
+type TabId = 'general' | 'whatsapp' | 'automation' | 'devices' | 'payment' | 'accounting';
 
+// NOTE: the AI "brain" (provider, API key, model, prompt, AI on/off) is owned by
+// the super-admin only — see the "AI configuration" panel on the admin tenant page
+// (/admin/tenants/:id). It is intentionally NOT editable here by the tenant/owner.
 const TABS: { id: TabId; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'whatsapp', label: 'WhatsApp' },
-  { id: 'ai', label: 'AI Automation' },
   { id: 'automation', label: 'Automation Controls' },
   { id: 'devices', label: 'Devices' },
   { id: 'payment', label: 'Payment Gateway' },
@@ -160,21 +161,6 @@ export default function SettingsPage() {
             />
           : <LoadingCard />)}
 
-        {tab === 'ai' && (settings
-          ? <AIAutomationSection
-              ai_enabled={settings.ai_enabled}
-              llm_provider={settings.llm_provider}
-              llm_api_key_encrypted={settings.llm_api_key_set ? 'set' : null}
-              schedule_interval={settings.schedule_interval}
-              onSave={({ ai_enabled, llm_provider, llm_api_key, schedule_interval }) => {
-                save({
-                  ai_enabled, llm_provider, schedule_interval,
-                  ...(llm_api_key && llm_api_key !== '••••••••' ? { llm_api_key_encrypted: llm_api_key } : {}),
-                }).catch(() => {});
-              }}
-            />
-          : <LoadingCard />)}
-
         {tab === 'automation' && (controlsState
           ? <AutomationControlsSection
               state={controlsState}
@@ -209,9 +195,9 @@ function safeTenantId(): string {
 function prerequisiteMessage(missing: string): string {
   switch (missing) {
     case 'ai_enabled':
-      return 'Enable AI Automation first (AI Automation tab) before turning on this capability.';
+      return 'AI is not enabled for your account yet. Please ask your Airin administrator to enable it before turning on this capability.';
     case 'llm_api_key':
-      return 'Add your OpenRouter API key (AI Automation tab) before enabling this capability.';
+      return 'No AI API key is configured for your account yet. Please ask your Airin administrator to set it up before enabling this capability.';
     default:
       return `Prerequisite not met: ${missing}.`;
   }
