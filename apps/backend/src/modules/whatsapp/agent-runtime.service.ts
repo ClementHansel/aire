@@ -54,7 +54,8 @@ export class AgentRuntimeService {
     if (/(booking|jadwal|reservasi|appointment|daftar cuci|mau cuci)/i.test(t)) return 'booking';
     if (/(harga|price|biaya|menu|layanan|service|berapa|coating|cuci|detailing|wax|polish)/i.test(t)) return 'price';
     if (/(jam|buka|tutup|open|alamat|lokasi|dimana|di mana)/i.test(t)) return 'hours';
-    if (/(halo|hai|^hi\b|pagi|siang|sore|malam|thanks|terima kasih|makasih)/i.test(t)) return 'greeting';
+    // Greetings — Indonesian AND English (so a plain "hello"/"hi" is not treated as unknown).
+    if (/(\bhalo\b|\bhallo\b|\bhai\b|\bhi\b|\bhello\b|\bhelo\b|\bhey\b|selamat (pagi|siang|sore|malam)|\bpagi\b|\bsiang\b|\bsore\b|\bmalam\b|good (morning|afternoon|evening|day)|thank you|thanks|terima kasih|makasih|assalamu|perkenalkan|nama saya|\bi'?m\b|\bi am\b)/i.test(t)) return 'greeting';
     return 'unknown';
   }
 
@@ -93,6 +94,9 @@ export class AgentRuntimeService {
     /** Phone to resolve the customer by, when it differs from the chat address
      *  (e.g. a privacy @lid chat bound to a real number). Defaults to fromPhone. */
     resolvePhone?: string | null;
+    /** Name to address the sender by when they aren't a resolved member (e.g. a
+     *  name they typed like "I'm Hansel"). Used only for the greeting. */
+    displayName?: string | null;
     outletId?: string | null;
     text: string;
     basePrompt: string | null;
@@ -138,7 +142,7 @@ export class AgentRuntimeService {
       this.logger.warn(`Fluid reply failed for tenant ${params.tenantId}; falling back to rigid`);
     }
 
-    const rigid = this.rigidReply(intent, customer, ctx, pub, params.basePrompt);
+    const rigid = this.rigidReply(intent, customer, ctx, pub, params.basePrompt, params.displayName ?? null);
     return { text: rigid.text, escalate: rigid.escalate, mode: 'rigid', agentName };
   }
 
@@ -149,8 +153,10 @@ export class AgentRuntimeService {
     ctx: CustomerScopedContext | null,
     pub: PublicInfo,
     basePrompt: string | null,
+    displayName: string | null = null,
   ): { text: string; escalate: boolean } {
-    const hi = customer ? `Halo kak ${customer.name}!` : 'Halo kak!';
+    const who = customer?.name ?? displayName;
+    const hi = who ? `Halo kak ${who}!` : 'Halo kak!';
 
     switch (intent) {
       case 'greeting':
@@ -193,8 +199,13 @@ export class AgentRuntimeService {
         return { text: basePrompt?.trim() ? basePrompt.split('\n')[0]! : `${hi} Kami buka setiap hari. Untuk jam & lokasi cabang terdekat, mohon sebutkan area Anda.`, escalate: false };
 
       default:
-        // Unknown → hand to a human so nothing is guessed.
-        return { text: '', escalate: true };
+        // Unknown (but not an explicit human/complaint request) → a friendly Irene
+        // prompt that steers to what she can do, rather than dumping to a human on
+        // a first "hello". Genuine human requests are caught earlier as intent 'human'.
+        return {
+          text: `${hi} 😊 Aku Irene, CS-nya Aire. Aku bisa bantu info harga & layanan, membership, voucher, status pesanan, atau booking. Ada yang bisa Irene bantu?`,
+          escalate: false,
+        };
     }
   }
 }

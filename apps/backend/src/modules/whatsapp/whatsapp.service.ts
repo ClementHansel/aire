@@ -422,6 +422,9 @@ export class WhatsappService implements OnModuleInit {
     // and BIND it to the chat; (3) if still unknown, Irene asks once (see below).
     let boundCustomer: ResolvedCustomer | null = null;
     let justIdentified = false;
+    // Name to greet by when the sender isn't a resolved member (their WA push
+    // name, or a name they typed like "I'm Hansel").
+    let displayNameHint: string | null = conv.customer_name ?? null;
     if (this.customerContext && !isGroup) {
       if (conv.identified_customer_id) {
         boundCustomer = await this.customerContext.resolveById(tenantId, conv.identified_customer_id);
@@ -434,6 +437,14 @@ export class WhatsappService implements OnModuleInit {
           boundCustomer = found;
           justIdentified = true;
           await this.bindConversationCustomer(conv.id, found);
+        } else {
+          // Not a member (yet) — but if they introduced themselves, remember the
+          // name for display + greeting (does NOT link an account).
+          const stated = this.extractStatedName(inboundText);
+          if (stated && !displayNameHint) {
+            displayNameHint = stated;
+            await this.setConversationName(conv.id, stated);
+          }
         }
       }
     }
@@ -465,6 +476,8 @@ export class WhatsappService implements OnModuleInit {
       fromPhone: senderPhone,
       // Resolve the customer by their bound/real number, not the privacy @lid.
       resolvePhone: boundCustomer?.phone ?? boundCustomer?.normalized ?? senderPhone,
+      // Address non-members by the name they gave (push name / "I'm Hansel").
+      displayName: boundCustomer?.name ?? displayNameHint,
       outletId,
       text: inboundText,
       basePrompt: cfg.base_prompt,
@@ -651,7 +664,7 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Conversation store ───────────────────────────────────────────────────────
-  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null; identified_customer_id?: string | null; identity_prompted?: boolean }> {
+  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null; identified_customer_id?: string | null; identity_prompted?: boolean; customer_name?: string | null }> {
     const phone = chatId.replace(/@.*/, '');
     // Conflict target matches uq_wa_conv_tenant_outlet_chat (migration 067): a
     // NULL outlet_id (tenant line) coalesces to the all-zero UUID sentinel, so
@@ -661,10 +674,42 @@ export class WhatsappService implements OnModuleInit {
        VALUES ($1,$2,$3,$4,$5,NOW())
        ON CONFLICT (tenant_id, chat_id, (COALESCE(outlet_id, '00000000-0000-0000-0000-000000000000'::uuid))) DO UPDATE SET last_message_at = NOW(),
          customer_name = COALESCE(wa_conversations.customer_name, EXCLUDED.customer_name)
-       RETURNING id, ai_enabled, messages_today, messages_day::text, identified_customer_id, identity_prompted`,
+       RETURNING id, ai_enabled, messages_today, messages_day::text, identified_customer_id, identity_prompted, customer_name`,
       [tenantId, chatId, phone, name ?? null, outletId ?? null],
     );
     return res.rows[0];
+  }
+
+  /**
+   * Pull a self-introduced name out of a message ("I'm Hansel", "nama saya Budi",
+   * "aku Rina"). Returns a tidy 1–3 word name or null. This is a DISPLAY name only
+   * — it does not link an account (that needs a phone / member no. / plate).
+   */
+  private extractStatedName(text: string): string | null {
+    const m = (text || '').match(/(?:nama\s+saya|nama\s+aku|nama\s+ku|saya\s+ini|this\s+is|i\s?['’]?m|i\s+am|namaku|saya|aku)\s+([A-Za-z][A-Za-z'’.-]*(?:\s+[A-Za-z][A-Za-z'’.-]*){0,2})/i);
+    if (!m || !m[1]) return null;
+    // Keep only the leading name tokens, stopping at a common non-name word.
+    const STOP = new Set(['mau', 'ingin', 'butuh', 'pengen', 'mo', 'minta', 'want', 'need', 'would', 'will',
+      'di', 'ke', 'dari', 'ada', 'tanya', 'nanya', 'pesan', 'order', 'booking', 'cuci', 'the', 'a', 'an',
+      'just', 'only', 'here', 'disini', 'cuma']);
+    const kept: string[] = [];
+    for (const tok of m[1].trim().split(/\s+/)) {
+      if (STOP.has(tok.toLowerCase())) break;
+      kept.push(tok);
+      if (kept.length >= 2) break;
+    }
+    const name = kept.join(' ');
+    if (name.length < 2 || name.length > 40) return null;
+    // Title-case for display.
+    return name.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  /** Store a display name on the conversation if it doesn't already have one. */
+  private async setConversationName(convId: string, name: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE wa_conversations SET customer_name = $2 WHERE id = $1 AND (customer_name IS NULL OR customer_name = '')`,
+      [convId, name],
+    );
   }
 
   /** Bind a resolved customer to a conversation so later turns are personalised. */
@@ -735,11 +780,12 @@ export class WhatsappService implements OnModuleInit {
         : (kind === 'dm' && digits ? digits : null);
       const displayName =
         matchedName
+        ?? c.customer_name // a name they gave / WA push name (shown even for @lid)
         ?? (kind === 'dm' ? (digits || chatId)
-          : kind === 'group' ? (c.customer_name || 'Grup WhatsApp')
+          : kind === 'group' ? 'Grup WhatsApp'
           : kind === 'lid' ? 'Nomor tersembunyi (privasi)'
           : kind === 'broadcast' ? 'WhatsApp Status'
-          : (c.customer_name || chatId));
+          : chatId);
       return {
         id: c.id, chatId, kind, phone, displayName, isMember: !!matchedName,
         customerName: c.customer_name, customerPhone: c.customer_phone,

@@ -253,6 +253,21 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
     expect(String(pool.outbox[0]!.body)).toContain('Makasih kak Budi'); // warm ack by name
   });
 
+  it('captures a self-introduced name and passes it to the runtime as displayName', async () => {
+    const pool = createPool();
+    const runtime = stubRuntime('Halo kak Hansel! 😊');
+    const ctx = {
+      resolveById: vi.fn(async () => null),
+      resolveIdentityFromText: vi.fn(async () => null),
+      resolveCustomer: vi.fn(async () => null),
+    };
+    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, undefined, ctx as never);
+    await svc.handleInbound({ tenantId: TENANT_ID, from: '55555555555555@lid', text: 'Hello im hansel' });
+    expect(runtime.generate).toHaveBeenCalledTimes(1); // greeted, NOT escalated
+    const arg = (runtime.generate as unknown as { mock: { calls: any[][] } }).mock.calls[0]![0];
+    expect(arg.displayName).toBe('Hansel');
+  });
+
   it('agentSend (n8n/bridge outbound path) is also captured in mock mode', async () => {
     const pool = createPool();
     const svc = new WhatsappService(pool as never, stubRuntime());
