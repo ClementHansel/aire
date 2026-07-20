@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { Eye, EyeOff } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isAuthenticated, startImpersonation, getUser, type AuthUser } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
@@ -256,9 +257,27 @@ function AiConfigPanel({ tenantId }: { tenantId: string }) {
   const { t } = useI18n();
   const [cfg, setCfg] = useState<AiConfig | null>(null);
   const [llmApiKey, setLlmApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+
+  // Eye toggle: reveal the stored key (fetches the decrypted value once, audited
+  // server-side). Hides again without another request.
+  const toggleShowKey = async () => {
+    if (showKey) { setShowKey(false); return; }
+    if (!llmApiKey && cfg?.llmKeyConfigured) {
+      setRevealing(true);
+      try {
+        const r = await api.get<{ llmApiKey: string | null }>(`/admin/tenants/${tenantId}/ai-config/key`);
+        setLlmApiKey(r.llmApiKey ?? '');
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : t('admin.tenantDetail.revealFailed', 'Failed to reveal key'));
+      } finally { setRevealing(false); }
+    }
+    setShowKey(true);
+  };
 
   const load = useCallback(async () => {
     setErr('');
@@ -278,7 +297,7 @@ function AiConfigPanel({ tenantId }: { tenantId: string }) {
         maxMessagesPerDay: cfg.maxMessagesPerDay, llmProvider: cfg.llmProvider, llmModel: cfg.llmModel,
         aiEnabled: cfg.aiEnabled, ...(llmApiKey ? { llmApiKey } : {}),
       });
-      setCfg(updated); setLlmApiKey('');
+      setCfg(updated); setLlmApiKey(''); setShowKey(false);
       setMsg(t('admin.tenantDetail.aiConfigSaved', 'AI config saved.'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('admin.tenantDetail.failedSave', 'Failed to save'));
@@ -321,7 +340,25 @@ function AiConfigPanel({ tenantId }: { tenantId: string }) {
               </select>
             </Field>
             <Field label={`${t('admin.tenantDetail.apiKey', 'API key')}${cfg.llmKeyConfigured ? ` (${t('admin.tenantDetail.configured', 'configured')})` : ''}`}>
-              <input className="input-field" type="password" value={llmApiKey} onChange={(e) => setLlmApiKey(e.target.value)} placeholder={cfg.llmKeyConfigured ? t('admin.tenantDetail.keyKeep', '•••••••• (leave blank to keep)') : t('admin.tenantDetail.keyEnter', 'sk-or-…')} />
+              <div className="relative">
+                <input
+                  className="input-field pr-10"
+                  type={showKey ? 'text' : 'password'}
+                  value={llmApiKey}
+                  onChange={(e) => setLlmApiKey(e.target.value)}
+                  placeholder={cfg.llmKeyConfigured ? t('admin.tenantDetail.keyKeep', '•••••••• (leave blank to keep)') : t('admin.tenantDetail.keyEnter', 'sk-or-…')}
+                />
+                <button
+                  type="button"
+                  onClick={toggleShowKey}
+                  disabled={revealing || (!llmApiKey && !cfg.llmKeyConfigured)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-text-muted hover:text-text-primary disabled:opacity-40"
+                  aria-label={showKey ? t('admin.tenantDetail.hideKey', 'Hide key') : t('admin.tenantDetail.showKey', 'Show key')}
+                  title={showKey ? t('admin.tenantDetail.hideKey', 'Hide key') : t('admin.tenantDetail.showKey', 'Show key')}
+                >
+                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </Field>
           </div>
 

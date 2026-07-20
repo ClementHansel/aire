@@ -352,6 +352,28 @@ export class AdminController {
     return this.aiConfigView(await this.adminService.resolveTenantId(id));
   }
 
+  /**
+   * GET /api/admin/tenants/:id/ai-config/key — reveal the decrypted LLM API key.
+   * Super-admin only and AUDITED (a secret is being disclosed). Powers the
+   * "show key" eye toggle in the admin AI-config panel.
+   */
+  @Get('tenants/:id/ai-config/key')
+  @Roles(Role.PlatformSuperAdmin)
+  async revealTenantApiKey(@CurrentUser() admin: JWTPayload, @Param('id') id: string) {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    const settings = await this.settings.getSettings(tenantId);
+    await this.audit.log({
+      tenantId,
+      userId: admin.sub,
+      operation: 'secret_reveal',
+      entityType: 'tenant_ai_config',
+      entityId: tenantId,
+      beforeValue: null,
+      afterValue: { field: 'llm_api_key', revealed: true },
+    });
+    return { llmApiKey: settings.llm_api_key_encrypted ?? null };
+  }
+
   /** PUT /api/admin/tenants/:id/ai-config — update AI brain config (super-admin only, audited). */
   @Put('tenants/:id/ai-config')
   @Roles(Role.PlatformSuperAdmin)
