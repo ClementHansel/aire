@@ -224,6 +224,35 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
     expect(runtime.generate).toHaveBeenCalledTimes(1);
   });
 
+  it('asks an unknown sender to identify (once) — appends the identity request', async () => {
+    const pool = createPool();
+    const runtime = stubRuntime('Halo kak! 😊 Aku Irene.');
+    const ctx = {
+      resolveById: vi.fn(async () => null),
+      resolveIdentityFromText: vi.fn(async () => null),
+      resolveCustomer: vi.fn(async () => null),
+    };
+    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, undefined, ctx as never);
+    await svc.handleInbound({ tenantId: TENANT_ID, from: '99999999999999@lid', text: 'harga cuci berapa?' });
+    expect(runtime.generate).toHaveBeenCalledTimes(1);
+    expect(String(pool.outbox[0]!.body)).toContain('nomor HP yang terdaftar'); // identity ask appended
+  });
+
+  it('binds a customer when they identify, and acknowledges by name (no runtime call)', async () => {
+    const pool = createPool();
+    const runtime = stubRuntime();
+    const ctx = {
+      resolveById: vi.fn(async () => null),
+      resolveIdentityFromText: vi.fn(async (_t: string, text: string) =>
+        /0812/.test(text) ? { id: 'cust-1', name: 'Budi', phone: '628123456789', normalized: '628123456789' } : null),
+      resolveCustomer: vi.fn(async () => null),
+    };
+    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, undefined, ctx as never);
+    await svc.handleInbound({ tenantId: TENANT_ID, from: '99999999999999@lid', text: '0812 3456 7890' });
+    expect(runtime.generate).not.toHaveBeenCalled();        // identity turn short-circuits
+    expect(String(pool.outbox[0]!.body)).toContain('Makasih kak Budi'); // warm ack by name
+  });
+
   it('agentSend (n8n/bridge outbound path) is also captured in mock mode', async () => {
     const pool = createPool();
     const svc = new WhatsappService(pool as never, stubRuntime());

@@ -90,6 +90,9 @@ export class AgentRuntimeService {
   async generate(params: {
     tenantId: string;
     fromPhone: string;
+    /** Phone to resolve the customer by, when it differs from the chat address
+     *  (e.g. a privacy @lid chat bound to a real number). Defaults to fromPhone. */
+    resolvePhone?: string | null;
     outletId?: string | null;
     text: string;
     basePrompt: string | null;
@@ -104,7 +107,7 @@ export class AgentRuntimeService {
     // Explicit human request always escalates, regardless of mode.
     if (intent === 'human') return { text: '', escalate: true, mode: 'rigid', agentName };
 
-    const customer = await this.context.resolveCustomer(params.tenantId, params.fromPhone);
+    const customer = await this.context.resolveCustomer(params.tenantId, params.resolvePhone ?? params.fromPhone);
     const [ctx, pub] = await Promise.all([
       customer ? this.context.getCustomerContext(params.tenantId, customer) : Promise.resolve(null),
       this.context.getPublicInfo(params.tenantId, params.outletId),

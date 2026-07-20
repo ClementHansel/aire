@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { Pool } from 'pg';
-import { normalizePhone } from '@aire/shared';
+import { normalizePhone, normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 
 /**
@@ -56,6 +56,67 @@ export class CustomerContextService {
     const row = r.rows[0];
     if (!row) return null;
     return { id: row.id, name: row.name, phone: row.phone, normalized: row.phone_normalized };
+  }
+
+  /** Load a customer by id (used when a conversation is already bound to one). */
+  async resolveById(tenantId: string, customerId: string): Promise<ResolvedCustomer | null> {
+    const r = await this.pool.query(
+      `SELECT id, name, phone, phone_normalized FROM customers WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+      [tenantId, customerId],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return { id: row.id, name: row.name, phone: row.phone, normalized: row.phone_normalized };
+  }
+
+  /**
+   * Try to identify a customer from what they typed — an Indonesian phone number,
+   * a 8–14 char membership number, or a license plate. Used to bind a customer to
+   * a chat when the WhatsApp address itself is a privacy id (@lid) with no number.
+   * Returns the first match (phone → membership number → plate), or null.
+   */
+  async resolveIdentityFromText(tenantId: string, text: string): Promise<ResolvedCustomer | null> {
+    const raw = text || '';
+
+    // 1) Phone number (0…, 62…, +62…).
+    const phoneTok = raw.match(/(?:\+?62|0)\d[\d\s-]{7,14}\d/);
+    if (phoneTok) {
+      const byPhone = await this.resolveCustomer(tenantId, phoneTok[0]);
+      if (byPhone) return byPhone;
+    }
+
+    // 2) Membership number (customers.membership_number / customer_code) — an
+    //    uppercase alphanumeric token, typically ~12 chars.
+    const codeToks = raw.toUpperCase().match(/\b[A-Z0-9]{8,14}\b/g) ?? [];
+    for (const code of codeToks) {
+      const r = await this.pool.query(
+        `SELECT id, name, phone, phone_normalized FROM customers
+         WHERE tenant_id = $1 AND (upper(membership_number) = $2 OR upper(customer_code) = $2) LIMIT 1`,
+        [tenantId, code],
+      );
+      const row = r.rows[0];
+      if (row) return { id: row.id, name: row.name, phone: row.phone, normalized: row.phone_normalized };
+    }
+
+    // 3) License plate → the membership's customer.
+    const plateTok = raw.toUpperCase().match(/\b[A-Z]{1,2}\s?\d{1,4}\s?[A-Z]{0,3}\b/g) ?? [];
+    for (const p of plateTok) {
+      const { normalized: plateNorm } = normalizePlate(p);
+      if (!plateNorm || plateNorm.length < 4) continue;
+      const r = await this.pool.query(
+        `SELECT c.id, c.name, c.phone, c.phone_normalized
+         FROM membership_plates pl
+         JOIN memberships m ON m.id = pl.membership_id
+         JOIN customers c ON c.id = m.customer_id
+         WHERE m.tenant_id = $1 AND pl.plate_normalized = $2
+         ORDER BY m.end_date DESC LIMIT 1`,
+        [tenantId, plateNorm],
+      );
+      const row = r.rows[0];
+      if (row) return { id: row.id, name: row.name, phone: row.phone, normalized: row.phone_normalized };
+    }
+
+    return null;
   }
 
   /** All data the asking customer is allowed to see — strictly scoped to them. */

@@ -4,7 +4,13 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { NotificationService } from '../notification';
 import { AgentRuntimeService } from './agent-runtime.service';
 import { PendingBookingService } from './pending-booking.service';
+import { CustomerContextService, ResolvedCustomer } from './customer-context.service';
 import { ChatMessage, LLMRouterService, LLMErrorResponse } from '../agent/llm-router.service';
+
+/** Once-per-chat identity request, appended after the first reply to an unknown sender. */
+const IDENTITY_ASK =
+  'Oh iya, biar Irene bisa bantu lebih lengkap (cek membership, voucher, atau bikin booking), '
+  + 'boleh info nomor HP yang terdaftar di Aire, nomor member, atau plat mobilnya ya kak? 😊';
 
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
@@ -88,6 +94,7 @@ export class WhatsappService implements OnModuleInit {
     @Optional() private readonly notifications?: NotificationService,
     @Optional() private readonly llm?: LLMRouterService,
     @Optional() private readonly pendingBooking?: PendingBookingService,
+    @Optional() private readonly customerContext?: CustomerContextService,
   ) {}
 
   onModuleInit(): void {
@@ -407,6 +414,39 @@ export class WhatsappService implements OnModuleInit {
       return;
     }
 
+    // ── Who are we talking to? ──────────────────────────────────────────────────
+    // WhatsApp often hides the number behind a privacy @lid, so we can't always
+    // match a customer by phone. Strategy: (1) if the chat is already bound to a
+    // customer, use them; (2) else try to identify from what they just typed
+    // (phone / member no. / plate) or, on a real-phone DM, from their own number,
+    // and BIND it to the chat; (3) if still unknown, Irene asks once (see below).
+    let boundCustomer: ResolvedCustomer | null = null;
+    let justIdentified = false;
+    if (this.customerContext && !isGroup) {
+      if (conv.identified_customer_id) {
+        boundCustomer = await this.customerContext.resolveById(tenantId, conv.identified_customer_id);
+      }
+      if (!boundCustomer) {
+        const found =
+          (await this.customerContext.resolveIdentityFromText(tenantId, inboundText))
+          ?? (await this.customerContext.resolveCustomer(tenantId, senderPhone));
+        if (found) {
+          boundCustomer = found;
+          justIdentified = true;
+          await this.bindConversationCustomer(conv.id, found);
+        }
+      }
+    }
+
+    // If they just told us who they are, acknowledge warmly and stop — the next
+    // message carries their actual question (and now resolves to their account).
+    if (justIdentified && boundCustomer) {
+      const ack = `Makasih kak ${boundCustomer.name}! 😊 Sekarang Irene sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa Irene bantu?`;
+      await this.addMessage(tenantId, conv.id, 'outbound', ack, true, 'Irene');
+      await this.sendText(tenantId, params.from, ack, outletId);
+      return;
+    }
+
     // n8n routing: if this tenant points their assistant at an n8n flow, hand the
     // message off to it. n8n calls back through the bridge (send + log + cap), so
     // we stop here on success. Any failure falls through to the built-in runtime.
@@ -423,6 +463,8 @@ export class WhatsappService implements OnModuleInit {
     const result = await this.runtime.generate({
       tenantId,
       fromPhone: senderPhone,
+      // Resolve the customer by their bound/real number, not the privacy @lid.
+      resolvePhone: boundCustomer?.phone ?? boundCustomer?.normalized ?? senderPhone,
       outletId,
       text: inboundText,
       basePrompt: cfg.base_prompt,
@@ -434,7 +476,14 @@ export class WhatsappService implements OnModuleInit {
       await this.escalate(tenantId, conv.id, cfg, params.from, params.text, outletId);
       return;
     }
-    await this.addMessage(tenantId, conv.id, 'outbound', result.text, true, result.agentName);
+    // Ask for identity ONCE per chat when we still don't know the sender, so we
+    // can personalise from here on (introduce → ask → bind on their reply).
+    let outText = result.text;
+    if (this.customerContext && !isGroup && !boundCustomer && !conv.identity_prompted) {
+      outText = `${result.text}\n\n${IDENTITY_ASK}`;
+      await this.markIdentityPrompted(conv.id);
+    }
+    await this.addMessage(tenantId, conv.id, 'outbound', outText, true, result.agentName);
     await this.pool.query(
       `UPDATE wa_conversations SET messages_today = CASE WHEN messages_day = $2 THEN messages_today + 1 ELSE 1 END, messages_day = $2 WHERE id = $1`,
       [conv.id, today],
@@ -443,9 +492,9 @@ export class WhatsappService implements OnModuleInit {
     // (falls back to a text prompt where buttons aren't supported). Tapping a
     // button sends its title back, which the confirmation gate resolves next turn.
     if (result.proposedBooking) {
-      await this.sendButtons(tenantId, params.from, result.text, [{ id: 'YA', title: 'YA' }, { id: 'BATAL', title: 'BATAL' }], outletId);
+      await this.sendButtons(tenantId, params.from, outText, [{ id: 'YA', title: 'YA' }, { id: 'BATAL', title: 'BATAL' }], outletId);
     } else {
-      await this.sendText(tenantId, params.from, result.text, outletId);
+      await this.sendText(tenantId, params.from, outText, outletId);
     }
   }
 
@@ -602,7 +651,7 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Conversation store ───────────────────────────────────────────────────────
-  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null }> {
+  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null; identified_customer_id?: string | null; identity_prompted?: boolean }> {
     const phone = chatId.replace(/@.*/, '');
     // Conflict target matches uq_wa_conv_tenant_outlet_chat (migration 067): a
     // NULL outlet_id (tenant line) coalesces to the all-zero UUID sentinel, so
@@ -612,10 +661,25 @@ export class WhatsappService implements OnModuleInit {
        VALUES ($1,$2,$3,$4,$5,NOW())
        ON CONFLICT (tenant_id, chat_id, (COALESCE(outlet_id, '00000000-0000-0000-0000-000000000000'::uuid))) DO UPDATE SET last_message_at = NOW(),
          customer_name = COALESCE(wa_conversations.customer_name, EXCLUDED.customer_name)
-       RETURNING id, ai_enabled, messages_today, messages_day::text`,
+       RETURNING id, ai_enabled, messages_today, messages_day::text, identified_customer_id, identity_prompted`,
       [tenantId, chatId, phone, name ?? null, outletId ?? null],
     );
     return res.rows[0];
+  }
+
+  /** Bind a resolved customer to a conversation so later turns are personalised. */
+  private async bindConversationCustomer(convId: string, customer: ResolvedCustomer): Promise<void> {
+    await this.pool.query(
+      `UPDATE wa_conversations
+         SET identified_customer_id = $2, identified_phone = $3, customer_name = COALESCE(customer_name, $4), identity_prompted = true
+       WHERE id = $1`,
+      [convId, customer.id, customer.phone ?? customer.normalized ?? null, customer.name ?? null],
+    );
+  }
+
+  /** Record that we've already asked this chat to identify itself (ask only once). */
+  private async markIdentityPrompted(convId: string): Promise<void> {
+    await this.pool.query(`UPDATE wa_conversations SET identity_prompted = true WHERE id = $1`, [convId]);
   }
 
   private async addMessage(tenantId: string, convId: string, direction: 'inbound' | 'outbound', body: string, fromAi: boolean, persona: string | null = null): Promise<void> {
@@ -634,9 +698,11 @@ export class WhatsappService implements OnModuleInit {
     // phone is normalised the same way as phone_normalized (canonical 62…).
     const r = await this.pool.query(
       `SELECT c.id, c.chat_id, c.customer_name, c.customer_phone, c.ai_enabled, c.status, c.summary,
-              c.last_message_at, c.outlet_id, o.name AS outlet_name, cust.name AS matched_name
+              c.last_message_at, c.outlet_id, o.name AS outlet_name,
+              idc.name AS identified_name, idc.phone AS identified_customer_phone, cust.name AS matched_name
        FROM wa_conversations c
        LEFT JOIN outlets o ON o.id = c.outlet_id
+       LEFT JOIN customers idc ON idc.id = c.identified_customer_id AND idc.tenant_id = c.tenant_id
        LEFT JOIN LATERAL (
          SELECT cu.name FROM customers cu
          WHERE cu.tenant_id = c.tenant_id
@@ -661,8 +727,12 @@ export class WhatsappService implements OnModuleInit {
         : (suffix === 'broadcast' || chatId.startsWith('status@')) ? 'broadcast'
         : (suffix === 'c.us' || suffix === 's.whatsapp.net' || suffix === '') ? 'dm'
         : 'other';
-      const matchedName: string | null = c.matched_name ?? null;
-      const phone = kind === 'dm' && digits ? digits : null; // dialable phone only for real DMs
+      // A customer explicitly bound to this chat (e.g. after identifying over @lid)
+      // wins over a phone match; either one means "this is a known member".
+      const matchedName: string | null = c.identified_name ?? c.matched_name ?? null;
+      const phone = c.identified_customer_phone
+        ? String(c.identified_customer_phone).replace(/\D/g, '')
+        : (kind === 'dm' && digits ? digits : null);
       const displayName =
         matchedName
         ?? (kind === 'dm' ? (digits || chatId)
