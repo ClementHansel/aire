@@ -137,7 +137,8 @@ export const DEFAULT_AUTOMATION_SETTINGS: TenantAutomationSettings = {
   // reach a local Ollama that doesn't exist in production.
   llm_provider: 'openrouter',
   llm_api_key_encrypted: null,
-  llm_model: null,
+  // Product default model. Fast + cheap; overridable per tenant by the super-admin.
+  llm_model: 'qwen/qwen3.5-flash-02-23',
   ai_enabled: true,
   automation_toggles: {
     campaigns: false,

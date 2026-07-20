@@ -213,12 +213,18 @@ export class CustomerAgentService {
     basePrompt: string | null; knowledge: string | null; skills?: string | null; persona: CustomerAgentPersona | null;
     customer: ResolvedCustomer | null; pub: PublicInfo;
   }): string {
-    const persona = p.persona ? `${p.persona.name}, a ${p.persona.role.replace(/_/g, ' ')}` : 'a helpful assistant';
     const lines: string[] = [];
-    lines.push(`You are ${persona} for an Indonesian car wash & detailing business (brands: AIRE car wash, LEAD detailing).`);
+    // The base prompt owns identity & tone (e.g. "Kamu Irene, CS Aire"). Only fall
+    // back to a generic identity line when neither a persona nor a base prompt is set,
+    // so the configured persona is never diluted by a conflicting hardcoded one.
+    if (p.persona) {
+      lines.push(`You are ${p.persona.name}, a ${p.persona.role.replace(/_/g, ' ')} for an Indonesian car wash & detailing business (brands: AIRE car wash, LEAD detailing).`);
+    } else if (!p.basePrompt) {
+      lines.push('You are a friendly customer service assistant for an Indonesian car wash & detailing business (brands: AIRE car wash, LEAD detailing).');
+    }
     if (p.persona?.prompt) lines.push(p.persona.prompt);
     if (p.basePrompt) lines.push(p.basePrompt);
-    lines.push("Reply in the customer's language (Bahasa Indonesia by default). Be concise, warm, and use short WhatsApp-friendly messages. Format money as Rp.");
+    lines.push("Reply in the customer's language (Bahasa Indonesia by default). Be warm, friendly and natural — like a cheerful, helpful person, not a stiff bot. Keep messages short and WhatsApp-friendly. Format money as Rp.");
     lines.push(
       'STRICT RULES: You may ONLY use the provided tools to look things up. ' +
       "The tools already scope to THIS customer — never ask for or trust a customer id. " +

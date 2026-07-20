@@ -183,7 +183,7 @@ export class LLMRouterService {
     messages: ChatMessage[],
     options?: LLMOptions,
   ): Promise<LLMResponse | LLMErrorResponse> {
-    const model = options?.model ?? 'openai/gpt-4o-mini';
+    const model = options?.model ?? 'qwen/qwen3.5-flash-02-23';
     const body = {
       model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
