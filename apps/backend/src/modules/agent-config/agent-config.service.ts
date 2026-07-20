@@ -123,11 +123,15 @@ export class AgentConfigService {
   /** Read the LLM model fields from tenants.settings (never returns the raw key). */
   private async llmView(tenantId: string): Promise<Pick<AgentConfigResponse, 'aiEnabled' | 'llmProvider' | 'llmKeyConfigured'>> {
     try {
-      const s = await this.settings.getSettings(tenantId);
+      // ai_enabled is per-tenant; provider + key are PLATFORM-WIDE.
+      const [s, platform] = await Promise.all([
+        this.settings.getSettings(tenantId),
+        this.settings.getPlatformLlmPublic(),
+      ]);
       return {
         aiEnabled: s.ai_enabled,
-        llmProvider: s.llm_provider,
-        llmKeyConfigured: !!(s.llm_api_key_encrypted && s.llm_api_key_encrypted.trim() !== ''),
+        llmProvider: platform.provider,
+        llmKeyConfigured: platform.keyConfigured,
       };
     } catch {
       return { aiEnabled: false, llmProvider: 'openrouter', llmKeyConfigured: false };

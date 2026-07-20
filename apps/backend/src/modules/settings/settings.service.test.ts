@@ -22,6 +22,33 @@ function createMockAuditService() {
   return { log: vi.fn().mockResolvedValue(undefined) };
 }
 
+/**
+ * SQL-aware pool mock. The LLM provider/key now live in platform_config (global),
+ * so prerequisite checks read that table separately from tenant settings — route
+ * each query by SQL instead of a fragile ordered queue.
+ */
+function routePool(
+  mockPool: ReturnType<typeof createMockPool>,
+  opts: {
+    settings?: Record<string, unknown>;
+    platform?: { provider?: string; model?: string | null; api_key_encrypted?: string } | null;
+  } = {},
+) {
+  const settings = opts.settings ?? { ...DEFAULT_AUTOMATION_SETTINGS };
+  const platform = opts.platform === undefined ? null : opts.platform;
+  mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+    const s = typeof sql === 'string' ? sql : '';
+    if (s.includes('platform_config')) return { rows: [{ llm: platform }] };
+    if (s.includes('SELECT settings FROM tenants')) return { rows: [{ settings }] };
+    if (s.includes('UPDATE tenants')) {
+      const stored = params && typeof params[0] === 'string' ? JSON.parse(params[0] as string) : {};
+      return { rows: [{ settings: stored }] };
+    }
+    if (s.includes('UPDATE action_proposals')) return { rows: [{ id: 'p1' }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  });
+}
+
 describe('SettingsService', () => {
   let service: SettingsService;
   let mockPool: ReturnType<typeof createMockPool>;
@@ -159,25 +186,21 @@ describe('SettingsService', () => {
     });
 
     it('should deep merge nested objects like automation_toggles', async () => {
-      mockPool.query
-        .mockResolvedValueOnce({
-          rows: [{
-            settings: {
-              ...DEFAULT_AUTOMATION_SETTINGS,
-              ai_enabled: true,
-              llm_provider: 'hermes_ai',
-              automation_toggles: {
-                campaigns: true,
-                retention_offers: false,
-                pricing_suggestions: false,
-                anomaly_alerts: false,
-                queue_optimization: false,
-                membership_recommendations: false,
-              },
-            },
-          }],
-        })
-        .mockResolvedValueOnce({ rows: [{ settings: {} }] });
+      routePool(mockPool, {
+        settings: {
+          ...DEFAULT_AUTOMATION_SETTINGS,
+          ai_enabled: true,
+          automation_toggles: {
+            campaigns: true,
+            retention_offers: false,
+            pricing_suggestions: false,
+            anomaly_alerts: false,
+            queue_optimization: false,
+            membership_recommendations: false,
+          },
+        },
+        platform: { provider: 'hermes_ai' }, // no key needed to enable
+      });
 
       const result = await service.updateSettings('tenant-001', 'user-001', {
         automation_toggles: { retention_offers: true } as any,
@@ -456,15 +479,10 @@ describe('SettingsService', () => {
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
-    it('should pass when ai_enabled is true and llm_provider is hermes_ai', async () => {
-      mockPool.query.mockResolvedValue({
-        rows: [{
-          settings: {
-            ...DEFAULT_AUTOMATION_SETTINGS,
-            ai_enabled: true,
-            llm_provider: 'hermes_ai',
-          },
-        }],
+    it('should pass when ai_enabled is true and the platform provider is hermes_ai', async () => {
+      routePool(mockPool, {
+        settings: { ...DEFAULT_AUTOMATION_SETTINGS, ai_enabled: true },
+        platform: { provider: 'hermes_ai' }, // local provider needs no key
       });
 
       await expect(
@@ -472,16 +490,10 @@ describe('SettingsService', () => {
       ).resolves.toBeUndefined();
     });
 
-    it('should pass when ai_enabled is true, llm_provider is openrouter, and API key is present', async () => {
-      mockPool.query.mockResolvedValue({
-        rows: [{
-          settings: {
-            ...DEFAULT_AUTOMATION_SETTINGS,
-            ai_enabled: true,
-            llm_provider: 'openrouter',
-            llm_api_key_encrypted: 'encrypted:some-api-key',
-          },
-        }],
+    it('should pass when ai_enabled is true and the platform openrouter key is present', async () => {
+      routePool(mockPool, {
+        settings: { ...DEFAULT_AUTOMATION_SETTINGS, ai_enabled: true },
+        platform: { provider: 'openrouter', api_key_encrypted: 'encrypted:some-api-key' },
       });
 
       await expect(
@@ -489,19 +501,20 @@ describe('SettingsService', () => {
       ).resolves.toBeUndefined();
     });
 
-    it('should accept settingsOverride instead of reading from database', async () => {
-      const overrideSettings = {
-        ...DEFAULT_AUTOMATION_SETTINGS,
-        ai_enabled: true,
-        llm_provider: 'hermes_ai' as const,
-      };
+    it('should accept settingsOverride instead of reading tenant settings from the database', async () => {
+      const overrideSettings = { ...DEFAULT_AUTOMATION_SETTINGS, ai_enabled: true };
+      routePool(mockPool, { platform: { provider: 'hermes_ai' } });
 
-      // No DB calls should be made
       await expect(
         service.checkPrerequisites('tenant-001', 'campaigns', overrideSettings),
       ).resolves.toBeUndefined();
 
-      expect(mockPool.query).not.toHaveBeenCalled();
+      // Tenant settings were NOT read (override provided); only the platform LLM
+      // connection was checked.
+      expect(mockPool.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('SELECT settings FROM tenants'),
+        expect.anything(),
+      );
     });
   });
 
@@ -555,16 +568,10 @@ describe('SettingsService', () => {
       ).rejects.toThrow(UnprocessableEntityException);
     });
 
-    it('should reject toggle activation when openrouter provider has no API key', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{
-          settings: {
-            ...DEFAULT_AUTOMATION_SETTINGS,
-            ai_enabled: true,
-            llm_provider: 'openrouter',
-            llm_api_key_encrypted: null,
-          },
-        }],
+    it('should reject toggle activation when the platform openrouter key is missing', async () => {
+      routePool(mockPool, {
+        settings: { ...DEFAULT_AUTOMATION_SETTINGS, ai_enabled: true },
+        platform: { provider: 'openrouter' }, // no key
       });
 
       await expect(
@@ -575,19 +582,10 @@ describe('SettingsService', () => {
     });
 
     it('should allow toggle activation when prerequisites are met', async () => {
-      mockPool.query
-        .mockResolvedValueOnce({
-          rows: [{
-            settings: {
-              ...DEFAULT_AUTOMATION_SETTINGS,
-              ai_enabled: true,
-              llm_provider: 'openrouter',
-              llm_api_key_encrypted: 'encrypted:valid-key',
-            },
-          }],
-        })
-        .mockResolvedValueOnce({ rows: [{ settings: {} }] }) // persist
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // no proposals to cancel (toggle wasn't previously on)
+      routePool(mockPool, {
+        settings: { ...DEFAULT_AUTOMATION_SETTINGS, ai_enabled: true },
+        platform: { provider: 'openrouter', api_key_encrypted: 'encrypted:valid-key' },
+      });
 
       const result = await service.updateSettings('tenant-001', 'user-001', {
         automation_toggles: { campaigns: true } as any,

@@ -1,11 +1,106 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isAuthenticated, getUser, logout } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { PageHeader, Panel, Field, ErrorBanner } from '@/components/dashboard/ui';
+
+interface PlatformAi { provider: 'openrouter' | 'hermes_ai'; model: string | null; keyConfigured: boolean }
+
+/* ── Platform AI / LLM connection (ONE key for ALL tenants) ─────────────────── */
+function PlatformAiPanel() {
+  const { t } = useI18n();
+  const [cfg, setCfg] = useState<PlatformAi | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const [revealing, setRevealing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    setError('');
+    try { setCfg(await api.get<PlatformAi>('/admin/platform/ai')); }
+    catch (err) { setError(err instanceof Error ? err.message : t('admin.config.ai.failedToLoad', 'Failed to load AI settings')); }
+  }, [t]);
+  useEffect(() => { load(); }, [load]);
+
+  const toggleShowKey = async () => {
+    if (showKey) { setShowKey(false); return; }
+    if (!apiKey && cfg?.keyConfigured) {
+      setRevealing(true);
+      try { const r = await api.get<{ apiKey: string | null }>('/admin/platform/ai/key'); setApiKey(r.apiKey ?? ''); }
+      catch (err) { setError(err instanceof Error ? err.message : t('admin.config.ai.revealFailed', 'Failed to reveal key')); }
+      finally { setRevealing(false); }
+    }
+    setShowKey(true);
+  };
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const updated = await api.put<PlatformAi>('/admin/platform/ai', {
+        provider: cfg.provider, model: cfg.model, ...(apiKey ? { apiKey } : {}),
+      });
+      setCfg(updated); setApiKey(''); setShowKey(false); setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('admin.config.ai.saveFailed', 'Save failed'));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Panel
+      title={t('admin.config.ai.title', 'AI / LLM connection')}
+      description={t('admin.config.ai.desc', 'Airin’s own LLM account, used by every tenant’s WhatsApp agent. Set the key once here — you never need to configure it per tenant.')}
+      actions={<button className="btn-primary text-sm" onClick={save} disabled={saving || !cfg}>{saving ? t('admin.config.ai.saving', 'Saving…') : t('admin.config.ai.save', 'Save AI settings')}</button>}
+    >
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
+      {saved && <div className="mb-3 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{t('admin.config.ai.savedMsg', 'AI settings saved.')}</div>}
+      {!cfg ? (
+        <p className="text-sm text-text-muted">{t('admin.config.ai.loading', 'Loading…')}</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label={t('admin.config.ai.provider', 'Provider')}>
+              <select className="input-field" value={cfg.provider} onChange={(e) => setCfg({ ...cfg, provider: e.target.value as PlatformAi['provider'] })}>
+                <option value="openrouter">OpenRouter</option>
+                <option value="hermes_ai">{t('admin.config.ai.hermes', 'Hermes AI (self-hosted)')}</option>
+              </select>
+            </Field>
+            <Field label={`${t('admin.config.ai.apiKey', 'API key')}${cfg.keyConfigured ? ` (${t('admin.config.ai.configured', 'configured')})` : ''}`}>
+              <div className="relative">
+                <input
+                  className="input-field pr-10"
+                  type={showKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={cfg.keyConfigured ? t('admin.config.ai.keyKeep', '•••••••• (leave blank to keep)') : t('admin.config.ai.keyEnter', 'sk-or-…')}
+                />
+                <button
+                  type="button"
+                  onClick={toggleShowKey}
+                  disabled={revealing || (!apiKey && !cfg.keyConfigured)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-text-muted hover:text-text-primary disabled:opacity-40"
+                  aria-label={showKey ? t('admin.config.ai.hideKey', 'Hide key') : t('admin.config.ai.showKey', 'Show key')}
+                  title={showKey ? t('admin.config.ai.hideKey', 'Hide key') : t('admin.config.ai.showKey', 'Show key')}
+                >
+                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </Field>
+          </div>
+          <Field label={t('admin.config.ai.model', 'Model')} hint={t('admin.config.ai.modelHint', 'e.g. qwen/qwen3.5-flash-02-23. Blank = provider default.')}>
+            <input className="input-field" value={cfg.model ?? ''} onChange={(e) => setCfg({ ...cfg, model: e.target.value || null })} placeholder="qwen/qwen3.5-flash-02-23" />
+          </Field>
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 interface PlatformTaxConfig { enabled: boolean; npwp: string; name: string; address: string; rate: number }
 
@@ -191,6 +286,8 @@ export default function AdminConfigPage() {
       {saved && <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{t('admin.config.savedMsg', 'Configuration saved.')}</div>}
 
       <div className="space-y-5 max-w-2xl">
+        <PlatformAiPanel />
+
         <Panel title={t('admin.config.defaultPlans', 'Default plans')} description={t('admin.config.defaultPlansDesc', 'Comma-separated list of plans offered to new tenants.')}>
           <input className="input-field" value={plansText} onChange={(e) => setPlansText(e.target.value)} placeholder="standard, premium, enterprise" disabled={loading} />
         </Panel>

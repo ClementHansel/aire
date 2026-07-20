@@ -78,8 +78,10 @@ export class AgentRuntimeService {
     try {
       const s = await this.settings.getSettings(tenantId);
       if (!s.ai_enabled || !this.customerAgent) return false;
-      if (s.llm_provider === 'openrouter') {
-        return !!(s.llm_api_key_encrypted && s.llm_api_key_encrypted.trim() !== '');
+      // The LLM key/provider is PLATFORM-WIDE, not per-tenant.
+      const platform = await this.settings.getPlatformLlm();
+      if (platform.provider === 'openrouter') {
+        return !!(platform.apiKey && platform.apiKey.trim() !== '');
       }
       return true; // local provider (Ollama/Hermes)
     } catch {

@@ -105,8 +105,8 @@ export class LLMRouterService {
   ): Promise<{ ok: boolean; provider: string; model: string; latencyMs: number; message: string }> {
     let provider = 'unknown';
     try {
-      const settings = await this.settingsService.getSettings(tenantId);
-      provider = settings.llm_provider;
+      const platform = await this.settingsService.getPlatformLlm();
+      provider = platform.provider;
     } catch {
       /* fall through; routeChat will report */
     }
@@ -139,23 +139,21 @@ export class LLMRouterService {
     options?: LLMOptions,
   ): Promise<LLMResponse | LLMErrorResponse> {
     try {
-      const settings = await this.settingsService.getSettings(tenantId);
-      const provider = settings.llm_provider;
-      // Explicit per-call model wins, else the tenant's configured model
-      // (set by the super-admin), else undefined so the provider callers fall
-      // back to their hardcoded default.
-      const model = options?.model ?? settings.llm_model ?? undefined;
+      // The LLM connection is PLATFORM-WIDE (Airin's own account), not per-tenant.
+      const platform = await this.settingsService.getPlatformLlm();
+      const provider = platform.provider;
+      // Explicit per-call model wins, else the platform model, else undefined so
+      // the provider callers fall back to their hardcoded default.
+      const model = options?.model ?? platform.model ?? undefined;
       const routedOptions: LLMOptions = { ...options, model };
 
       if (provider === 'openrouter') {
-        const apiKey = settings.llm_api_key_encrypted;
+        const apiKey = platform.apiKey;
         if (!apiKey || apiKey.trim() === '') {
-          this.logger.error(
-            `Tenant ${tenantId}: OpenRouter selected but no API key configured`,
-          );
+          this.logger.error('Platform OpenRouter API key is not configured');
           return this.createErrorResponse(
             'invalid_api_key',
-            'OpenRouter API key is not configured for this tenant',
+            'Platform OpenRouter API key is not configured (set it in Admin → Platform Config → AI)',
             model,
           );
         }

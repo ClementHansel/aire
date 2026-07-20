@@ -23,6 +23,12 @@ function createMockSettingsService(
 
   return {
     getSettings: vi.fn().mockResolvedValue(settings),
+    // The router now reads the PLATFORM LLM connection; map the same overrides.
+    getPlatformLlm: vi.fn().mockResolvedValue({
+      provider: settings.llm_provider,
+      model: settings.llm_model,
+      apiKey: settings.llm_api_key_encrypted,
+    }),
   } as unknown as SettingsService;
 }
 
@@ -313,7 +319,7 @@ describe('LLMRouterService', () => {
 
     it('should handle settings service failure gracefully', async () => {
       mockSettingsService = {
-        getSettings: vi.fn().mockRejectedValue(new Error('DB unavailable')),
+        getPlatformLlm: vi.fn().mockRejectedValue(new Error('DB unavailable')),
       } as unknown as SettingsService;
       service = new LLMRouterService(mockSettingsService);
 

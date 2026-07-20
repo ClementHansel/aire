@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, EyeOff } from 'lucide-react';
 import { api } from '@/lib/api';
 import { isAuthenticated, startImpersonation, getUser, type AuthUser } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
@@ -243,41 +242,21 @@ function ModulesPanel({ tenantId }: { tenantId: string }) {
 
 interface AiConfig {
   basePrompt: string | null; productKnowledge: string | null; skills: string | null;
-  maxMessagesPerDay: number; llmProvider: 'openrouter' | 'hermes_ai'; llmModel: string | null;
-  aiEnabled: boolean; llmKeyConfigured: boolean;
+  maxMessagesPerDay: number; aiEnabled: boolean;
 }
 
 /**
- * Super-admin-only AI brain configuration for a tenant: LLM provider, model,
- * key, on/off switch, base prompt, product knowledge, skills, and the daily
- * message cap. Tenants no longer see or control any of this — they only get
- * the WhatsApp connection and an AI auto-reply pause (see their AI Agent page).
+ * Super-admin-only, per-tenant AI PERSONA: base prompt, product knowledge,
+ * skills, daily message cap, and the AI on/off switch. The LLM connection
+ * (provider / API key / model) is PLATFORM-WIDE — set once in Platform Config →
+ * AI — and is intentionally not shown here.
  */
 function AiConfigPanel({ tenantId }: { tenantId: string }) {
   const { t } = useI18n();
   const [cfg, setCfg] = useState<AiConfig | null>(null);
-  const [llmApiKey, setLlmApiKey] = useState('');
-  const [showKey, setShowKey] = useState(false);
-  const [revealing, setRevealing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
-
-  // Eye toggle: reveal the stored key (fetches the decrypted value once, audited
-  // server-side). Hides again without another request.
-  const toggleShowKey = async () => {
-    if (showKey) { setShowKey(false); return; }
-    if (!llmApiKey && cfg?.llmKeyConfigured) {
-      setRevealing(true);
-      try {
-        const r = await api.get<{ llmApiKey: string | null }>(`/admin/tenants/${tenantId}/ai-config/key`);
-        setLlmApiKey(r.llmApiKey ?? '');
-      } catch (e) {
-        setErr(e instanceof Error ? e.message : t('admin.tenantDetail.revealFailed', 'Failed to reveal key'));
-      } finally { setRevealing(false); }
-    }
-    setShowKey(true);
-  };
 
   const load = useCallback(async () => {
     setErr('');
@@ -294,10 +273,9 @@ function AiConfigPanel({ tenantId }: { tenantId: string }) {
     try {
       const updated = await api.put<AiConfig>(`/admin/tenants/${tenantId}/ai-config`, {
         basePrompt: cfg.basePrompt, productKnowledge: cfg.productKnowledge, skills: cfg.skills,
-        maxMessagesPerDay: cfg.maxMessagesPerDay, llmProvider: cfg.llmProvider, llmModel: cfg.llmModel,
-        aiEnabled: cfg.aiEnabled, ...(llmApiKey ? { llmApiKey } : {}),
+        maxMessagesPerDay: cfg.maxMessagesPerDay, aiEnabled: cfg.aiEnabled,
       });
-      setCfg(updated); setLlmApiKey(''); setShowKey(false);
+      setCfg(updated);
       setMsg(t('admin.tenantDetail.aiConfigSaved', 'AI config saved.'));
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('admin.tenantDetail.failedSave', 'Failed to save'));
@@ -332,39 +310,9 @@ function AiConfigPanel({ tenantId }: { tenantId: string }) {
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={t('admin.tenantDetail.provider', 'Provider')}>
-              <select className="input-field" value={cfg.llmProvider} onChange={(e) => set('llmProvider', e.target.value as AiConfig['llmProvider'])}>
-                <option value="openrouter">OpenRouter</option>
-                <option value="hermes_ai">{t('admin.tenantDetail.hermes', 'Hermes AI (self-hosted)')}</option>
-              </select>
-            </Field>
-            <Field label={`${t('admin.tenantDetail.apiKey', 'API key')}${cfg.llmKeyConfigured ? ` (${t('admin.tenantDetail.configured', 'configured')})` : ''}`}>
-              <div className="relative">
-                <input
-                  className="input-field pr-10"
-                  type={showKey ? 'text' : 'password'}
-                  value={llmApiKey}
-                  onChange={(e) => setLlmApiKey(e.target.value)}
-                  placeholder={cfg.llmKeyConfigured ? t('admin.tenantDetail.keyKeep', '•••••••• (leave blank to keep)') : t('admin.tenantDetail.keyEnter', 'sk-or-…')}
-                />
-                <button
-                  type="button"
-                  onClick={toggleShowKey}
-                  disabled={revealing || (!llmApiKey && !cfg.llmKeyConfigured)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-text-muted hover:text-text-primary disabled:opacity-40"
-                  aria-label={showKey ? t('admin.tenantDetail.hideKey', 'Hide key') : t('admin.tenantDetail.showKey', 'Show key')}
-                  title={showKey ? t('admin.tenantDetail.hideKey', 'Hide key') : t('admin.tenantDetail.showKey', 'Show key')}
-                >
-                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            </Field>
-          </div>
-
-          <Field label={t('admin.tenantDetail.model', 'Model')} hint={t('admin.tenantDetail.modelHint', 'e.g. openai/gpt-4o-mini, hermes3:latest. Blank = provider default.')}>
-            <input className="input-field" value={cfg.llmModel ?? ''} onChange={(e) => set('llmModel', e.target.value || null)} placeholder="openai/gpt-4o-mini" />
-          </Field>
+          <p className="text-xs text-text-muted">
+            {t('admin.tenantDetail.llmMovedNote', 'The LLM connection (provider, API key, model) is now platform-wide — set it once in Platform Config → AI. This panel controls only this tenant’s persona.')}
+          </p>
 
           <Field label={t('admin.tenantDetail.maxMessages', 'Max messages per user / day')}>
             <input type="number" className="input-field" value={cfg.maxMessagesPerDay} onChange={(e) => set('maxMessagesPerDay', Number(e.target.value))} />

@@ -93,6 +93,60 @@ export class SettingsService {
     };
   }
 
+  // ── Platform-wide LLM connection (ONE global config for ALL tenants) ─────────
+  // Airin's own OpenRouter account: provider + API key + model, set once by a
+  // super-admin and used by every tenant's agent. Stored in
+  // platform_config.config.llm (the API key encrypted). There is intentionally
+  // no per-tenant key — see the admin Platform Config "AI / LLM" panel.
+
+  /** Full platform LLM config incl. the DECRYPTED key (internal callers: router, runtime). */
+  async getPlatformLlm(): Promise<{ provider: 'openrouter' | 'hermes_ai'; model: string | null; apiKey: string | null }> {
+    const r = await this.pool.query<{ llm: Record<string, unknown> | null }>(
+      `SELECT config->'llm' AS llm FROM platform_config WHERE id = 'default' LIMIT 1`,
+    );
+    const llm = (r?.rows?.[0]?.llm ?? {}) as Record<string, unknown>;
+    let apiKey: string | null = null;
+    const enc = llm.api_key_encrypted as string | undefined;
+    if (enc) { try { apiKey = decrypt(enc); } catch { apiKey = enc; } }
+    return {
+      provider: llm.provider === 'hermes_ai' ? 'hermes_ai' : 'openrouter',
+      model: (llm.model as string | null) ?? null,
+      apiKey,
+    };
+  }
+
+  /** Platform LLM config for the UI — never returns the raw key, only whether one is set. */
+  async getPlatformLlmPublic(): Promise<{ provider: 'openrouter' | 'hermes_ai'; model: string | null; keyConfigured: boolean }> {
+    const r = await this.pool.query<{ llm: Record<string, unknown> | null }>(
+      `SELECT config->'llm' AS llm FROM platform_config WHERE id = 'default' LIMIT 1`,
+    );
+    const llm = (r?.rows?.[0]?.llm ?? {}) as Record<string, unknown>;
+    return {
+      provider: llm.provider === 'hermes_ai' ? 'hermes_ai' : 'openrouter',
+      model: (llm.model as string | null) ?? null,
+      keyConfigured: !!llm.api_key_encrypted,
+    };
+  }
+
+  /** Upsert the platform LLM config. The key is only overwritten when a non-empty value is given. */
+  async setPlatformLlm(patch: { provider?: 'openrouter' | 'hermes_ai'; model?: string | null; apiKey?: string }): Promise<void> {
+    const r = await this.pool.query<{ llm: Record<string, unknown> | null }>(
+      `SELECT config->'llm' AS llm FROM platform_config WHERE id = 'default' LIMIT 1`,
+    );
+    const next = { ...((r?.rows?.[0]?.llm ?? {}) as Record<string, unknown>) };
+    if (patch.provider !== undefined) next.provider = patch.provider;
+    if (patch.model !== undefined) next.model = patch.model;
+    if (patch.apiKey) next.api_key_encrypted = encrypt(patch.apiKey);
+    await this.pool.query(
+      `INSERT INTO platform_config (id, config, updated_at)
+         VALUES ('default', jsonb_build_object('llm', $1::jsonb), NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         config = platform_config.config || jsonb_build_object('llm', $1::jsonb),
+         updated_at = NOW()`,
+      [JSON.stringify(next)],
+    );
+  }
+
   /**
    * Update automation settings for a tenant. Merges the patch with existing
    * settings (partial update), validates against JSON Schema, encrypts
@@ -273,15 +327,14 @@ export class SettingsService {
       });
     }
 
-    // Prerequisite: If llm_provider is 'openrouter', API key must be present
-    if (settings.llm_provider === 'openrouter') {
-      const apiKey = settings.llm_api_key_encrypted;
-      if (!apiKey || apiKey.trim() === '') {
-        throw new UnprocessableEntityException({
-          error: 'Prerequisite not met',
-          details: { missing: 'llm_api_key', toggle: toggleKey },
-        });
-      }
+    // Prerequisite: If the PLATFORM provider is 'openrouter', a platform API key
+    // must be present (the LLM connection is global, not per-tenant).
+    const platform = await this.getPlatformLlm();
+    if (platform.provider === 'openrouter' && (!platform.apiKey || platform.apiKey.trim() === '')) {
+      throw new UnprocessableEntityException({
+        error: 'Prerequisite not met',
+        details: { missing: 'llm_api_key', toggle: toggleKey },
+      });
     }
   }
 

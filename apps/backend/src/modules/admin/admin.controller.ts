@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { Role } from '@aire/shared';
 import type { JWTPayload } from '@aire/shared';
@@ -56,6 +57,8 @@ import { SettingsService } from '../settings/settings.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.TenantOwner)
 export class AdminController {
+  private readonly logger = new Logger(AdminController.name);
+
   constructor(
     private readonly adminService: AdminService,
     private readonly metrics: AdminMetricsService,
@@ -324,57 +327,30 @@ export class AdminController {
   //    WhatsApp connection + an on/off pause — see agent-config module) ────────
 
   /**
-   * Combined AI-config view: agent_configs brain fields + the tenants.settings
-   * LLM provider/model/enabled flags. The raw API key is never returned, only
-   * `llmKeyConfigured`.
+   * Per-tenant AI-config view: the tenant's PERSONA (base prompt, product
+   * knowledge, skills, daily cap) + the AI on/off flag. The LLM connection
+   * (provider / API key / model) is PLATFORM-WIDE — see the platform/ai
+   * endpoints — so it is NOT part of this per-tenant view.
    */
   private async aiConfigView(tenantId: string) {
-    const [agent, settings] = await Promise.all([
-      this.agentConfig.get(tenantId),
-      this.settings.getSettings(tenantId),
-    ]);
+    const agent = await this.agentConfig.get(tenantId);
     return {
       basePrompt: agent.basePrompt,
       productKnowledge: agent.productKnowledge,
       skills: agent.skills,
       maxMessagesPerDay: agent.maxMessagesPerDay,
-      llmProvider: agent.llmProvider,
-      llmModel: settings.llm_model,
       aiEnabled: agent.aiEnabled,
-      llmKeyConfigured: agent.llmKeyConfigured,
     };
   }
 
-  /** GET /api/admin/tenants/:id/ai-config — AI brain config (super-admin only). */
+  /** GET /api/admin/tenants/:id/ai-config — per-tenant persona + AI on/off (super-admin only). */
   @Get('tenants/:id/ai-config')
   @Roles(Role.PlatformSuperAdmin)
   async getTenantAiConfig(@Param('id') id: string) {
     return this.aiConfigView(await this.adminService.resolveTenantId(id));
   }
 
-  /**
-   * GET /api/admin/tenants/:id/ai-config/key — reveal the decrypted LLM API key.
-   * Super-admin only and AUDITED (a secret is being disclosed). Powers the
-   * "show key" eye toggle in the admin AI-config panel.
-   */
-  @Get('tenants/:id/ai-config/key')
-  @Roles(Role.PlatformSuperAdmin)
-  async revealTenantApiKey(@CurrentUser() admin: JWTPayload, @Param('id') id: string) {
-    const tenantId = await this.adminService.resolveTenantId(id);
-    const settings = await this.settings.getSettings(tenantId);
-    await this.audit.log({
-      tenantId,
-      userId: admin.sub,
-      operation: 'secret_reveal',
-      entityType: 'tenant_ai_config',
-      entityId: tenantId,
-      beforeValue: null,
-      afterValue: { field: 'llm_api_key', revealed: true },
-    });
-    return { llmApiKey: settings.llm_api_key_encrypted ?? null };
-  }
-
-  /** PUT /api/admin/tenants/:id/ai-config — update AI brain config (super-admin only, audited). */
+  /** PUT /api/admin/tenants/:id/ai-config — update per-tenant persona + AI on/off (audited). */
   @Put('tenants/:id/ai-config')
   @Roles(Role.PlatformSuperAdmin)
   async setTenantAiConfig(
@@ -385,10 +361,7 @@ export class AdminController {
       productKnowledge?: string | null;
       skills?: string | null;
       maxMessagesPerDay?: number;
-      llmProvider?: 'openrouter' | 'hermes_ai';
-      llmModel?: string | null;
       aiEnabled?: boolean;
-      llmApiKey?: string; // plaintext; '' or omitted = keep existing
     } = {},
   ) {
     const tenantId = await this.adminService.resolveTenantId(id);
@@ -401,14 +374,8 @@ export class AdminController {
       maxMessagesPerDay: body.maxMessagesPerDay,
     });
 
-    const settingsPatch: Record<string, unknown> = {};
-    if (body.llmProvider !== undefined) settingsPatch.llm_provider = body.llmProvider;
-    if (body.llmModel !== undefined) settingsPatch.llm_model = body.llmModel;
-    if (body.aiEnabled !== undefined) settingsPatch.ai_enabled = body.aiEnabled;
-    // Only overwrite the key when a non-empty value is supplied ('' = keep existing).
-    if (body.llmApiKey) settingsPatch.llm_api_key_encrypted = body.llmApiKey;
-    if (Object.keys(settingsPatch).length > 0) {
-      await this.settings.updateSettings(tenantId, admin.sub, settingsPatch);
+    if (body.aiEnabled !== undefined) {
+      await this.settings.updateSettings(tenantId, admin.sub, { ai_enabled: body.aiEnabled });
     }
 
     const after = await this.aiConfigView(tenantId);
@@ -422,6 +389,34 @@ export class AdminController {
       afterValue: after,
     });
     return after;
+  }
+
+  // ── Platform-wide LLM connection (ONE key/provider/model for ALL tenants) ────
+
+  /** GET /api/admin/platform/ai — platform LLM connection (super-admin only; no raw key). */
+  @Get('platform/ai')
+  @Roles(Role.PlatformSuperAdmin)
+  async getPlatformAi() {
+    return this.settings.getPlatformLlmPublic();
+  }
+
+  /** PUT /api/admin/platform/ai — set the platform LLM connection (super-admin only). */
+  @Put('platform/ai')
+  @Roles(Role.PlatformSuperAdmin)
+  async setPlatformAi(
+    @Body() body: { provider?: 'openrouter' | 'hermes_ai'; model?: string | null; apiKey?: string } = {},
+  ) {
+    await this.settings.setPlatformLlm({ provider: body.provider, model: body.model, apiKey: body.apiKey });
+    return this.settings.getPlatformLlmPublic();
+  }
+
+  /** GET /api/admin/platform/ai/key — reveal the decrypted platform API key (super-admin only). */
+  @Get('platform/ai/key')
+  @Roles(Role.PlatformSuperAdmin)
+  async revealPlatformAiKey(@CurrentUser() admin: JWTPayload) {
+    const platform = await this.settings.getPlatformLlm();
+    this.logger.warn(`Platform LLM API key revealed by user ${admin.sub}`);
+    return { apiKey: platform.apiKey ?? null };
   }
 
   /** PATCH /api/admin/tenants/:id/suspend — suspend tenant (super-admin only). */
