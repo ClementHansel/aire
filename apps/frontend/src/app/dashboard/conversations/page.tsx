@@ -4,7 +4,16 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
-interface Conversation { id: string; customerName: string | null; customerPhone: string | null; aiEnabled: boolean; status: string; summary: string | null; lastMessageAt: string | null }
+interface Conversation { id: string; chatId?: string; kind?: 'dm' | 'group' | 'lid' | 'broadcast' | 'other'; phone?: string | null; displayName?: string | null; isMember?: boolean; customerName: string | null; customerPhone: string | null; aiEnabled: boolean; status: string; summary: string | null; lastMessageAt: string | null }
+
+/** WhatsApp-like label: prefer the resolved member/display name, else the phone. */
+function convTitle(c: Conversation): string {
+  return c.displayName || c.customerName || c.phone || c.customerPhone || c.chatId || '—';
+}
+/** Small tag for non-DM chats so groups / privacy IDs / status are obvious. */
+function kindTag(kind?: Conversation['kind']): string | null {
+  return kind === 'group' ? 'Grup' : kind === 'lid' ? 'Privasi' : kind === 'broadcast' ? 'Status' : null;
+}
 interface Message { direction: 'inbound' | 'outbound'; body: string; fromAi: boolean; persona: string | null; createdAt: string }
 interface AiHealth { aiReplyEnabled: boolean; aiEnabled: boolean; llmProvider: 'openrouter' | 'hermes_ai'; llmKeyConfigured: boolean }
 interface WaStatus { status: string; mock: boolean }
@@ -174,11 +183,18 @@ export default function ConversationsPage() {
           <div className="divide-y divide-border max-h-[70vh] overflow-auto">
             {convs.length === 0 ? <p className="p-4 text-sm text-text-muted">{t('dash.conversations.empty', 'No conversations yet.')}</p> : convs.map((c) => (
               <button key={c.id} onClick={() => setActive(c)} className={`w-full text-left px-4 py-3 hover:bg-surface-sunken ${active?.id === c.id ? 'bg-primary-50' : ''}`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-primary">{c.customerName || c.customerPhone}</span>
-                  <span className={`badge ${c.status === 'escalated' ? 'bg-amber-50 text-amber-700' : c.status === 'closed' ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-700'}`}>{c.status}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-text-primary truncate flex items-center gap-1.5">
+                    {convTitle(c)}
+                    {c.isMember && <span className="badge bg-blue-50 text-blue-700 border border-blue-200 text-[10px]">{t('dash.conversations.member', 'member')}</span>}
+                    {kindTag(c.kind) && <span className="badge bg-gray-100 text-gray-500 text-[10px]">{kindTag(c.kind)}</span>}
+                  </span>
+                  <span className={`badge shrink-0 ${c.status === 'escalated' ? 'bg-amber-50 text-amber-700' : c.status === 'closed' ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-700'}`}>{c.status}</span>
                 </div>
-                <p className="text-xs text-text-muted mt-0.5">{c.customerPhone} · AI {c.aiEnabled ? t('dash.conversations.on', 'on') : t('dash.conversations.off', 'off')}</p>
+                {/* Phone line (only when it adds info beyond the title, e.g. member name shown above). */}
+                {c.isMember && c.phone && <p className="text-xs text-text-secondary mt-0.5">{c.phone}</p>}
+                {/* Raw chat id underneath so the WhatsApp JID is never ambiguous. */}
+                <p className="text-[11px] text-text-muted mt-0.5 font-mono truncate">{c.chatId || c.customerPhone} · AI {c.aiEnabled ? t('dash.conversations.on', 'on') : t('dash.conversations.off', 'off')}</p>
               </button>
             ))}
           </div>
@@ -192,8 +208,13 @@ export default function ConversationsPage() {
             <>
               <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-semibold">{active.customerName || active.customerPhone}</p>
-                  <p className="text-xs text-text-muted">{active.customerPhone}</p>
+                  <p className="text-sm font-semibold flex items-center gap-1.5">
+                    {convTitle(active)}
+                    {active.isMember && <span className="badge bg-blue-50 text-blue-700 border border-blue-200 text-[10px]">{t('dash.conversations.member', 'member')}</span>}
+                    {kindTag(active.kind) && <span className="badge bg-gray-100 text-gray-500 text-[10px]">{kindTag(active.kind)}</span>}
+                  </p>
+                  {active.isMember && active.phone && <p className="text-xs text-text-secondary">{active.phone}</p>}
+                  <p className="text-[11px] text-text-muted font-mono">{active.chatId || active.customerPhone}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button className={`btn-ghost text-xs ${active.aiEnabled ? 'text-green-600' : 'text-amber-600'}`} onClick={() => toggleAi(active)}>{active.aiEnabled ? t('dash.conversations.aiOnStop', 'AI: ON (stop)') : t('dash.conversations.aiOffStart', 'AI: OFF (start)')}</button>

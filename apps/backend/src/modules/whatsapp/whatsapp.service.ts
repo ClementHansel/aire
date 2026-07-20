@@ -628,19 +628,55 @@ export class WhatsappService implements OnModuleInit {
 
   // ── Read/admin APIs for the Conversation Log ──────────────────────────────────
   async listConversations(tenantId: string): Promise<Record<string, unknown>[]> {
+    // Match real-phone DMs to a member record so the list can show the customer's
+    // name (WhatsApp-style). Groups (@g.us) and privacy IDs (@lid) have no dialable
+    // phone, so they never match — they're labelled by kind instead. The customer
+    // phone is normalised the same way as phone_normalized (canonical 62…).
     const r = await this.pool.query(
       `SELECT c.id, c.chat_id, c.customer_name, c.customer_phone, c.ai_enabled, c.status, c.summary,
-              c.last_message_at, c.outlet_id, o.name AS outlet_name
+              c.last_message_at, c.outlet_id, o.name AS outlet_name, cust.name AS matched_name
        FROM wa_conversations c
        LEFT JOIN outlets o ON o.id = c.outlet_id
+       LEFT JOIN LATERAL (
+         SELECT cu.name FROM customers cu
+         WHERE cu.tenant_id = c.tenant_id
+           AND (c.chat_id LIKE '%@c.us' OR c.chat_id LIKE '%@s.whatsapp.net' OR c.chat_id !~ '@')
+           AND cu.phone_normalized = CASE
+             WHEN left(regexp_replace(c.customer_phone, '\\D', '', 'g'), 2) = '62' THEN regexp_replace(c.customer_phone, '\\D', '', 'g')
+             WHEN left(regexp_replace(c.customer_phone, '\\D', '', 'g'), 1) = '0'  THEN '62' || substring(regexp_replace(c.customer_phone, '\\D', '', 'g') from 2)
+             ELSE regexp_replace(c.customer_phone, '\\D', '', 'g')
+           END
+         LIMIT 1
+       ) cust ON true
        WHERE c.tenant_id = $1 ORDER BY c.last_message_at DESC NULLS LAST LIMIT 200`,
       [tenantId],
     );
-    return r.rows.map((c) => ({
-      id: c.id, chatId: c.chat_id, customerName: c.customer_name, customerPhone: c.customer_phone,
-      aiEnabled: c.ai_enabled, status: c.status, summary: c.summary, lastMessageAt: c.last_message_at,
-      outletId: c.outlet_id ?? null, outletName: c.outlet_name ?? null,
-    }));
+    return r.rows.map((c) => {
+      const chatId: string = c.chat_id ?? '';
+      const suffix = chatId.includes('@') ? chatId.split('@')[1] : '';
+      const digits = String(c.customer_phone ?? '').replace(/\D/g, '');
+      const kind =
+        suffix === 'g.us' ? 'group'
+        : suffix === 'lid' ? 'lid'
+        : (suffix === 'broadcast' || chatId.startsWith('status@')) ? 'broadcast'
+        : (suffix === 'c.us' || suffix === 's.whatsapp.net' || suffix === '') ? 'dm'
+        : 'other';
+      const matchedName: string | null = c.matched_name ?? null;
+      const phone = kind === 'dm' && digits ? digits : null; // dialable phone only for real DMs
+      const displayName =
+        matchedName
+        ?? (kind === 'dm' ? (digits || chatId)
+          : kind === 'group' ? (c.customer_name || 'Grup WhatsApp')
+          : kind === 'lid' ? 'Nomor tersembunyi (privasi)'
+          : kind === 'broadcast' ? 'WhatsApp Status'
+          : (c.customer_name || chatId));
+      return {
+        id: c.id, chatId, kind, phone, displayName, isMember: !!matchedName,
+        customerName: c.customer_name, customerPhone: c.customer_phone,
+        aiEnabled: c.ai_enabled, status: c.status, summary: c.summary, lastMessageAt: c.last_message_at,
+        outletId: c.outlet_id ?? null, outletName: c.outlet_name ?? null,
+      };
+    });
   }
 
   async listMessages(tenantId: string, convId: string): Promise<Record<string, unknown>[]> {
