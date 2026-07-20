@@ -6,6 +6,7 @@ import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
 import { portalApi, getPortalToken, setPortalToken, clearPortalToken, PortalAuthError } from '@/lib/portalApi';
+import { LEAN_MODE } from '@aire/shared';
 import { MembershipCard, type CardTemplate } from '@/components/dashboard/MembershipCard';
 import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 
@@ -42,6 +43,9 @@ interface Booking { id: string; serviceName: string | null; scheduledAt: string;
 interface MenuService { id: string; name: string; category: string; businessUnit: string; price: number }
 
 export default function PortalPage() {
+  // Customer portal is held while lean — customers are served over WhatsApp, not
+  // a self-service portal. Bounce to the landing page.
+  useEffect(() => { if (LEAN_MODE) window.location.href = '/'; }, []);
   const { id: resolvedId, status } = useResolveTenant();
   const tenantId = resolvedId ?? '';
   const { t } = useI18n();

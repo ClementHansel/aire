@@ -19,6 +19,8 @@ export type CustomerToolName =
   | 'get_service_prices'
   | 'get_membership_plans'
   | 'get_promotions'
+  | 'get_branch_info'
+  | 'get_my_vouchers'
   | 'create_booking'
   | 'escalate_to_human';
 
@@ -48,6 +50,18 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
     params: [],
     readOnly: true,
   },
+  get_branch_info: {
+    name: 'get_branch_info',
+    description: 'Lokasi/alamat dan jam buka cabang yang melayani chat ini.',
+    params: [],
+    readOnly: true,
+  },
+  get_my_vouchers: {
+    name: 'get_my_vouchers',
+    description: 'Sisa voucher milik pelanggan ini beserta kode voucher aktifnya.',
+    params: [],
+    readOnly: true,
+  },
   create_booking: {
     name: 'create_booking',
     description:
@@ -67,7 +81,7 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
  * how a persona becomes "a set of capabilities the brain runs with" rather than
  * just a prompt. A conversation runs with exactly one persona's toolset.
  */
-const READ_ALL: CustomerToolName[] = ['get_my_summary', 'get_service_prices', 'get_membership_plans', 'get_promotions'];
+const READ_ALL: CustomerToolName[] = ['get_my_summary', 'get_service_prices', 'get_membership_plans', 'get_promotions', 'get_branch_info', 'get_my_vouchers'];
 
 export const PERSONA_TOOLS: Record<AgentRole, CustomerToolName[]> = {
   // Full front-desk assistant: everything a customer-safe agent can do.

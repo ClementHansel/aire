@@ -141,6 +141,11 @@ export class LLMRouterService {
     try {
       const settings = await this.settingsService.getSettings(tenantId);
       const provider = settings.llm_provider;
+      // Explicit per-call model wins, else the tenant's configured model
+      // (set by the super-admin), else undefined so the provider callers fall
+      // back to their hardcoded default.
+      const model = options?.model ?? settings.llm_model ?? undefined;
+      const routedOptions: LLMOptions = { ...options, model };
 
       if (provider === 'openrouter') {
         const apiKey = settings.llm_api_key_encrypted;
@@ -151,14 +156,14 @@ export class LLMRouterService {
           return this.createErrorResponse(
             'invalid_api_key',
             'OpenRouter API key is not configured for this tenant',
-            options?.model,
+            model,
           );
         }
-        return this.callOpenRouter(apiKey, messages, options);
+        return this.callOpenRouter(apiKey, messages, routedOptions);
       }
 
       // Default: Hermes AI (local)
-      return this.callHermesAi(messages, options);
+      return this.callHermesAi(messages, routedOptions);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`LLM chat failed for tenant ${tenantId}: ${message}`);

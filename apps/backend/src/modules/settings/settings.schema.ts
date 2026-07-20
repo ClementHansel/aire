@@ -24,6 +24,9 @@ export const TENANT_AUTOMATION_SETTINGS_SCHEMA = {
     llm_api_key_encrypted: {
       type: ['string', 'null'],
     },
+    llm_model: {
+      type: ['string', 'null'],
+    },
     ai_enabled: {
       type: 'boolean',
       default: false,

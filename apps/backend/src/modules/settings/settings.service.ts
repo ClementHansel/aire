@@ -378,6 +378,7 @@ export class SettingsService {
         (raw.llm_provider as TenantAutomationSettings['llm_provider']) ?? defaults.llm_provider,
       llm_api_key_encrypted:
         (raw.llm_api_key_encrypted as string | null) ?? defaults.llm_api_key_encrypted,
+      llm_model: (raw.llm_model as string | null) ?? defaults.llm_model,
       ai_enabled: typeof raw.ai_enabled === 'boolean' ? raw.ai_enabled : defaults.ai_enabled,
       automation_toggles: {
         ...defaults.automation_toggles,

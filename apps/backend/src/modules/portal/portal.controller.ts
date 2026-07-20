@@ -5,12 +5,19 @@ import { PortalDataService } from './portal-data.service';
 import { PortalRenewService } from './portal-renew.service';
 import { PortalBookingService, CreatePortalBookingDto } from './portal-booking.service';
 import { PortalGuard, PortalCtx, PortalIdentity } from './portal.guard';
+import { LeanDisabledGuard } from '../../common/guards';
 
 /**
  * Customer portal API. OTP endpoints are public (a walk-in customer authenticates
  * with their WhatsApp); everything else requires the customer token (PortalGuard).
+ *
+ * Held while lean: the self-service customer portal is disabled (customers are
+ * served over WhatsApp instead), so the whole controller returns 403. The
+ * WhatsApp agent's booking flow uses PortalBookingService directly and is NOT
+ * affected, and PublicBookingController (WA confirm/reject links) stays live.
  */
 @Controller('api/portal')
+@UseGuards(LeanDisabledGuard('Customer portal'))
 export class PortalController {
   constructor(
     private readonly auth: PortalAuthService,

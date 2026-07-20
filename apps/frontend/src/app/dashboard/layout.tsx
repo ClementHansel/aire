@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useTenantModules, moduleEnabled } from '@/lib/useModules';
+import { isHeld, isHeldRoute } from '@aire/shared';
 import { usePermissions, hasPermission } from '@/lib/usePermissions';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
@@ -107,7 +108,7 @@ const navSections: NavSection[] = [
     items: [
       { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: Bot, module: 'ai_assistant' },
       { id: 'agents', label: 'Agent Workflow', href: '/dashboard/agents', icon: Workflow, module: 'ai_assistant' },
-      { id: 'ai-agent', label: 'Agentic AI (WhatsApp)', href: '/dashboard/ai-agent', icon: BrainCircuit, module: 'whatsapp' },
+      { id: 'ai-agent', label: 'WhatsApp', href: '/dashboard/ai-agent', icon: BrainCircuit, module: 'whatsapp' },
       { id: 'conversations', label: 'Conversations', href: '/dashboard/conversations', icon: MessageSquare, module: 'whatsapp' },
       { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: RadioTower, module: 'whatsapp' },
     ],
@@ -174,6 +175,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     const u = getUser();
     setUser(u);
     setChecked(true);
+    // Lean-mode route guard: held features are hidden from nav, but a client
+    // could still deep-link. Redirect non-super-admins off any held route.
+    // Super-admins keep access so they can inspect held surfaces.
+    if (u && u.role !== 'platform_super_admin' && isHeldRoute(pathname)) {
+      window.location.href = '/dashboard';
+      return;
+    }
     // Onboarding gate: a tenant whose owner hasn't finished setup is sent to the
     // wizard. Super-admins (not impersonating) are never gated. The onboarding
     // route itself is exempt so it can render.
@@ -187,6 +195,15 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Lean-mode guard on every navigation (the shell persists, so the mount effect
+  // above only catches the initial load). Keeps a non-super-admin off held routes.
+  useEffect(() => {
+    const u = getUser();
+    if (u && u.role !== 'platform_super_admin' && isHeldRoute(pathname)) {
+      window.location.href = '/dashboard';
+    }
+  }, [pathname]);
+
   // Role-gated items (e.g. Billing → tenant_owner only) are cosmetic — the server
   // enforces access on every endpoint. Undefined `roles` = visible to all roles.
   const roleAllows = (item: NavItem) => !item.roles || (user != null && item.roles.includes(user.role));
@@ -196,12 +213,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) => moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
+        (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
       ),
     }))
     .filter((section) => section.items.length > 0);
   const visibleMobileItems = mobileItems.filter(
-    (item) => moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
+    (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
   );
 
   if (!checked) {

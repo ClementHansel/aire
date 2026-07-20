@@ -94,6 +94,7 @@ export class AgentRuntimeService {
     text: string;
     basePrompt: string | null;
     knowledge: string | null;
+    skills?: string | null;
     history: ChatMessage[];
   }): Promise<ReplyResult> {
     const intent = this.detectIntent(params.text);
@@ -121,6 +122,7 @@ export class AgentRuntimeService {
         text: params.text,
         basePrompt: params.basePrompt,
         knowledge: params.knowledge,
+        skills: params.skills ?? null,
         history: params.history,
         persona,
         customer,

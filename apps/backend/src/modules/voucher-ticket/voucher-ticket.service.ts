@@ -2,7 +2,6 @@ import { Injectable, Inject, Optional, BadRequestException, NotFoundException } 
 import { Pool } from 'pg';
 import { JWTPayload } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { NotificationService, NotificationType } from '../notification';
 import { PosCheckoutService } from '../order/pos-checkout.service';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
@@ -35,7 +34,6 @@ export class VoucherTicketService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly checkout: PosCheckoutService,
-    @Optional() private readonly notifications?: NotificationService,
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
@@ -158,18 +156,10 @@ export class VoucherTicketService {
         payload: { bookId, orderId: order.id, quantity: qty, unitPrice, total },
       });
 
-      // Best-effort WhatsApp delivery of the code list to the buyer.
-      if (dto.buyerPhone && this.notifications) {
-        try {
-          await this.notifications.queueNotification(NotificationType.VoucherDelivery, {
-            phone: dto.buyerPhone,
-            tenantId,
-            customerName: dto.buyerName ?? '',
-            codes: codes.join(', '),
-            quantity: qty,
-          } as Record<string, unknown>);
-        } catch { /* delivery is best-effort */ }
-      }
+      // WhatsApp delivery of the code list to the buyer now happens via
+      // VoucherNotifyService, subscribed to VoucherBookSold (emitted above) —
+      // it uses the branch-aware, mock-visible WhatsappService.sendText.
+      // Sending inline here as well would double-send.
 
       return { bookId, codes };
     } catch (e) {

@@ -52,6 +52,7 @@ export class CustomerAgentService {
     text: string;
     basePrompt: string | null;
     knowledge: string | null;
+    skills?: string | null;
     history: ChatMessage[];
     persona: CustomerAgentPersona | null;
     customer: ResolvedCustomer | null;
@@ -136,6 +137,15 @@ export class CustomerAgentService {
           const pub = await this.context.getPublicInfo(tenantId, args.outletId ?? null);
           return { success: true, data: { promotions: pub.promotions } };
         }
+        case 'get_branch_info': {
+          const info = await this.context.getBranchInfo(tenantId, args.outletId ?? null);
+          return { success: true, data: info };
+        }
+        case 'get_my_vouchers': {
+          if (!customer) return { success: true, data: { registered: false } };
+          const codes = await this.context.activeVoucherCodes(tenantId, customer.normalized);
+          return { success: true, data: { activeCount: codes.length, codes } };
+        }
         case 'create_booking':
           return this.createBooking(args);
         case 'escalate_to_human':
@@ -200,7 +210,7 @@ export class CustomerAgentService {
   }
 
   private systemPrompt(p: {
-    basePrompt: string | null; knowledge: string | null; persona: CustomerAgentPersona | null;
+    basePrompt: string | null; knowledge: string | null; skills?: string | null; persona: CustomerAgentPersona | null;
     customer: ResolvedCustomer | null; pub: PublicInfo;
   }): string {
     const persona = p.persona ? `${p.persona.name}, a ${p.persona.role.replace(/_/g, ' ')}` : 'a helpful assistant';
@@ -216,6 +226,7 @@ export class CustomerAgentService {
       'If a request is outside your tools or knowledge, call escalate_to_human.',
     );
     if (p.knowledge?.trim()) lines.push(`\nBUSINESS KNOWLEDGE:\n${p.knowledge.trim()}`);
+    if (p.skills?.trim()) lines.push('\nSKILLS / PLAYBOOK:\n' + p.skills.trim());
     lines.push(p.customer
       ? `\nThe customer you are chatting with is ${p.customer.name} (registered). Use get_my_summary for their memberships, orders, queue, vouchers, or bookings.`
       : '\nThe sender is NOT a registered customer yet — share only public info (prices/plans/promos) and invite them to visit or register.');

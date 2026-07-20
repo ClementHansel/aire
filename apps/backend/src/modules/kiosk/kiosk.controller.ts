@@ -13,6 +13,7 @@ import { KioskService, KioskQueueStatus, PublicMenu } from './kiosk.service';
 import { KioskOrderService, KioskOrderDto } from './kiosk-order.service';
 import { KioskTokenGuard, KioskCtx, KioskContext } from './kiosk-token.guard';
 import { VehicleCatalogService } from '../vehicle-catalog/vehicle-catalog.service';
+import { assertNotLean } from '../../common/lean';
 
 /**
  * Self-service kiosk controller.
@@ -89,6 +90,8 @@ export class KioskController {
   @UseGuards(KioskTokenGuard)
   @HttpCode(HttpStatus.CREATED)
   createOrder(@KioskCtx() ctx: KioskContext, @Body() dto: KioskOrderDto) {
+    // Held while lean: customer self-order is off — orders are rung up at the POS.
+    assertNotLean('Customer self-order');
     return this.kioskOrderService.createOrder(ctx, dto);
   }
 
@@ -100,6 +103,8 @@ export class KioskController {
   @UseGuards(KioskTokenGuard)
   @HttpCode(HttpStatus.OK)
   charge(@KioskCtx() ctx: KioskContext, @Param('id') id: string) {
+    // Held while lean: customer self-order payment is off.
+    assertNotLean('Customer self-order');
     return this.kioskOrderService.charge(ctx, id);
   }
 

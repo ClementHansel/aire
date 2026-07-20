@@ -40,6 +40,8 @@ import { PlatformOpsService, OpsSeverity } from './platform-ops.service';
 import { PlatformTaxService, PlatformTaxConfig } from './platform-tax.service';
 import { EntitlementService } from '../entitlement';
 import { JobMonitorService } from '../job-monitor';
+import { AgentConfigService } from '../agent-config/agent-config.service';
+import { SettingsService } from '../settings/settings.service';
 
 /**
  * Admin Controller.
@@ -69,6 +71,8 @@ export class AdminController {
     private readonly jobs: JobMonitorService,
     private readonly auth: AuthService,
     private readonly audit: AuditService,
+    private readonly agentConfig: AgentConfigService,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Super-admin may target any tenant (or all); a tenant owner is pinned to their own. */
@@ -309,6 +313,88 @@ export class AdminController {
       userId: admin.sub,
       operation: 'config_change',
       entityType: 'tenant_modules',
+      entityId: tenantId,
+      beforeValue: before,
+      afterValue: after,
+    });
+    return after;
+  }
+
+  // ── AI configuration (super-admin owns the whole brain; tenant only sees the
+  //    WhatsApp connection + an on/off pause — see agent-config module) ────────
+
+  /**
+   * Combined AI-config view: agent_configs brain fields + the tenants.settings
+   * LLM provider/model/enabled flags. The raw API key is never returned, only
+   * `llmKeyConfigured`.
+   */
+  private async aiConfigView(tenantId: string) {
+    const [agent, settings] = await Promise.all([
+      this.agentConfig.get(tenantId),
+      this.settings.getSettings(tenantId),
+    ]);
+    return {
+      basePrompt: agent.basePrompt,
+      productKnowledge: agent.productKnowledge,
+      skills: agent.skills,
+      maxMessagesPerDay: agent.maxMessagesPerDay,
+      llmProvider: agent.llmProvider,
+      llmModel: settings.llm_model,
+      aiEnabled: agent.aiEnabled,
+      llmKeyConfigured: agent.llmKeyConfigured,
+    };
+  }
+
+  /** GET /api/admin/tenants/:id/ai-config — AI brain config (super-admin only). */
+  @Get('tenants/:id/ai-config')
+  @Roles(Role.PlatformSuperAdmin)
+  async getTenantAiConfig(@Param('id') id: string) {
+    return this.aiConfigView(await this.adminService.resolveTenantId(id));
+  }
+
+  /** PUT /api/admin/tenants/:id/ai-config — update AI brain config (super-admin only, audited). */
+  @Put('tenants/:id/ai-config')
+  @Roles(Role.PlatformSuperAdmin)
+  async setTenantAiConfig(
+    @CurrentUser() admin: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: {
+      basePrompt?: string | null;
+      productKnowledge?: string | null;
+      skills?: string | null;
+      maxMessagesPerDay?: number;
+      llmProvider?: 'openrouter' | 'hermes_ai';
+      llmModel?: string | null;
+      aiEnabled?: boolean;
+      llmApiKey?: string; // plaintext; '' or omitted = keep existing
+    } = {},
+  ) {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    const before = await this.aiConfigView(tenantId);
+
+    await this.agentConfig.adminUpdateBrain(tenantId, {
+      basePrompt: body.basePrompt,
+      productKnowledge: body.productKnowledge,
+      skills: body.skills,
+      maxMessagesPerDay: body.maxMessagesPerDay,
+    });
+
+    const settingsPatch: Record<string, unknown> = {};
+    if (body.llmProvider !== undefined) settingsPatch.llm_provider = body.llmProvider;
+    if (body.llmModel !== undefined) settingsPatch.llm_model = body.llmModel;
+    if (body.aiEnabled !== undefined) settingsPatch.ai_enabled = body.aiEnabled;
+    // Only overwrite the key when a non-empty value is supplied ('' = keep existing).
+    if (body.llmApiKey) settingsPatch.llm_api_key_encrypted = body.llmApiKey;
+    if (Object.keys(settingsPatch).length > 0) {
+      await this.settings.updateSettings(tenantId, admin.sub, settingsPatch);
+    }
+
+    const after = await this.aiConfigView(tenantId);
+    await this.audit.log({
+      tenantId,
+      userId: admin.sub,
+      operation: 'config_change',
+      entityType: 'tenant_ai_config',
       entityId: tenantId,
       beforeValue: before,
       afterValue: after,

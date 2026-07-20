@@ -2,15 +2,20 @@ import { Controller, Get, Post, Body, Param, Query, UseGuards, HttpCode, HttpSta
 import { JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../../common/decorators';
+import { LeanDisabledGuard } from '../../common/guards';
 import { MeService } from './me.service';
 
 /**
  * Employee self-service API. Any authenticated login may call these; the service
  * resolves the caller's own linked employee and returns/writes only their data
  * (403 if the login has no employee record).
+ *
+ * Held while lean: employee self-service is disabled for the focused product, so
+ * the whole controller returns 403 (LeanDisabledGuard). Remove that guard (or
+ * flip LEAN_MODE) to restore it.
  */
 @Controller('api/me')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, LeanDisabledGuard('Employee self-service'))
 export class MeController {
   constructor(private readonly service: MeService) {}
 

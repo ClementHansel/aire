@@ -21,9 +21,11 @@ import { LegalEntityModule } from '../legal-entity';
 import { OutletModule } from '../outlet/outlet.module';
 import { EntitlementModule } from '../entitlement';
 import { PaymentModule } from '../payment/payment.module';
+import { AgentConfigModule } from '../agent-config';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [AuthModule, AuditModule, LegalEntityModule, OutletModule, EntitlementModule, PaymentModule],
+  imports: [AuthModule, AuditModule, LegalEntityModule, OutletModule, EntitlementModule, PaymentModule, AgentConfigModule, SettingsModule],
   controllers: [AdminController, PlatformFeedController, TenantBillingController, PlatformPaymentWebhookController],
   providers: [
     AdminService,

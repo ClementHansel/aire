@@ -134,6 +134,8 @@ export default function TenantDetailPage() {
           the URL param may be a slug, and /api/outlets does not resolve slugs. */}
       <ModulesPanel tenantId={d.tenant.id} />
 
+      <AiConfigPanel tenantId={d.tenant.id} />
+
       <SupportNotesPanel tenantId={id} />
 
       {resetPw && <ResetOwnerPasswordModal tenantId={id} onClose={() => setResetPw(false)} />}
@@ -233,6 +235,116 @@ function ModulesPanel({ tenantId }: { tenantId: string }) {
             );
           })}
         </ul>
+      )}
+    </Panel>
+  );
+}
+
+interface AiConfig {
+  basePrompt: string | null; productKnowledge: string | null; skills: string | null;
+  maxMessagesPerDay: number; llmProvider: 'openrouter' | 'hermes_ai'; llmModel: string | null;
+  aiEnabled: boolean; llmKeyConfigured: boolean;
+}
+
+/**
+ * Super-admin-only AI brain configuration for a tenant: LLM provider, model,
+ * key, on/off switch, base prompt, product knowledge, skills, and the daily
+ * message cap. Tenants no longer see or control any of this — they only get
+ * the WhatsApp connection and an AI auto-reply pause (see their AI Agent page).
+ */
+function AiConfigPanel({ tenantId }: { tenantId: string }) {
+  const { t } = useI18n();
+  const [cfg, setCfg] = useState<AiConfig | null>(null);
+  const [llmApiKey, setLlmApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const load = useCallback(async () => {
+    setErr('');
+    try { setCfg(await api.get<AiConfig>(`/admin/tenants/${tenantId}/ai-config`)); }
+    catch (e) { setErr(e instanceof Error ? e.message : t('admin.tenantDetail.aiConfigFailed', 'Failed to load AI config')); }
+  }, [tenantId, t]);
+  useEffect(() => { load(); }, [load]);
+
+  const set = <K extends keyof AiConfig>(k: K, v: AiConfig[K]) => setCfg((c) => (c ? { ...c, [k]: v } : c));
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true); setErr(''); setMsg('');
+    try {
+      const updated = await api.put<AiConfig>(`/admin/tenants/${tenantId}/ai-config`, {
+        basePrompt: cfg.basePrompt, productKnowledge: cfg.productKnowledge, skills: cfg.skills,
+        maxMessagesPerDay: cfg.maxMessagesPerDay, llmProvider: cfg.llmProvider, llmModel: cfg.llmModel,
+        aiEnabled: cfg.aiEnabled, ...(llmApiKey ? { llmApiKey } : {}),
+      });
+      setCfg(updated); setLlmApiKey('');
+      setMsg(t('admin.tenantDetail.aiConfigSaved', 'AI config saved.'));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t('admin.tenantDetail.failedSave', 'Failed to save'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel
+      title={t('admin.tenantDetail.aiConfig', 'AI configuration')}
+      description={t('admin.tenantDetail.aiConfigDesc', 'The AI brain for this tenant — model, key, prompt, knowledge and skills. Hidden from the tenant; they only control the WhatsApp connection and an on/off pause.')}
+      actions={<button className="btn-primary text-xs" onClick={save} disabled={saving || !cfg}>{saving ? t('admin.tenantDetail.saving', 'Saving…') : t('admin.tenantDetail.saveAiConfig', 'Save AI config')}</button>}
+    >
+      {err && <div className="rounded-lg bg-red-50 border border-red-200 p-2 text-xs text-red-700 mb-3">{err}</div>}
+      {msg && <div className="rounded-lg bg-green-50 border border-green-200 p-2 text-xs text-green-700 mb-3">{msg}</div>}
+
+      {!cfg ? (
+        <p className="text-sm text-text-muted">{t('admin.tenantDetail.loadingAiConfig', 'Loading AI config…')}</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary">{t('admin.tenantDetail.aiEnabled', 'AI enabled')}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={cfg.aiEnabled}
+              onClick={() => set('aiEnabled', !cfg.aiEnabled)}
+              className={cn('relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors', cfg.aiEnabled ? 'bg-primary-500' : 'bg-gray-300')}
+            >
+              <span className={cn('inline-block h-4 w-4 transform rounded-full bg-white transition-transform', cfg.aiEnabled ? 'translate-x-6' : 'translate-x-1')} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t('admin.tenantDetail.provider', 'Provider')}>
+              <select className="input-field" value={cfg.llmProvider} onChange={(e) => set('llmProvider', e.target.value as AiConfig['llmProvider'])}>
+                <option value="openrouter">OpenRouter</option>
+                <option value="hermes_ai">{t('admin.tenantDetail.hermes', 'Hermes AI (self-hosted)')}</option>
+              </select>
+            </Field>
+            <Field label={`${t('admin.tenantDetail.apiKey', 'API key')}${cfg.llmKeyConfigured ? ` (${t('admin.tenantDetail.configured', 'configured')})` : ''}`}>
+              <input className="input-field" type="password" value={llmApiKey} onChange={(e) => setLlmApiKey(e.target.value)} placeholder={cfg.llmKeyConfigured ? t('admin.tenantDetail.keyKeep', '•••••••• (leave blank to keep)') : t('admin.tenantDetail.keyEnter', 'sk-or-…')} />
+            </Field>
+          </div>
+
+          <Field label={t('admin.tenantDetail.model', 'Model')} hint={t('admin.tenantDetail.modelHint', 'e.g. openai/gpt-4o-mini, hermes3:latest. Blank = provider default.')}>
+            <input className="input-field" value={cfg.llmModel ?? ''} onChange={(e) => set('llmModel', e.target.value || null)} placeholder="openai/gpt-4o-mini" />
+          </Field>
+
+          <Field label={t('admin.tenantDetail.maxMessages', 'Max messages per user / day')}>
+            <input type="number" className="input-field" value={cfg.maxMessagesPerDay} onChange={(e) => set('maxMessagesPerDay', Number(e.target.value))} />
+          </Field>
+
+          <Field label={t('admin.tenantDetail.basePrompt', 'Base prompt')}>
+            <textarea className="input-field min-h-28" value={cfg.basePrompt ?? ''} onChange={(e) => set('basePrompt', e.target.value)} placeholder={t('admin.tenantDetail.basePromptPlaceholder', 'You are the friendly assistant for AIRE Car Wash…')} />
+          </Field>
+
+          <Field label={t('admin.tenantDetail.productKnowledge', 'Product knowledge')}>
+            <textarea className="input-field min-h-28" value={cfg.productKnowledge ?? ''} onChange={(e) => set('productKnowledge', e.target.value)} placeholder={t('admin.tenantDetail.productKnowledgePlaceholder', 'Hours: 08:00–20:00. Memberships: 1/3/12 months…')} />
+          </Field>
+
+          <Field label={t('admin.tenantDetail.skills', 'Agent skills')}>
+            <textarea className="input-field min-h-20" value={cfg.skills ?? ''} onChange={(e) => set('skills', e.target.value)} placeholder={t('admin.tenantDetail.skillsPlaceholder', 'Answer membership status\nShare pricing\nCheck voucher validity')} />
+          </Field>
+        </div>
       )}
     </Panel>
   );

@@ -41,7 +41,7 @@ describe('VoucherTicketService.sellBook', () => {
       createPackOrder: vi.fn().mockResolvedValue({ id: 'order-1', orderNumber: 'ORD-1', total: 300 }),
     };
     eventBus = { emit: vi.fn() };
-    service = new VoucherTicketService(pool as any, checkout as any, undefined, eventBus as any);
+    service = new VoucherTicketService(pool as any, checkout as any, eventBus as any);
   });
 
   it('creates a PAID order for the cash total and books it via OrderPaid', async () => {

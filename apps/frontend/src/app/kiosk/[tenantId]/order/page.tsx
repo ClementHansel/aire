@@ -7,6 +7,7 @@ import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 import { MembershipCard, type CardTemplate } from '@/components/dashboard/MembershipCard';
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
+import { LEAN_MODE } from '@aire/shared';
 
 /**
  * Self-service kiosk ordering: identify (optional) → pick products → details →
@@ -68,6 +69,11 @@ async function kioskApi<T>(path: string, token: string, options: RequestInit = {
 
 export default function KioskOrderPage() {
   const { id: tenantId, status } = useResolveTenant();
+  // Customer self-order is held while lean — orders are taken at the POS by a
+  // cashier. Send the device back to the kiosk status board.
+  useEffect(() => {
+    if (LEAN_MODE) window.location.href = tenantId ? `/kiosk/${tenantId}` : '/';
+  }, [tenantId]);
   const { t } = useI18n();
   const tenantBrand = usePublicBranding(tenantId ?? undefined);
 

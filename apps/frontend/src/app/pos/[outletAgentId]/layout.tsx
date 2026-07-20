@@ -37,7 +37,16 @@ export default function PosLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const token = getPosDeviceToken();
     setOutletName(getPosOutletName() ?? '');
-    if (!token) { setPhase('no-device'); return; }
+    if (!token) {
+      // Session-only cashier: a cashier who signed in on the main login lands
+      // here with no device token. Let them straight through — the POS pages
+      // resolve their operating branch from the session (open shift → branch
+      // context → user.outletId). Shared terminals with no session still get
+      // the register-this-terminal screen.
+      if (isAuthenticated()) { setPhase('ready'); return; }
+      setPhase('no-device');
+      return;
+    }
     let alive = true;
     validatePosToken(token)
       .then((ctx) => {

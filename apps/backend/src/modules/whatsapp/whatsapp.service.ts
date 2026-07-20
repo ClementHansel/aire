@@ -8,6 +8,7 @@ import { ChatMessage, LLMRouterService, LLMErrorResponse } from '../agent/llm-ro
 
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
+  skills: string | null;
   escalation_number: string | null; max_messages_per_day: number;
   wa_provider: 'waha' | 'kapso'; wa_number: string | null; waha_session: string | null;
   kapso_api_key: string | null; ai_reply_enabled: boolean;
@@ -404,6 +405,7 @@ export class WhatsappService implements OnModuleInit {
       text: params.text,
       basePrompt: cfg.base_prompt,
       knowledge: cfg.product_knowledge,
+      skills: cfg.skills,
       history,
     });
     if (result.escalate || !result.text) {

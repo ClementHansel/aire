@@ -31,10 +31,17 @@ describe('OnboardingService', () => {
       expect(s.completedAt).toBeNull();
     });
 
-    it('mandatory is incomplete when any of legal/branch/service is missing', async () => {
+    it('mandatory is incomplete when branch or service is missing', async () => {
       pool.query.mockResolvedValueOnce({ rows: [row({ legal: '1', branch: '1', service: '0' })] });
       const s = await service.getStatus('t1');
       expect(s.mandatoryComplete).toBe(false);
+    });
+
+    it('legal entity is no longer mandatory (lean onboarding) — branch + service suffices', async () => {
+      pool.query.mockResolvedValueOnce({ rows: [row({ legal: '0', branch: '1', service: '1' })] });
+      const s = await service.getStatus('t1');
+      expect(s.steps.legal.done).toBe(false);
+      expect(s.mandatoryComplete).toBe(true);
     });
   });
 

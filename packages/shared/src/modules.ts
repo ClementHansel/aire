@@ -38,6 +38,81 @@ export const TENANT_MODULE_KEYS: string[] = TENANT_MODULES.map((m) => m.key);
 export type TenantModuleFlags = Record<string, boolean>;
 
 /**
+ * ──────────────────────────────────────────────────────────────────────────
+ * LEAN MODE — temporary product focus for early client testing.
+ *
+ * While `LEAN_MODE` is true the tenant product is pared back to the original
+ * Aire POS PRD core (POS, memberships, vouchers, orders, reports, CRM, catalog)
+ * plus the WhatsApp agent. Everything built beyond that PRD is HELD: hidden from
+ * navigation, blocked on direct-URL access, and its interlinked backend routes
+ * are disabled so a client can't wander into a half-configured flow.
+ *
+ * This is intentionally a single hardcoded switch, not a per-tenant flag: it is
+ * a product-wide focus toggle. Flip to `false` to restore the full product in
+ * one place (per-tenant module toggles in super-admin still work underneath for
+ * later selective re-enable). NOTHING is deleted — only gated.
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+export const LEAN_MODE = true;
+
+/**
+ * Dashboard nav item ids that are held while lean. These map to `NavItem.id`
+ * values in the dashboard layout. Sections left empty by this filtering drop out
+ * of the sidebar automatically.
+ */
+export const HELD_NAV_IDS: string[] = [
+  // Analytics
+  'invoices', 'shifts',
+  // Customers
+  'bookings', 'feedback', 'broadcast',
+  // Catalog & Outlets
+  'legal-entities', 'kiosks', 'pos-devices', 'barcode-settings', 'vehicles',
+  // Operations (whole section)
+  'inventory', 'procurement', 'opname', 'cctv', 'topology', 'devices',
+  // Finance & People (whole section)
+  'finance-setup', 'finance', 'accounting', 'pnl', 'cogs', 'settlement',
+  'tax-invoices', 'hr', 'payroll', 'commission',
+  // AI (keep `conversations` + `ai-agent` slimmed to WhatsApp connection)
+  'assistant', 'agents', 'monitoring',
+  // Administration
+  'audit',
+];
+
+/**
+ * Route prefixes blocked from direct-URL access while lean. Covers the held
+ * dashboard subroutes plus the customer/employee surfaces that are disabled
+ * outright (self-order, employee self-service, customer portal). Super-admins
+ * are exempt (enforced at the guard call site).
+ */
+export const HELD_ROUTE_PREFIXES: string[] = [
+  // Held dashboard subroutes
+  '/dashboard/invoices', '/dashboard/shifts', '/dashboard/bookings',
+  '/dashboard/feedback', '/dashboard/broadcast', '/dashboard/legal-entities',
+  '/dashboard/kiosks', '/dashboard/pos-devices', '/dashboard/barcode-settings',
+  '/dashboard/vehicles', '/dashboard/inventory', '/dashboard/procurement',
+  '/dashboard/opname', '/dashboard/cctv', '/dashboard/topology',
+  '/dashboard/devices', '/dashboard/finance-setup', '/dashboard/finance',
+  '/dashboard/accounting', '/dashboard/pnl', '/dashboard/cogs',
+  '/dashboard/settlement', '/dashboard/tax-invoices', '/dashboard/hr',
+  '/dashboard/payroll', '/dashboard/commission', '/dashboard/assistant',
+  '/dashboard/agents', '/dashboard/monitoring', '/dashboard/audit',
+];
+
+/** Whether a nav item id is currently held (hidden) by lean mode. */
+export function isHeld(id: string): boolean {
+  return LEAN_MODE && HELD_NAV_IDS.includes(id);
+}
+
+/**
+ * Whether a route path is held (blocked) by lean mode. Matches exact path or any
+ * sub-path of a held prefix.
+ */
+export function isHeldRoute(path: string): boolean {
+  if (!LEAN_MODE) return false;
+  return HELD_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
+}
+
+/**
  * Resolve the enabled/disabled state of every known module for a tenant.
  * Default is ENABLED; a module is disabled only when its flag is explicitly false.
  */

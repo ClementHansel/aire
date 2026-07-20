@@ -51,7 +51,10 @@ export class OnboardingService {
     const r = res.rows[0];
     const n = (v: string | undefined) => parseInt(v ?? '0', 10) || 0;
     const legal = n(r?.legal), branch = n(r?.branch), service = n(r?.service), staff = n(r?.staff);
-    const mandatoryComplete = legal > 0 && branch > 0 && service > 0;
+    // Lean onboarding: only a branch + one service are required to start taking
+    // orders. Legal entity and finance provisioning are held features, so they
+    // are no longer mandatory gates. (Legal count is still reported for the UI.)
+    const mandatoryComplete = branch > 0 && service > 0;
     return {
       steps: {
         legal: { done: legal > 0, count: legal },
@@ -83,7 +86,7 @@ export class OnboardingService {
     const status = await this.getStatus(tenantId);
     if (status.completedAt) return status; // already done
     if (!status.mandatoryComplete) {
-      throw new BadRequestException('Finish the required steps first: a company legal entity, a branch, and at least one service.');
+      throw new BadRequestException('Finish the required steps first: a branch and at least one service.');
     }
     await this.pool.query(
       `UPDATE tenants SET onboarding_completed_at = NOW(), updated_at = NOW()

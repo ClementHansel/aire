@@ -5,19 +5,16 @@ import { api } from '@/lib/api';
 import { setSession, type AuthSession } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 
-const DEMO_TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const DEMO_OUTLET_ID = '22222222-2222-2222-2222-222222222201';
 
 const DEMO_LOGINS = [
   { label: 'Super Admin', email: 'superadmin@aire.com', password: 'password123', desc: 'Platform-wide administration' },
   { label: 'Tenant Owner', email: 'owner@demo.com', password: 'password123', desc: 'Full business owner access' },
-  { label: 'Employee · Cashier', email: 'cashier1@sudirman.demo.com', password: 'password123', desc: 'Signs in to the employee dashboard' },
+  { label: 'Cashier', email: 'cashier1@sudirman.demo.com', password: 'password123', desc: 'Signs straight into the Point of Sale' },
 ];
 
 const DEMO_PUBLIC = [
-  { label: 'Customer · Kiosk', href: `/kiosk/${DEMO_TENANT_ID}`, desc: 'Self-service order status', icon: '🖥️' },
   { label: 'Queue Board', href: `/queue-board/${DEMO_OUTLET_ID}`, desc: 'Live outlet display', icon: '📺' },
-  { label: 'Price eMenu', href: `/menu/${DEMO_TENANT_ID}`, desc: 'Public service price list', icon: '📋' },
 ];
 
 export default function LoginPage() {
@@ -33,18 +30,20 @@ export default function LoginPage() {
     try {
       const session = await api.post<AuthSession>('/auth/login', { email: loginEmail, password: loginPassword });
       setSession(session);
-      // Personal logins land employees on their self-service dashboard; owners/
-      // admins land on the hub. POS is no longer a login destination — it runs on
-      // a registered terminal (Dashboard → POS Terminals) where the cashier signs
-      // in on the device itself.
-      // Honor a safe, same-site ?next= (e.g. a shared /docs deep link); otherwise
-      // employees land on self-service and everyone else on the hub.
+      // A cashier signs in and goes straight to POS, pinned to their own branch
+      // (outletId comes back on the session). The URL branch segment is only a
+      // label — the backend resolves the operating branch from the session — so
+      // no POS device token is needed for a personal cashier login. Owners/admins
+      // land on the hub.
+      // Honor a safe, same-site ?next= (e.g. a shared /docs deep link) first.
       let next = '';
       if (typeof window !== 'undefined') {
         const raw = new URLSearchParams(window.location.search).get('next');
         if (raw && /^\/[^/]/.test(raw)) next = raw; // relative, single-leading-slash only
       }
-      const dest = next || (session.user.role === 'cashier' ? '/employee' : '/hub');
+      const dest = next || (session.user.role === 'cashier'
+        ? `/pos/${session.user.outletId ?? 'pos'}/new-order`
+        : '/hub');
       window.location.href = dest;
     } catch (err) {
       const message = err instanceof Error ? err.message : t('auth.login.failed', 'Login failed');

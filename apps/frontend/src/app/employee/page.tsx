@@ -7,6 +7,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { getUser, isAuthenticated, logout } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
+import { LEAN_MODE } from '@aire/shared';
 
 // ─── Types (mirror the /api/me responses) ────────────────────────────────────
 interface EmployeeProfile {
@@ -72,6 +73,9 @@ export default function EmployeePage() {
   }, []);
 
   useEffect(() => {
+    // Employee self-service is held while lean — a cashier logs straight into POS
+    // and owners/admins use the dashboard. Send anyone here back to the hub.
+    if (LEAN_MODE) { window.location.href = '/hub'; return; }
     if (!isAuthenticated()) { window.location.href = '/'; return; }
     setChecked(true);
     loadHome();

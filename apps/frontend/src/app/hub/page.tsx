@@ -8,6 +8,7 @@ import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 import { startStaffPov, startPortalPov } from '@/lib/pov';
 import { useI18n } from '@/lib/i18n';
 import { usePublicBranding } from '@/lib/publicBranding';
+import { LEAN_MODE } from '@aire/shared';
 
 interface HubTile {
   id: string;
@@ -248,6 +249,12 @@ export default function HubPage() {
         },
       ];
 
+  // Lean mode: hide the self-service kiosk tile and the employee/customer POV
+  // previews (those surfaces are held). Restored when LEAN_MODE is off.
+  const visibleTiles = LEAN_MODE
+    ? tiles.filter((tile) => !['kiosk', 'employee', 'customer'].includes(tile.id))
+    : tiles;
+
   return (
     <div className="min-h-screen bg-surface flex flex-col" data-testid="hub-page">
       {/* Top bar */}
@@ -308,7 +315,7 @@ export default function HubPage() {
           {error && !picker && <p className="text-center text-sm text-red-600 mb-4">{error}</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5" data-testid="hub-tiles">
-            {tiles.map((tile) => {
+            {visibleTiles.map((tile) => {
               const disabled = isSuper && !tile.href && !tile.onClick;
               const cls = `group card flex items-start gap-4 p-6 transition-all text-left ${
                 disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md hover:border-border-strong'

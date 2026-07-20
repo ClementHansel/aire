@@ -25,12 +25,15 @@ export interface AgentConfigResponse {
   llmKeyConfigured: boolean;
 }
 
+/**
+ * Tenant-writable fields. The AI "brain" (base prompt, product knowledge,
+ * skills, daily message cap, LLM provider/model/key, AI on/off) is now owned
+ * exclusively by the super-admin — see {@link AdminBrainUpdateDto} and
+ * `AdminController`'s `/tenants/:id/ai-config` endpoints. Tenants keep only the
+ * WhatsApp connection and the AI auto-reply pause switch.
+ */
 export interface UpdateAgentConfigDto {
-  basePrompt?: string | null;
-  productKnowledge?: string | null;
-  skills?: string | null;
   escalationNumber?: string | null;
-  maxMessagesPerDay?: number;
   waProvider?: 'waha' | 'kapso';
   waNumber?: string | null;
   wahaSession?: string | null;
@@ -38,14 +41,47 @@ export interface UpdateAgentConfigDto {
   aiReplyEnabled?: boolean;
   perBranchWaEnabled?: boolean;
   wahaMockEnabled?: boolean;
-  // ── LLM model settings (written through to tenants.settings) ──
-  aiEnabled?: boolean;
-  llmProvider?: 'openrouter' | 'hermes_ai';
-  llmApiKey?: string; // plaintext; encrypted at rest, never returned. '' = keep existing.
 }
 
+/** Super-admin-only write of the AI "brain" fields into agent_configs. */
+export interface AdminBrainUpdateDto {
+  basePrompt?: string | null;
+  productKnowledge?: string | null;
+  skills?: string | null;
+  maxMessagesPerDay?: number;
+}
+
+// Bahasa Indonesia defaults — kept identical to migration 074_agent_default_prompts.sql
+// (column DEFAULTs + backfill) so a tenant with no agent_configs row still shows/serves
+// the same working, grounded assistant the DB defaults to.
+const DEFAULT_BASE_PROMPT =
+  'Kamu adalah asisten WhatsApp resmi untuk usaha cuci mobil & detailing (AIRE car wash, LEAD detailing). '
+  + 'Sapa pelanggan dengan ramah, singkat, dan sopan, dalam Bahasa Indonesia. Gunakan gaya pesan WhatsApp yang pendek. Format uang sebagai Rp. '
+  + 'Kamu bisa membantu: memberi lokasi & jam buka cabang, daftar harga layanan, info & paket membership, sisa voucher beserta kodenya, '
+  + 'tanggal berakhir membership, serta membantu membuat janji/booking. '
+  + 'PENTING: JANGAN pernah mengarang harga, promo, jam buka, atau data pelanggan — ambil semua informasi HANYA dari tools yang tersedia. '
+  + 'Jika kamu tidak yakin, tidak punya tool yang sesuai, pelanggan marah, atau minta bicara dengan orang/CS, gunakan tool escalate_to_human.';
+
+const DEFAULT_SKILLS =
+  'Playbook (ikuti sesuai kebutuhan pelanggan):\n'
+  + '- Sapa pelanggan lalu pahami maksudnya.\n'
+  + '- Lokasi / jam buka cabang -> panggil get_branch_info.\n'
+  + '- Harga layanan -> panggil get_service_prices.\n'
+  + '- Status/paket/tanggal berakhir membership & ringkasan akun -> panggil get_my_summary.\n'
+  + '- Sisa voucher atau kode voucher pelanggan -> panggil get_my_vouchers.\n'
+  + '- Info paket membership yang dijual -> panggil get_membership_plans.\n'
+  + '- Promo aktif -> panggil get_promotions.\n'
+  + '- Mau booking/janji -> panggil create_booking, lalu bacakan detail dan minta pelanggan balas "YA" untuk konfirmasi.\n'
+  + '- Di luar kemampuan, data tidak ada, atau pelanggan minta orang -> escalate_to_human.\n'
+  + '- Jangan pernah menebak; kalau ragu, escalate.';
+
+const DEFAULT_PRODUCT_KNOWLEDGE =
+  'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. '
+  + 'Detail layanan, harga, paket membership, dan skema voucher diambil dari sistem melalui tools. '
+  + 'Silakan sesuaikan bagian ini per klien dengan info spesifik (daftar layanan unggulan, tingkatan membership, ketentuan voucher).';
+
 const DEFAULTS: Omit<AgentConfigResponse, 'aiEnabled' | 'llmProvider' | 'llmKeyConfigured'> = {
-  basePrompt: null, productKnowledge: null, skills: null, escalationNumber: null,
+  basePrompt: DEFAULT_BASE_PROMPT, productKnowledge: DEFAULT_PRODUCT_KNOWLEDGE, skills: DEFAULT_SKILLS, escalationNumber: null,
   maxMessagesPerDay: 50, waProvider: 'waha', waNumber: null, wahaSession: null,
   kapsoConfigured: false, aiReplyEnabled: true, perBranchWaEnabled: false, wahaMockEnabled: false,
 };
@@ -120,23 +156,61 @@ export class AgentConfigService {
   }
 
   /**
-   * Update the agent config. `userId` is required so LLM-settings changes can be
-   * written through SettingsService (which audit-logs them). LLM fields are only
-   * touched when at least one is present in the DTO.
+   * Update the tenant-writable agent config (WhatsApp connection + AI
+   * auto-reply pause only). The AI brain — base prompt, product knowledge,
+   * skills, daily cap, LLM provider/model/key, AI on/off — is super-admin-only;
+   * see {@link adminUpdateBrain}.
    */
-  async update(tenantId: string, dto: UpdateAgentConfigDto, userId: string): Promise<AgentConfigResponse> {
-    if (dto.aiEnabled !== undefined || dto.llmProvider !== undefined || (dto.llmApiKey !== undefined && dto.llmApiKey !== '')) {
-      const patch: Record<string, unknown> = {};
-      if (dto.aiEnabled !== undefined) patch.ai_enabled = dto.aiEnabled;
-      if (dto.llmProvider !== undefined) patch.llm_provider = dto.llmProvider;
-      // Only overwrite the key when a non-empty value is supplied ('' = keep existing).
-      if (dto.llmApiKey) patch.llm_api_key_encrypted = dto.llmApiKey;
-      await this.settings.updateSettings(tenantId, userId, patch);
-    }
-    return this.updateAgentRow(tenantId, dto);
+  async update(tenantId: string, dto: UpdateAgentConfigDto): Promise<AgentConfigResponse> {
+    await this.upsertAgentRow(tenantId, {
+      escalationNumber: dto.escalationNumber,
+      waProvider: dto.waProvider,
+      waNumber: dto.waNumber,
+      wahaSession: dto.wahaSession,
+      kapsoApiKey: dto.kapsoApiKey,
+      aiReplyEnabled: dto.aiReplyEnabled,
+      perBranchWaEnabled: dto.perBranchWaEnabled,
+      wahaMockEnabled: dto.wahaMockEnabled,
+    });
+    return this.get(tenantId);
   }
 
-  private async updateAgentRow(tenantId: string, dto: UpdateAgentConfigDto): Promise<AgentConfigResponse> {
+  /**
+   * Super-admin-only write of the AI brain fields (base prompt, product
+   * knowledge, skills, daily message cap) into agent_configs. Called from
+   * AdminController's `PUT /tenants/:id/ai-config`.
+   */
+  async adminUpdateBrain(tenantId: string, dto: AdminBrainUpdateDto): Promise<AgentConfigResponse> {
+    await this.upsertAgentRow(tenantId, {
+      basePrompt: dto.basePrompt,
+      productKnowledge: dto.productKnowledge,
+      skills: dto.skills,
+      maxMessagesPerDay: dto.maxMessagesPerDay,
+    });
+    return this.get(tenantId);
+  }
+
+  /**
+   * Shared upsert into agent_configs. Every field is optional — omitted
+   * fields keep their existing stored value (COALESCE against the existing
+   * row). Kept private and shared by both the tenant path ({@link update})
+   * and the admin brain path ({@link adminUpdateBrain}) so the SQL lives in
+   * exactly one place.
+   */
+  private async upsertAgentRow(tenantId: string, fields: {
+    basePrompt?: string | null;
+    productKnowledge?: string | null;
+    skills?: string | null;
+    escalationNumber?: string | null;
+    maxMessagesPerDay?: number;
+    waProvider?: 'waha' | 'kapso';
+    waNumber?: string | null;
+    wahaSession?: string | null;
+    kapsoApiKey?: string | null;
+    aiReplyEnabled?: boolean;
+    perBranchWaEnabled?: boolean;
+    wahaMockEnabled?: boolean;
+  }): Promise<void> {
     // Upsert. Kapso key only overwritten when a non-empty value is supplied.
     await this.pool.query(
       `INSERT INTO agent_configs (tenant_id, base_prompt, product_knowledge, skills, escalation_number,
@@ -157,12 +231,11 @@ export class AgentConfigService {
          waha_mock = COALESCE($13, agent_configs.waha_mock),
          updated_at = NOW()`,
       [
-        tenantId, dto.basePrompt ?? null, dto.productKnowledge ?? null, dto.skills ?? null, dto.escalationNumber ?? null,
-        dto.maxMessagesPerDay ?? null, dto.waProvider ?? null, dto.waNumber ?? null, dto.wahaSession ?? null,
-        dto.kapsoApiKey ?? null, dto.aiReplyEnabled ?? null, dto.perBranchWaEnabled ?? null, dto.wahaMockEnabled ?? null,
+        tenantId, fields.basePrompt ?? null, fields.productKnowledge ?? null, fields.skills ?? null, fields.escalationNumber ?? null,
+        fields.maxMessagesPerDay ?? null, fields.waProvider ?? null, fields.waNumber ?? null, fields.wahaSession ?? null,
+        fields.kapsoApiKey ?? null, fields.aiReplyEnabled ?? null, fields.perBranchWaEnabled ?? null, fields.wahaMockEnabled ?? null,
       ],
     );
-    return this.get(tenantId);
   }
 
   // ── Per-branch WhatsApp lines (outlet_agent_configs) ─────────────────────────

@@ -97,6 +97,8 @@ export interface TenantAutomationSettings {
   whatsapp_token_encrypted: string | null;
   llm_provider: 'openrouter' | 'hermes_ai';
   llm_api_key_encrypted: string | null;
+  /** LLM model id (e.g. "openai/gpt-4o-mini", "hermes3:latest"). Null = provider default. */
+  llm_model: string | null;
   ai_enabled: boolean;
   automation_toggles: AutomationToggles;
   approval_modes: ApprovalModes;
@@ -135,6 +137,7 @@ export const DEFAULT_AUTOMATION_SETTINGS: TenantAutomationSettings = {
   // reach a local Ollama that doesn't exist in production.
   llm_provider: 'openrouter',
   llm_api_key_encrypted: null,
+  llm_model: null,
   ai_enabled: true,
   automation_toggles: {
     campaigns: false,

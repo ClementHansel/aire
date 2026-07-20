@@ -1286,6 +1286,7 @@ describe('Feature: smart-automation, Property 18: Scheduled Analysis Skipped Whe
     whatsapp_token_encrypted: fc.constantFrom(null, 'encrypted-token'),
     llm_provider: fc.constantFrom('openrouter' as const, 'hermes_ai' as const),
     llm_api_key_encrypted: fc.constantFrom(null, 'encrypted-key'),
+    llm_model: fc.constantFrom(null, 'openai/gpt-4o-mini'),
     ai_enabled: fc.boolean(),
     automation_toggles: allTogglesOffArb,
     approval_modes: fc.record({
