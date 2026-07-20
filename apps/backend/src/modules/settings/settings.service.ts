@@ -106,8 +106,13 @@ export class SettingsService {
     patch: Partial<TenantAutomationSettings>,
     ipAddress?: string,
   ): Promise<TenantAutomationSettings> {
-    // 1. Verify tenant exists and get current settings
-    const current = await this.getRawSettings(tenantId);
+    // 1. Verify tenant exists and get current settings.
+    //    DECRYPT sensitive fields first: step 5 re-encrypts every sensitive field,
+    //    so if `current` still held ciphertext, an unrelated save (that doesn't
+    //    re-supply the key) would encrypt the ciphertext AGAIN — double-encrypting
+    //    it, so later reads decrypt only one layer and the API key is corrupted.
+    //    Decrypting here makes the encrypt-on-write idempotent.
+    const current = this.decryptSensitiveFields(await this.getRawSettings(tenantId));
 
     // 2. Merge patch with current settings (deep merge for nested objects)
     const merged = this.mergeSettings(current, patch);

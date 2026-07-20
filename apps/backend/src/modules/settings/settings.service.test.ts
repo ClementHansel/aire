@@ -129,6 +129,35 @@ describe('SettingsService', () => {
       expect(result.automation_toggles.campaigns).toBe(false);
     });
 
+    it('does NOT re-encrypt an already-stored API key on an unrelated save (persistence bug)', async () => {
+      // Stored key is already encrypted (mock: "encrypted:<plaintext>").
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{
+            settings: {
+              ...DEFAULT_AUTOMATION_SETTINGS,
+              ai_enabled: true,
+              llm_provider: 'openrouter',
+              llm_api_key_encrypted: 'encrypted:sk-or-real-key',
+            },
+          }],
+        })
+        .mockResolvedValueOnce({ rows: [{ settings: {} }] }); // persist
+
+      // A save that touches something else and does NOT re-supply the key.
+      await service.updateSettings('tenant-001', 'user-001', { schedule_interval: 'hourly' });
+
+      const persistedJson = mockPool.query.mock.calls[1]![1] as unknown as any[];
+      const stored = JSON.parse(persistedJson[0] as string);
+      // Must stay single-encrypted — NOT "encrypted:encrypted:sk-or-real-key".
+      expect(stored.llm_api_key_encrypted).toBe('encrypted:sk-or-real-key');
+
+      // And a subsequent read still decrypts back to the real key.
+      mockPool.query.mockResolvedValueOnce({ rows: [{ settings: stored }] });
+      const readBack = await service.getSettings('tenant-001');
+      expect(readBack.llm_api_key_encrypted).toBe('sk-or-real-key');
+    });
+
     it('should deep merge nested objects like automation_toggles', async () => {
       mockPool.query
         .mockResolvedValueOnce({
