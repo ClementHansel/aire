@@ -168,6 +168,73 @@ export class CustomerContextService {
     };
   }
 
+  /**
+   * Branch availability for booking: opening hours + the times already booked on
+   * the requested day + the live queue length right now. NON-personal — aggregate
+   * counts and booked slot times only, never other customers' identities — so any
+   * persona may call it. `dateStr` is YYYY-MM-DD; invalid/absent → today.
+   */
+  async getAvailability(tenantId: string, outletId: string | null, dateStr: string | null): Promise<{
+    date: string;
+    branch: string | null;
+    openingHours: unknown;
+    bookedTimes: string[];
+    existingBookings: number;
+    liveQueue: number;
+    note: string;
+  }> {
+    // Resolve the target branch: the one given, else the sole active branch (if
+    // there's exactly one) so a single-outlet tenant "just works".
+    let targetOutlet = outletId;
+    let branchName: string | null = null;
+    let openingHours: unknown = null;
+    if (targetOutlet) {
+      const r = await this.pool.query(
+        `SELECT name, opening_hours FROM outlets WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+        [targetOutlet, tenantId],
+      );
+      if (r.rows[0]) { branchName = r.rows[0].name; openingHours = r.rows[0].opening_hours ?? null; }
+    } else {
+      const r = await this.pool.query(
+        `SELECT id, name, opening_hours FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name`,
+        [tenantId],
+      );
+      if (r.rows.length === 1) {
+        targetOutlet = r.rows[0].id; branchName = r.rows[0].name; openingHours = r.rows[0].opening_hours ?? null;
+      }
+    }
+
+    const date = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : new Date().toISOString().slice(0, 10);
+
+    // Booked slot times on that date (all customers, but only the HH:MM — no identity).
+    const bParams: unknown[] = [tenantId, date];
+    let bOutlet = '';
+    if (targetOutlet) { bParams.push(targetOutlet); bOutlet = ' AND outlet_id = $3'; }
+    const b = await this.pool.query(
+      `SELECT to_char(scheduled_at, 'HH24:MI') AS hm FROM bookings
+       WHERE tenant_id = $1 AND scheduled_at::date = $2::date AND status IN ('booked','confirmed')${bOutlet}
+       ORDER BY scheduled_at`,
+      bParams,
+    );
+    const bookedTimes = b.rows.map((x: any) => x.hm);
+
+    // How busy right now: vehicles currently waiting or being served.
+    const qParams: unknown[] = [tenantId];
+    let qOutlet = '';
+    if (targetOutlet) { qParams.push(targetOutlet); qOutlet = ' AND o.outlet_id = $2'; }
+    const q = await this.pool.query(
+      `SELECT COUNT(*)::int AS n FROM vehicle_queue vq JOIN orders o ON o.id = vq.order_id
+       WHERE o.tenant_id = $1 AND vq.status IN ('waiting','serving')${qOutlet}`,
+      qParams,
+    );
+    const liveQueue = q.rows[0]?.n ?? 0;
+
+    const note = openingHours
+      ? 'Cek openingHours untuk memastikan cabang buka pada jam yang diminta, lalu bandingkan dengan bookedTimes.'
+      : 'Jam buka belum diatur di sistem — anggap jam operasional normal dan konfirmasikan ke pelanggan.';
+    return { date, branch: branchName, openingHours, bookedTimes, existingBookings: bookedTimes.length, liveQueue, note };
+  }
+
   private async bookings(tenantId: string, normalizedPhone: string) {
     const r = await this.pool.query(
       `SELECT service_name, scheduled_at, status FROM bookings

@@ -15,18 +15,40 @@ export class WhatsappWebhookController {
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async webhook(@Body() body: Record<string, any>): Promise<{ ok: true }> {
-    // WAHA: { event:'message', session, payload:{ from, body, notifyName } }
+    // WAHA: { event:'message', session, payload:{ from, body, notifyName, participant, _data… } }
     const session: string | undefined = body?.session;
     const p = body?.payload ?? body;
     const from: string | undefined = p?.from ?? p?.chatId ?? p?.sender;
     const text: string | undefined = p?.body ?? p?.text ?? p?.message;
     const name: string | undefined = p?.notifyName ?? p?.senderName ?? p?.name;
-    const fromMe: boolean = p?.fromMe ?? false;
+    const fromMe: boolean = p?.fromMe ?? p?._data?.fromMe ?? false;
+    // Group chats: `from` is the group JID (…@g.us) and the real sender is the
+    // participant. The service only engages in groups when the bot is @mentioned
+    // (otherwise it would reply to all group chatter); DMs always pass.
+    const isGroup = typeof from === 'string' && from.endsWith('@g.us');
+    const author: string | undefined =
+      p?.participant ?? p?.author ?? p?._data?.author ?? p?._data?.participant ?? undefined;
+    const mentions = extractMentions(p);
     if (from && text && !fromMe) {
-      await this.service.handleInbound({ session, from, name, text });
+      await this.service.handleInbound({ session, from, name, text, isGroup, author, mentions });
     }
     return { ok: true };
   }
+}
+
+/** Pull mentioned WhatsApp ids from the various shapes WAHA engines emit (WEBJS vs NOWEB). */
+function extractMentions(p: Record<string, any> | undefined): string[] {
+  if (!p) return [];
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    if (Array.isArray(v)) for (const x of v) if (typeof x === 'string') out.push(x);
+  };
+  push(p.mentionedIds);
+  push(p.mentions);
+  push(p._data?.mentionedJidList);
+  push(p._data?.message?.extendedTextMessage?.contextInfo?.mentionedJid);
+  push(p.message?.extendedTextMessage?.contextInfo?.mentionedJid);
+  return out;
 }
 
 /** Authenticated admin endpoints for connection + the Conversation Log. */

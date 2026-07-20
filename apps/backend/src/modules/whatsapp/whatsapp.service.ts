@@ -323,7 +323,7 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Inbound (from WAHA/Kapso webhook) ────────────────────────────────────────
-  async handleInbound(params: { tenantId?: string; outletId?: string | null; session?: string; from: string; name?: string; text: string }): Promise<void> {
+  async handleInbound(params: { tenantId?: string; outletId?: string | null; session?: string; from: string; name?: string; text: string; isGroup?: boolean; author?: string | null; mentions?: string[] }): Promise<void> {
     // Resolve tenant + branch. A session on a branch line scopes to that outlet;
     // simulate-inbound may pass tenantId (+optional outletId) directly.
     let tenantId = params.tenantId ?? null;
@@ -334,6 +334,20 @@ export class WhatsappService implements OnModuleInit {
     }
     if (!tenantId || !params.from || !params.text) return;
     const cfg = await this.config(tenantId, outletId);
+
+    // GROUP GATE: in a group chat (`from` = …@g.us) the bot must stay silent
+    // unless it is @mentioned — otherwise it replies to every message in the
+    // group. Gate BEFORE anything is logged so ignored group chatter leaves no
+    // trace. Direct messages (…@c.us) always pass through.
+    const isGroup = params.isGroup ?? params.from.includes('@g.us');
+    if (isGroup && !this.isBotMentioned(params.text, params.mentions, cfg?.wa_number ?? null)) {
+      return;
+    }
+    // In a group the "customer" is the participant who wrote (bind their number),
+    // but replies go back to the group thread (params.from). In a DM they match.
+    const senderPhone = isGroup ? (this.digitsOf(params.author) ?? params.from) : params.from;
+    const inboundText = isGroup ? this.stripBotMention(params.text) : params.text;
+
     const conv = await this.upsertConversation(tenantId, params.from, params.name, outletId);
     await this.addMessage(tenantId, conv.id, 'inbound', params.text, false);
 
@@ -341,8 +355,9 @@ export class WhatsappService implements OnModuleInit {
     // resolving a booking awaiting staff approval (TERIMA → confirm, TOLAK →
     // cancel). Runs regardless of the AI reply switch so approvals always resolve,
     // and notifies the original customer of the decision. Replies go out on the
-    // same (branch or tenant) line the message arrived on.
-    if (this.pendingBooking && cfg?.escalation_number && this.sameNumber(params.from, cfg.escalation_number)) {
+    // same (branch or tenant) line the message arrived on. DM only — a group is
+    // never the escalation line.
+    if (!isGroup && this.pendingBooking && cfg?.escalation_number && this.sameNumber(params.from, cfg.escalation_number)) {
       const ack = await this.pendingBooking.tryStaffAck(tenantId, params.from, params.text);
       if (ack.handled) {
         if (ack.reply) {
@@ -367,7 +382,8 @@ export class WhatsappService implements OnModuleInit {
     // YES/NO, resolve it deterministically BEFORE any AI runs. A clear "YA" creates
     // the booking (status 'booked') and kicks off staff approval; "BATAL" cancels.
     // Runs ahead of the n8n dispatch so the gate behaves identically per engine.
-    if (this.pendingBooking) {
+    // DM only — the propose→confirm handshake keys on the direct chat, not a group.
+    if (!isGroup && this.pendingBooking) {
       const outcome = await this.pendingBooking.tryConfirm(tenantId, params.from, params.text);
       if (outcome.handled && outcome.reply) {
         await this.addMessage(tenantId, conv.id, 'outbound', outcome.reply, true, 'Booking');
@@ -400,9 +416,9 @@ export class WhatsappService implements OnModuleInit {
     const history = await this.recentHistory(tenantId, conv.id);
     const result = await this.runtime.generate({
       tenantId,
-      fromPhone: params.from,
+      fromPhone: senderPhone,
       outletId,
-      text: params.text,
+      text: inboundText,
       basePrompt: cfg.base_prompt,
       knowledge: cfg.product_knowledge,
       skills: cfg.skills,
@@ -435,6 +451,33 @@ export class WhatsappService implements OnModuleInit {
     if (da === db) return true;
     const min = Math.min(da.length, db.length);
     return min >= 8 && da.slice(-min) === db.slice(-min);
+  }
+
+  /** Bare digits of a phone/JID (drops @suffix, +, spaces). Null when empty. */
+  private digitsOf(s?: string | null): string | null {
+    const d = (s || '').replace(/@.*/, '').replace(/\D/g, '');
+    return d || null;
+  }
+
+  /**
+   * Whether the connected bot number was @mentioned in a group message. Checks
+   * the webhook's mention list (WEBJS/NOWEB shapes) and any inline "@<number>"
+   * typed in the body. If the bot number is unknown we return false — the safe
+   * default is to stay silent in groups rather than risk replying to everything.
+   */
+  private isBotMentioned(text: string, mentions: string[] | undefined, botNumber: string | null): boolean {
+    if (!this.digitsOf(botNumber)) return false;
+    if (mentions?.some((m) => this.sameNumber(m, botNumber))) return true;
+    const inline = (text || '').match(/@\+?\d[\d\s-]{4,}/g) || [];
+    // Strip the LEADING '@' first — sameNumber() drops everything after an '@',
+    // which would otherwise blank out an inline "@<number>" token.
+    return inline.some((tok) => this.sameNumber(tok.replace(/^@/, ''), botNumber));
+  }
+
+  /** Remove inline "@<number>" mention tokens so the agent sees the clean question. */
+  private stripBotMention(text: string): string {
+    const cleaned = (text || '').replace(/@\+?\d[\d\s-]{4,}/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    return cleaned || (text || '');
   }
 
   /** Store the staff-ack request on the escalation conversation and prompt staff. */

@@ -146,6 +146,11 @@ export class CustomerAgentService {
           const codes = await this.context.activeVoucherCodes(tenantId, customer.normalized);
           return { success: true, data: { activeCount: codes.length, codes } };
         }
+        case 'check_availability': {
+          const date = typeof parameters.date === 'string' ? parameters.date : null;
+          const avail = await this.context.getAvailability(tenantId, args.outletId ?? null, date);
+          return { success: true, data: avail };
+        }
         case 'create_booking':
           return this.createBooking(args);
         case 'escalate_to_human':

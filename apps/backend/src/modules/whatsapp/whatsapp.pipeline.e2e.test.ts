@@ -170,6 +170,49 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
     expect(await svc.ensureSession(TENANT_ID)).toEqual({ status: 'WORKING' });
   });
 
+  const GROUP = '120363000000000000@g.us';
+
+  it('stays SILENT in a group when the bot is not mentioned (no leak)', async () => {
+    const pool = createPool();
+    const runtime = stubRuntime();
+    const svc = new WhatsappService(pool as never, runtime);
+
+    await svc.handleInbound({
+      tenantId: TENANT_ID, from: GROUP, isGroup: true,
+      author: `${CUSTOMER}@c.us`, text: 'ngobrol biasa di grup, bukan ke bot', mentions: [],
+    });
+
+    expect(runtime.generate).not.toHaveBeenCalled();
+    expect(pool.messages).toHaveLength(0); // nothing logged
+    expect(pool.outbox).toHaveLength(0);   // nothing sent
+  });
+
+  it('replies in a group ONLY when @mentioned — bound to the participant, sent to the group', async () => {
+    const pool = createPool(); // cfg.wa_number = '628000'
+    const runtime = stubRuntime('Halo kak! Ada yang bisa Irene bantu?');
+    const svc = new WhatsappService(pool as never, runtime);
+
+    await svc.handleInbound({
+      tenantId: TENANT_ID, from: GROUP, isGroup: true, author: `${CUSTOMER}@c.us`,
+      text: '@628000 harga cuci berapa ya?', mentions: ['628000@c.us'],
+    });
+
+    expect(runtime.generate).toHaveBeenCalledTimes(1);
+    const arg = (runtime.generate as unknown as { mock: { calls: any[][] } }).mock.calls[0]![0];
+    expect(arg.fromPhone).toBe(CUSTOMER);          // customer = participant, not the group
+    expect(arg.text).toBe('harga cuci berapa ya?'); // mention token stripped
+    expect(pool.outbox).toHaveLength(1);
+    expect(pool.outbox[0]!.chat_id).toBe(GROUP);   // reply goes back to the group thread
+  });
+
+  it('detects an inline @<number> mention even without a mentions array', async () => {
+    const pool = createPool();
+    const runtime = stubRuntime('ok');
+    const svc = new WhatsappService(pool as never, runtime);
+    await svc.handleInbound({ tenantId: TENANT_ID, from: GROUP, isGroup: true, author: `${CUSTOMER}@c.us`, text: 'halo @628000' });
+    expect(runtime.generate).toHaveBeenCalledTimes(1);
+  });
+
   it('agentSend (n8n/bridge outbound path) is also captured in mock mode', async () => {
     const pool = createPool();
     const svc = new WhatsappService(pool as never, stubRuntime());

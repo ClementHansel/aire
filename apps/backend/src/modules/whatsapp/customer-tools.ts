@@ -21,6 +21,7 @@ export type CustomerToolName =
   | 'get_promotions'
   | 'get_branch_info'
   | 'get_my_vouchers'
+  | 'check_availability'
   | 'create_booking'
   | 'escalate_to_human';
 
@@ -62,10 +63,17 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
     params: [],
     readOnly: true,
   },
+  check_availability: {
+    name: 'check_availability',
+    description:
+      'Cek ketersediaan/kesibukan cabang sebelum membuat janji. Parameter opsional: date (YYYY-MM-DD, default hari ini). Mengembalikan jam buka cabang, jam-jam yang sudah dibooking pada tanggal itu, dan panjang antrean saat ini. Panggil ini SEBELUM create_booking untuk memberi tahu pelanggan apakah waktu yang diminta memungkinkan.',
+    params: ['date'],
+    readOnly: true,
+  },
   create_booking: {
     name: 'create_booking',
     description:
-      'PROPOSE an appointment for THIS customer (it is NOT booked until they confirm). Provide serviceName and scheduledAt (ISO 8601 date-time). Optional: licensePlate, notes. After calling, read the details back and ask the customer to reply YA to confirm — the booking is only saved once they do.',
+      'PROPOSE an appointment for THIS customer (it is NOT booked until they confirm). Provide serviceName and scheduledAt (ISO 8601 date-time). Optional: licensePlate, notes. Prefer calling check_availability first. After calling, read the details back and ask the customer to reply YA to confirm — the booking is only saved once they do.',
     params: ['serviceName', 'scheduledAt', 'licensePlate', 'notes'],
   },
   escalate_to_human: {
@@ -81,7 +89,7 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
  * how a persona becomes "a set of capabilities the brain runs with" rather than
  * just a prompt. A conversation runs with exactly one persona's toolset.
  */
-const READ_ALL: CustomerToolName[] = ['get_my_summary', 'get_service_prices', 'get_membership_plans', 'get_promotions', 'get_branch_info', 'get_my_vouchers'];
+const READ_ALL: CustomerToolName[] = ['get_my_summary', 'get_service_prices', 'get_membership_plans', 'get_promotions', 'get_branch_info', 'get_my_vouchers', 'check_availability'];
 
 export const PERSONA_TOOLS: Record<AgentRole, CustomerToolName[]> = {
   // Full front-desk assistant: everything a customer-safe agent can do.

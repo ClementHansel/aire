@@ -147,11 +147,11 @@ export class AgentRuntimeService {
     pub: PublicInfo,
     basePrompt: string | null,
   ): { text: string; escalate: boolean } {
-    const hi = customer ? `Halo ${customer.name}!` : 'Halo!';
+    const hi = customer ? `Halo kak ${customer.name}!` : 'Halo kak!';
 
     switch (intent) {
       case 'greeting':
-        return { text: `${hi} Terima kasih sudah menghubungi kami. Ada yang bisa kami bantu? (cuci, harga, membership, status pesanan)`, escalate: false };
+        return { text: `${hi} 😊 Aku Irene, CS-nya Aire. Ada yang bisa Irene bantu? (info cuci, harga, membership, status pesanan, atau booking)`, escalate: false };
 
       case 'status': {
         if (ctx?.activeQueue) return { text: `${hi} Pesanan ${ctx.activeQueue.orderNumber} Anda saat ini ${ctx.activeQueue.status === 'in_progress' ? 'sedang dikerjakan' : `mengantri di posisi ${ctx.activeQueue.position}`}.`, escalate: false };
