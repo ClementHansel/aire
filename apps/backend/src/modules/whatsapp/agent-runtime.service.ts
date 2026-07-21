@@ -20,6 +20,8 @@ export interface ReplyResult {
   agentName: string;
   /** True when the agent just proposed a booking (caller may offer YA/BATAL buttons). */
   proposedBooking?: boolean;
+  /** Human-readable booking summary to read back deterministically on a proposal. */
+  bookingSummary?: string;
 }
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
@@ -139,7 +141,7 @@ export class AgentRuntimeService {
       });
       if (fluid) {
         const proposedBooking = fluid.toolsUsed.some((t) => t.tool === 'create_booking' && t.ok);
-        return { text: fluid.text, escalate: fluid.escalate, mode: 'fluid', agentName, proposedBooking };
+        return { text: fluid.text, escalate: fluid.escalate, mode: 'fluid', agentName, proposedBooking, bookingSummary: fluid.bookingSummary };
       }
       this.logger.warn(`Fluid reply failed for tenant ${params.tenantId}; falling back to rigid`);
     }

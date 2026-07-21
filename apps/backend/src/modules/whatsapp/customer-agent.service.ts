@@ -16,6 +16,10 @@ export interface CustomerReply {
   /** True when the agent decided the conversation needs a human. */
   escalate: boolean;
   toolsUsed: { tool: string; ok: boolean }[];
+  /** Set when create_booking PROPOSED a booking this turn — the human-readable
+   *  summary to read back deterministically (so we never trust the model to word
+   *  the "reply YA to confirm" prompt, which it sometimes gets wrong). */
+  bookingSummary?: string;
 }
 
 /**
@@ -63,6 +67,7 @@ export class CustomerAgentService {
     const system = this.systemPrompt(params);
 
     let escalate = false;
+    let bookingSummary: string | undefined;
     const messages: ChatMessage[] = [
       { role: 'system', content: system },
       ...params.history.slice(-8),
@@ -87,12 +92,16 @@ export class CustomerAgentService {
           parameters: toolParams,
         });
         if (result.success && (result.data as { escalate?: boolean })?.escalate) escalate = true;
+        if (tool === 'create_booking' && result.success) {
+          const s = (result.data as { summary?: string })?.summary;
+          if (s) bookingSummary = s;
+        }
         return result;
       },
     });
 
     if (loop.llmError || loop.reply == null) return null;
-    return { text: loop.reply, escalate, toolsUsed: loop.toolsUsed };
+    return { text: loop.reply, escalate, toolsUsed: loop.toolsUsed, bookingSummary };
   }
 
   /**

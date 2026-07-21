@@ -489,11 +489,17 @@ export class WhatsappService implements OnModuleInit {
       await this.escalate(tenantId, conv.id, cfg, params.from, params.text, outletId);
       return;
     }
+    let outText = result.text;
+    // Proposed booking: DON'T trust the model's wording (it sometimes claims the
+    // booking is already confirmed). Read the summary back deterministically and
+    // ask for YA/BATAL — the booking is only created after the customer confirms.
+    if (result.proposedBooking && result.bookingSummary) {
+      outText = `Baik kak, Irene siapkan booking berikut ya:\n\n${result.bookingSummary}\n\nBalas *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan. 🙏`;
+    }
     // Ask for identity ONCE per chat when we still don't know the sender, so we
     // can personalise from here on (introduce → ask → bind on their reply).
-    let outText = result.text;
     if (this.customerContext && !isGroup && !boundCustomer && !conv.identity_prompted) {
-      outText = `${result.text}\n\n${IDENTITY_ASK}`;
+      outText = `${outText}\n\n${IDENTITY_ASK}`;
       await this.markIdentityPrompted(conv.id);
     }
     await this.addMessage(tenantId, conv.id, 'outbound', outText, true, result.agentName);
