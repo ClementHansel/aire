@@ -27,6 +27,22 @@ describe('parseAction', () => {
   it('treats non-JSON as a plain final answer', () => {
     expect(parseAction('just text')).toMatchObject({ kind: 'final', message: 'just text' });
   });
+  it('takes the FIRST tool call when the model emits several at once (no JSON leak)', () => {
+    const a = parseAction(
+      '{"action":"tool","tool":"get_my_summary","parameters":{}}\n{"action":"tool","tool":"get_my_vouchers","parameters":{}}',
+    );
+    expect(a.kind).toBe('tool');
+    expect(a.tool).toBe('get_my_summary');
+  });
+  it('never leaks unparseable protocol JSON to the user', () => {
+    const a = parseAction('{"action":"tool","tool": get_x, oops not valid json}');
+    expect(a.kind).toBe('final');
+    expect(a.message).not.toContain('"action"');
+  });
+  it('extracts a tool call embedded after prose', () => {
+    const a = parseAction('Sure! {"action":"tool","tool":"get_x","parameters":{}}');
+    expect(a).toMatchObject({ kind: 'tool', tool: 'get_x' });
+  });
 });
 
 describe('renderToolCatalog', () => {

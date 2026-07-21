@@ -60,18 +60,42 @@ export interface ParsedAction {
 }
 
 /**
+ * Extract the FIRST complete, brace-balanced JSON object from a string (aware of
+ * strings/escapes). Returns null if none. Crucially, this takes only the first
+ * object — some models emit several protocol objects at once, and spanning from
+ * the first "{" to the last "}" would produce invalid JSON.
+ */
+function firstJsonObject(s: string): string | null {
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return s.slice(start, i + 1); }
+  }
+  return null;
+}
+
+/**
  * Parse a model turn into either a tool call or a final answer. Tolerant of
- * markdown code fences and leading/trailing prose; falls back to treating the
- * whole content as a plain-text final answer.
+ * markdown code fences, leading/trailing prose, and models that emit MULTIPLE
+ * protocol objects in one turn (we take the first). Never leaks raw protocol
+ * JSON to the user: if the text is clearly a (malformed) protocol object we
+ * couldn't parse, we return a safe generic reply instead of the JSON.
  */
 export function parseAction(content: string): ParsedAction {
   let txt = (content ?? '').trim();
   const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) txt = fence[1]!.trim();
-  const brace = txt.indexOf('{');
-  const lastBrace = txt.lastIndexOf('}');
-  if (brace !== -1 && lastBrace > brace) {
-    const candidate = txt.slice(brace, lastBrace + 1);
+
+  const candidate = firstJsonObject(txt);
+  if (candidate) {
     try {
       const parsed = JSON.parse(candidate);
       if (parsed.action === 'tool' && typeof parsed.tool === 'string') {
@@ -81,9 +105,16 @@ export function parseAction(content: string): ParsedAction {
         return { kind: 'final', tool: '', message: parsed.message };
       }
     } catch {
-      /* fall through to plain text */
+      /* fall through */
     }
   }
+
+  // Looks like the model tried to speak the protocol but we couldn't parse a
+  // valid action — do NOT echo raw JSON to the customer.
+  if (txt.startsWith('{') && /"(action|tool)"\s*:/.test(txt)) {
+    return { kind: 'final', tool: '', message: 'Maaf kak, boleh diulangi pertanyaannya? 😊' };
+  }
+
   return { kind: 'final', tool: '', message: txt || 'OK' };
 }
 
