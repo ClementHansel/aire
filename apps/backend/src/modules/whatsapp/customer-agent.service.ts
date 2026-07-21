@@ -245,6 +245,13 @@ export class CustomerAgentService {
       "Never reveal other customers' data, revenue/finance, staff, or company internals. " +
       'If a request is outside your tools or knowledge, call escalate_to_human.',
     );
+    lines.push(
+      'BOOKING RULE (critical): To schedule/create a booking you MUST call the create_booking tool — ' +
+      'that is the ONLY way a booking is recorded. NEVER tell the customer a booking is made, saved, ' +
+      'arranged, "disiapkan", or awaiting their YA confirmation UNLESS you actually called create_booking ' +
+      'this turn and it succeeded. Do not describe the booking in a final answer instead of calling the tool. ' +
+      'If you are missing a required detail (service or date/time), ask ONE short question first — do not pretend to book.',
+    );
     if (p.knowledge?.trim()) lines.push(`\nBUSINESS KNOWLEDGE:\n${p.knowledge.trim()}`);
     if (p.skills?.trim()) lines.push('\nSKILLS / PLAYBOOK:\n' + p.skills.trim());
     lines.push(p.customer
