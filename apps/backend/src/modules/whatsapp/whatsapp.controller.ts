@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, Query, UseGuards, HttpCode, HttpStatus,
+  Controller, Get, Post, Patch, Body, Param, Query, UseGuards, HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
@@ -10,11 +10,12 @@ import { WhatsappService } from './whatsapp.service';
 /** Public webhook for WAHA/Kapso to deliver inbound messages. */
 @Controller('api/whatsapp')
 export class WhatsappWebhookController {
+  private readonly logger = new Logger(WhatsappWebhookController.name);
   constructor(private readonly service: WhatsappService) {}
 
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  async webhook(@Body() body: Record<string, any>): Promise<{ ok: true }> {
+  webhook(@Body() body: Record<string, any>): { ok: true } {
     // WAHA: { event:'message', session, payload:{ from, body, notifyName, participant, _data… } }
     const session: string | undefined = body?.session;
     const p = body?.payload ?? body;
@@ -29,8 +30,14 @@ export class WhatsappWebhookController {
     const author: string | undefined =
       p?.participant ?? p?.author ?? p?._data?.author ?? p?._data?.participant ?? undefined;
     const mentions = extractMentions(p);
+    // ACK the gateway IMMEDIATELY and process in the background. The agent's
+    // LLM tool-loop can take many seconds (esp. bookings); if we held the
+    // connection open, WAHA/nginx would time out (504) and WAHA would retry,
+    // causing duplicate replies. Fire-and-forget with error logging instead.
     if (from && text && !fromMe) {
-      await this.service.handleInbound({ session, from, name, text, isGroup, author, mentions });
+      void this.service
+        .handleInbound({ session, from, name, text, isGroup, author, mentions })
+        .catch((err) => this.logger.error(`handleInbound failed: ${err instanceof Error ? err.message : String(err)}`));
     }
     return { ok: true };
   }
