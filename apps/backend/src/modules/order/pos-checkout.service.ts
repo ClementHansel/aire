@@ -130,7 +130,7 @@ export class PosCheckoutService {
          customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
          subtotal, total, note, payment_method, amount_received, paid_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15,
-               CASE WHEN $6 = 'paid' THEN NOW() ELSE NULL END)
+               CASE WHEN $16 THEN NOW() ELSE NULL END)
        RETURNING id, order_number, total, license_plate, vehicle_brand, vehicle_model`,
       [
         user.tenant_id,
@@ -148,6 +148,7 @@ export class PosCheckoutService {
         params.note,
         paymentMethod,
         amountReceived,
+        paidNow,
       ],
     );
     const order = res.rows[0]!;
