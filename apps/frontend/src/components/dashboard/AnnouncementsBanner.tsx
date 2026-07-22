@@ -10,10 +10,12 @@ interface Announcement {
   severity: 'info' | 'warning' | 'critical';
 }
 
+// Pale/light tints by design (info/warning/critical), with dark-mode variants
+// so the banners don't sit as stark light blocks on a dark dashboard.
 const STYLES: Record<Announcement['severity'], string> = {
-  info: 'border-sky-200 bg-sky-50 text-sky-800',
-  warning: 'border-amber-200 bg-amber-50 text-amber-800',
-  critical: 'border-rose-200 bg-rose-50 text-rose-800',
+  info: 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-200',
+  warning: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200',
+  critical: 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800/60 dark:bg-rose-950/40 dark:text-rose-200',
 };
 const ICON: Record<Announcement['severity'], string> = { info: 'ℹ️', warning: '⚠️', critical: '🚨' };
 

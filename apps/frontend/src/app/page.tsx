@@ -173,7 +173,10 @@ function LoginScreen() {
             </div>
 
             <div className="flex justify-end">
-              <a href="/reset-password" className="text-sm font-medium text-[#3d3fa3] hover:text-[#2e2f82]">
+              {/* dark: lightens the brand-indigo link — #3d3fa3 on the near-black
+                  dark background sits at ~2.2:1 contrast (fails AA); indigo-300
+                  clears AA comfortably while staying on-brand. */}
+              <a href="/reset-password" className="text-sm font-medium text-[#3d3fa3] hover:text-[#2e2f82] dark:text-indigo-300 dark:hover:text-indigo-200">
                 {t('auth.login.forgotPassword', 'Lupa password?')}
               </a>
             </div>
@@ -189,7 +192,7 @@ function LoginScreen() {
 
           <div className="mt-8 text-center">
             <p className="text-sm text-text-muted">{t('auth.login.needHelp', 'Butuh bantuan? Hubungi tim Anda.')}</p>
-            <a href="/docs" className="mt-1 inline-block text-sm font-medium text-[#3d3fa3] hover:text-[#2e2f82]">
+            <a href="/docs" className="mt-1 inline-block text-sm font-medium text-[#3d3fa3] hover:text-[#2e2f82] dark:text-indigo-300 dark:hover:text-indigo-200">
               {t('auth.login.readDocs', 'Baca dokumentasi')}
             </a>
           </div>

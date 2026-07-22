@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Tailwind v4 defaults `dark:` to a `prefers-color-scheme` media query. This
+   app toggles a `.dark` class on <html> instead (see ThemeContext + the
+   theme-init script in the root layout), so `dark:` utilities must key off
+   that class — otherwise `dark:` classes would silently track the OS theme
+   instead of the app's persisted/tenant-forced theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ─── Branding runtime variables ──────────────────────────────────────
    Seeded with the tara design system (navy + gold). The BrandingProvider
    overrides a subset at runtime per tenant (see lib/color-utils.ts), so

@@ -7,6 +7,8 @@ import {
 import { isAuthenticated, setSession, type AuthSession } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { OfflineIndicator } from '@/components/shared/OfflineIndicator';
+import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
+import { ThemeProvider } from '@/contexts/ThemeContext';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
@@ -18,7 +20,7 @@ type Phase = 'checking' | 'no-device' | 'signin' | 'ready';
  * with their own email + password. Children never mount until both hold, so the
  * pages' own "redirect to / when unauthenticated" checks never fire here.
  */
-export default function PosLayout({ children }: { children: React.ReactNode }) {
+function PosGate({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
   const [phase, setPhase] = useState<Phase>('checking');
   const [outletName, setOutletName] = useState<string>('');
@@ -101,7 +103,23 @@ export default function PosLayout({ children }: { children: React.ReactNode }) {
 
   // On flaky on-site wifi, warn the cashier the moment connectivity drops so a
   // failed sale/settlement isn't mistaken for success.
-  if (phase === 'ready') return <><OfflineIndicator />{children}</>;
+  //
+  // The tenant's branding (incl. dark-mode policy) is only fetched here, once
+  // authenticated — BrandingProvider hits an auth-guarded endpoint, and
+  // calling it during the pre-auth phases below would 401, which the shared
+  // api client treats as a session expiry and hard-redirects to "/", bouncing
+  // the cashier straight off this in-place registration/sign-in gate (the
+  // exact thing this component exists to avoid — see the file doc comment).
+  if (phase === 'ready') {
+    return (
+      <BrandingProvider>
+        <TenantThemeGate>
+          <OfflineIndicator />
+          {children}
+        </TenantThemeGate>
+      </BrandingProvider>
+    );
+  }
 
   const Shell = ({ children: inner }: { children: React.ReactNode }) => (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">
@@ -117,12 +135,16 @@ export default function PosLayout({ children }: { children: React.ReactNode }) {
     </div>
   );
 
-  if (phase === 'checking') {
-    return <div className="min-h-screen bg-surface flex items-center justify-center text-text-muted">{t('pos.gate.checking', 'Loading…')}</div>;
-  }
+  // Pre-auth phases (checking / no-device / signin): still honor the
+  // persisted theme (via the default, no-tenant-branding config — same
+  // fallback admin/layout.tsx uses) without touching any authenticated
+  // endpoint.
+  let gateContent: React.ReactNode;
 
-  if (phase === 'no-device') {
-    return (
+  if (phase === 'checking') {
+    gateContent = <div className="min-h-screen bg-surface flex items-center justify-center text-text-muted">{t('pos.gate.checking', 'Loading…')}</div>;
+  } else if (phase === 'no-device') {
+    gateContent = (
       <Shell>
         <div className="card space-y-3">
           <p className="text-sm text-text-secondary">
@@ -136,25 +158,39 @@ export default function PosLayout({ children }: { children: React.ReactNode }) {
         </div>
       </Shell>
     );
+  } else {
+    // signin
+    gateContent = (
+      <Shell>
+        <form onSubmit={signIn} className="card space-y-3">
+          <p className="text-sm text-text-secondary">{t('pos.gate.cashierSignIn', 'Cashier sign in')}</p>
+          {err && <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700">{err}</div>}
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1">{t('pos.gate.email', 'Email')}</label>
+            <input className="input-field" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1">{t('pos.gate.password', 'Password')}</label>
+            <input className="input-field" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <button className="btn-primary w-full" disabled={busy || !email || !password}>{busy ? t('pos.gate.signingIn', 'Signing in…') : t('pos.gate.signIn', 'Sign in')}</button>
+          <button type="button" className="btn-ghost w-full text-xs" onClick={() => { clearPosDevice(); setPhase('no-device'); }}>{t('pos.gate.switchDevice', 'Not this branch? Re-register terminal')}</button>
+        </form>
+      </Shell>
+    );
   }
 
-  // signin
-  return (
-    <Shell>
-      <form onSubmit={signIn} className="card space-y-3">
-        <p className="text-sm text-text-secondary">{t('pos.gate.cashierSignIn', 'Cashier sign in')}</p>
-        {err && <div className="rounded-lg bg-red-50 border border-red-200 p-2.5 text-sm text-red-700">{err}</div>}
-        <div>
-          <label className="block text-sm font-medium text-text-primary mb-1">{t('pos.gate.email', 'Email')}</label>
-          <input className="input-field" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-text-primary mb-1">{t('pos.gate.password', 'Password')}</label>
-          <input className="input-field" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </div>
-        <button className="btn-primary w-full" disabled={busy || !email || !password}>{busy ? t('pos.gate.signingIn', 'Signing in…') : t('pos.gate.signIn', 'Sign in')}</button>
-        <button type="button" className="btn-ghost w-full text-xs" onClick={() => { clearPosDevice(); setPhase('no-device'); }}>{t('pos.gate.switchDevice', 'Not this branch? Re-register terminal')}</button>
-      </form>
-    </Shell>
-  );
+  return <ThemeProvider>{gateContent}</ThemeProvider>;
+}
+
+/** Applies the tenant's dark-mode policy from branding to the theme provider.
+ * Mirrors dashboard/layout.tsx's ThemeGate — POS previously rendered
+ * identically in light and dark because no ThemeProvider wrapped it at all. */
+function TenantThemeGate({ children }: { children: React.ReactNode }) {
+  const { branding } = useBranding();
+  return <ThemeProvider themeConfig={branding}>{children}</ThemeProvider>;
+}
+
+export default function PosLayout({ children }: { children: React.ReactNode }) {
+  return <PosGate>{children}</PosGate>;
 }

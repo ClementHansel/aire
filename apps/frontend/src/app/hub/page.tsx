@@ -2,13 +2,33 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { Sun, Moon } from 'lucide-react';
 import { Modal } from '@/components/dashboard/ui';
 import { api } from '@/lib/api';
 import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 import { startStaffPov, startPortalPov } from '@/lib/pov';
 import { useI18n } from '@/lib/i18n';
 import { usePublicBranding } from '@/lib/publicBranding';
+import { useTheme } from '@/contexts/ThemeContext';
 import { LEAN_MODE } from '@aire/shared';
+
+/** Top-bar light/dark toggle. Renders nothing if the tenant has dark mode
+ * disabled (see ThemeContext's forced_theme handling). */
+function ThemeToggleButton() {
+  const { theme, toggleTheme, canToggleTheme } = useTheme();
+  const { t } = useI18n();
+  if (!canToggleTheme) return null;
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={t('auth.hub.toggleTheme', 'Toggle theme')}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-secondary transition-colors hover:bg-surface-sunken hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-300"
+    >
+      {theme === 'dark' ? <Sun className="h-4 w-4" strokeWidth={1.75} /> : <Moon className="h-4 w-4" strokeWidth={1.75} />}
+    </button>
+  );
+}
 
 interface HubTile {
   id: string;
@@ -270,6 +290,7 @@ export default function HubPage() {
             <p className="text-sm font-medium text-text-primary">{user?.name ?? t('auth.hub.user', 'User')}</p>
             <p className="text-xs text-text-muted capitalize">{user?.role?.replace(/_/g, ' ') ?? ''}</p>
           </div>
+          <ThemeToggleButton />
           <button onClick={logout} className="btn-ghost text-xs">↩ {t('auth.hub.signOut', 'Sign out')}</button>
         </div>
       </header>
