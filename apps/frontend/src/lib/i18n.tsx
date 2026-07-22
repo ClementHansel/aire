@@ -46,7 +46,7 @@ export function LanguageToggle({ className = '' }: { className?: string }) {
           key={l}
           type="button"
           onClick={() => setLocale(l)}
-          className={`px-2 py-1 font-semibold ${locale === l ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}
+          className={`px-2 py-1 font-semibold ${locale === l ? 'bg-primary-500 text-primary-foreground' : 'text-text-secondary hover:text-text-primary'}`}
         >
           {l.toUpperCase()}
         </button>

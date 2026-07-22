@@ -37,8 +37,12 @@
   --foreground: 40 10% 92%;
   --card: 220 14% 9%;
   --card-foreground: 40 10% 92%;
-  --primary: 40 15% 93%;
-  --primary-foreground: 220 15% 7%;
+  /* Primary MUST stay a saturated (dark-enough-for-white-text) brand color in dark
+     mode: the whole app uses the idiom `bg-primary-500 text-white`, so a near-white
+     primary made every primary button/badge white-on-white. Brand indigo #3d3fa3
+     (hsl 239 46% 44%) + white foreground restores readable primary surfaces. */
+  --primary: 239 46% 44%;
+  --primary-foreground: 0 0% 100%;
   --secondary: 220 12% 14%;
   --secondary-foreground: 40 8% 75%;
   --muted: 220 12% 14%;
@@ -162,7 +166,10 @@ h1 {
 }
 
 @utility btn-primary {
-  @apply inline-flex items-center justify-center rounded-md bg-primary-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  /* Use the paired primary-foreground (near-white on the light-mode navy button,
+     near-black on the dark-mode light button) instead of a hardcoded white — the
+     latter was white-on-near-white and unreadable in dark mode. */
+  @apply inline-flex items-center justify-center rounded-md bg-primary-500 px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 @utility btn-secondary {
