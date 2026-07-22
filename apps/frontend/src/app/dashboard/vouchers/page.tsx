@@ -19,6 +19,7 @@ interface Promotion {
   id: string; name: string; description: string | null; startDate: string; endDate: string;
   isActive: boolean; outletIds: string[] | null; triggerServiceIds: string[] | null;
   rewardType: string; rewardValue: number; rewardServiceId: string | null; maxQuota: number | null; usedQuota: number;
+  memberOnly: boolean; stackable: boolean; minPurchase: number;
 }
 
 const REWARD_TYPES = [
@@ -229,6 +230,9 @@ function PromoModal({ initial, branches, services, onClose, onSaved }: { initial
   const [rewardValue, setRewardValue] = useState(String(initial?.rewardValue ?? 0));
   const [rewardServiceId, setRewardServiceId] = useState(initial?.rewardServiceId ?? '');
   const [maxQuota, setMaxQuota] = useState(initial?.maxQuota != null ? String(initial.maxQuota) : '');
+  const [memberOnly, setMemberOnly] = useState(initial?.memberOnly ?? false);
+  const [stackable, setStackable] = useState(initial?.stackable ?? true);
+  const [minPurchase, setMinPurchase] = useState(String(initial?.minPurchase ?? 0));
   const [outletIds, setOutletIds] = useState<string[]>(initial?.outletIds ?? []);
   const [triggerServiceIds, setTriggerServiceIds] = useState<string[]>(initial?.triggerServiceIds ?? []);
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
@@ -246,6 +250,8 @@ function PromoModal({ initial, branches, services, onClose, onSaved }: { initial
       rewardValue: Number(rewardValue) || 0,
       rewardServiceId: rewardServiceId || null,
       maxQuota: maxQuota ? Number(maxQuota) : null,
+      memberOnly, stackable,
+      minPurchase: Number(minPurchase) || 0,
     };
     try {
       if (initial) await api.put(`/promotions/${initial.id}`, payload);
@@ -288,6 +294,11 @@ function PromoModal({ initial, branches, services, onClose, onSaved }: { initial
           <div className="grid grid-cols-2 gap-3">
             <div><label className="block text-sm font-medium mb-1.5">{t('dash.promotions.maxQuota', 'Max quota (blank = unlimited)')}</label><input aria-label={t('dash.promotions.maxQuotaAria', 'Max Quota')} type="number" className="input-field" value={maxQuota} onChange={(e) => setMaxQuota(e.target.value)} /></div>
             <label className="flex items-center gap-2 text-sm text-text-secondary mt-7"><input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /> {t('dash.promotions.active', 'Active')}</label>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <label className="flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={memberOnly} onChange={(e) => setMemberOnly(e.target.checked)} /> {t('dash.promotions.memberOnly', 'Khusus member')}</label>
+            <label className="flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={stackable} onChange={(e) => setStackable(e.target.checked)} /> {t('dash.promotions.stackable', 'Bisa digabung promo lain')}</label>
+            <div><label className="block text-sm font-medium mb-1.5">{t('dash.promotions.minPurchase', 'Min. belanja (Rp)')}</label><input aria-label={t('dash.promotions.minPurchaseAria', 'Min Purchase')} type="number" min="0" className="input-field" value={minPurchase} onChange={(e) => setMinPurchase(e.target.value)} /></div>
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.promotions.appliesToBranches', 'Applies to branches (none = all)')}</label>

@@ -294,7 +294,12 @@ export class OrderService {
 
     // Step 7b: Resolve active promotions (discount rewards applied to the total).
     const promoSubtotal = Math.max(0, cartItems.reduce((s, ci) => s + ci.quantity * ci.unitPrice - ci.discount, 0) - voucherDiscount);
-    const promo = await this.resolvePromotions(user.tenant_id, operatingOutletId ?? undefined, cartItems, promoSubtotal);
+    // Promotions apply ONLY when the cashier selected them (request.promotionIds) and
+    // each passes server-side gates. Member-only promos require a membership on the order.
+    const promo = await this.resolvePromotions(user.tenant_id, operatingOutletId ?? undefined, cartItems, promoSubtotal, {
+      hasActiveMembership: !!request.membershipId,
+      selectedIds: request.promotionIds ?? [],
+    });
     const promoDiscount = promo.discount;
 
     // Step 8: Calculate cart summary
@@ -948,6 +953,16 @@ export class OrderService {
     }
     await client.query(`DELETE FROM promotion_grants WHERE order_id = $1`, [orderId]);
 
+    // 3b. Free the vehicle-queue entry this order was rung up for, so the car can be
+    // re-picked from the POS "ambil antrian" queue (the picker hides rows with an
+    // order_id). Without this, a cancelled/voided order left its car permanently
+    // unpickable even though it is still 'waiting'.
+    await client.query(
+      `UPDATE vehicle_queue SET order_id = NULL, updated_at = NOW()
+       WHERE order_id = $1 AND tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+
     // 4. Reverse membership usage + void any still-pending settlement it accrued.
     const usages = await client.query<{ id: string }>(
       `UPDATE membership_usages SET reversed = true, reversed_at = NOW()
@@ -1284,33 +1299,110 @@ export class OrderService {
     outletId: string | undefined,
     cartItems: CartItem[],
     subtotal: number,
+    opts?: { hasActiveMembership?: boolean; selectedIds?: string[] },
   ): Promise<{ discount: number; grants: Array<{ promotionId: string; amount: number }> }> {
+    // Promotions are NO LONGER auto-applied. Apply only what the cashier chose
+    // (opts.selectedIds), each re-validated against every eligibility gate here so
+    // the server is the source of truth. Empty/absent selection → no promo.
+    const selected = new Set(opts?.selectedIds ?? []);
+    const evaluated = await this.evaluatePromotions(tenantId, outletId, cartItems, subtotal, !!opts?.hasActiveMembership);
+    const chosen = evaluated.filter((e) => e.eligible && selected.has(e.id));
+    if (chosen.length === 0) return { discount: 0, grants: [] };
+
+    // Stacking rule: a non-stackable promo applies ALONE. If the cashier picked one
+    // (or several) and any is non-stackable, keep only the single best-value promo.
+    // Otherwise all chosen (stackable) promos combine.
+    const applied = chosen.some((c) => !c.stackable)
+      ? [chosen.reduce((best, c) => (c.amount > best.amount ? c : best))]
+      : chosen;
+
+    let discount = 0;
+    const grants: Array<{ promotionId: string; amount: number }> = [];
+    for (const p of applied) {
+      const amount = Math.min(p.amount, subtotal - discount);
+      discount += Math.max(0, amount);
+      grants.push({ promotionId: p.id, amount: Math.max(0, amount) });
+      if (discount >= subtotal) break;
+    }
+    return { discount: Math.min(discount, subtotal), grants };
+  }
+
+  /**
+   * Evaluate every active promotion against a cart WITHOUT applying anything —
+   * returns each promo's computed discount and whether the order currently
+   * satisfies its gates (outlet, service trigger, min_purchase, member_only).
+   * Shared by the POS promo picker (preview) and checkout (apply).
+   */
+  private async evaluatePromotions(
+    tenantId: string,
+    outletId: string | undefined,
+    cartItems: CartItem[],
+    subtotal: number,
+    hasActiveMembership: boolean,
+  ): Promise<Array<{
+    id: string; name: string; rewardType: string; rewardValue: number; amount: number;
+    memberOnly: boolean; stackable: boolean; minPurchase: number; eligible: boolean; reason?: string;
+  }>> {
     const res = await this.pool.query<{
-      id: string; reward_type: string; reward_value: string;
+      id: string; name: string; reward_type: string; reward_value: string;
       outlet_ids: string[] | null; trigger_service_ids: string[] | null;
+      member_only: boolean; stackable: boolean; min_purchase: string;
     }>(
-      `SELECT id, reward_type, reward_value, outlet_ids, trigger_service_ids
+      `SELECT id, name, reward_type, reward_value, outlet_ids, trigger_service_ids,
+              member_only, stackable, min_purchase
        FROM promotions
        WHERE tenant_id = $1 AND is_active = true
          AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE
          AND (max_quota IS NULL OR used_quota < max_quota)`,
       [tenantId],
     );
-    let discount = 0;
-    const grants: Array<{ promotionId: string; amount: number }> = [];
     const cartServiceIds = cartItems.map((ci) => ci.serviceId);
-    for (const p of res.rows) {
-      if (p.outlet_ids && outletId && !p.outlet_ids.includes(outletId)) continue;
-      if (p.trigger_service_ids && p.trigger_service_ids.length > 0 &&
-          !p.trigger_service_ids.some((sid) => cartServiceIds.includes(sid))) continue;
+    return res.rows.map((p) => {
+      const rewardValue = parseFloat(p.reward_value);
+      const minPurchase = parseFloat(p.min_purchase);
       let amount = 0;
-      if (p.reward_type === 'discount_fixed') amount = Math.min(parseFloat(p.reward_value), subtotal - discount);
-      else if (p.reward_type === 'discount_percentage') amount = Math.round((subtotal * parseFloat(p.reward_value)) / 100);
-      discount += amount;
-      grants.push({ promotionId: p.id, amount });
-      if (discount >= subtotal) break;
-    }
-    return { discount: Math.min(discount, subtotal), grants };
+      if (p.reward_type === 'discount_fixed') amount = Math.min(rewardValue, subtotal);
+      else if (p.reward_type === 'discount_percentage') amount = Math.round((subtotal * rewardValue) / 100);
+      let eligible = true;
+      let reason: string | undefined;
+      if (p.outlet_ids && outletId && !p.outlet_ids.includes(outletId)) { eligible = false; reason = 'Tidak berlaku di cabang ini'; }
+      else if (p.trigger_service_ids && p.trigger_service_ids.length > 0 &&
+               !p.trigger_service_ids.some((sid) => cartServiceIds.includes(sid))) { eligible = false; reason = 'Layanan tertentu belum ada di keranjang'; }
+      else if (minPurchase > 0 && subtotal < minPurchase) { eligible = false; reason = `Min. belanja Rp${minPurchase.toLocaleString('id-ID')}`; }
+      else if (p.member_only && !hasActiveMembership) { eligible = false; reason = 'Khusus member aktif'; }
+      return {
+        id: p.id, name: p.name, rewardType: p.reward_type, rewardValue, amount,
+        memberOnly: p.member_only, stackable: p.stackable, minPurchase, eligible, reason,
+      };
+    });
+  }
+
+  /**
+   * POS promo picker: given a raw cart, resolve service prices, compute the
+   * pre-promo subtotal, and list every promotion with its computed discount +
+   * eligibility so the cashier can CONFIRM which to apply. Nothing is written.
+   */
+  async previewPromotionsForCart(
+    tenantId: string,
+    outletId: string | undefined,
+    items: Array<{ serviceId: string; quantity: number; manualDiscount?: number }>,
+    membershipId?: string,
+  ) {
+    const serviceIds = items.map((i) => i.serviceId);
+    const services = await this.lookupServices(serviceIds);
+    const cartItems: CartItem[] = items.map((item) => {
+      const service = services.get(item.serviceId);
+      if (!service) {
+        throw new BadRequestException({ statusCode: 400, error: ERR_VALIDATION_FAILED, message: `Service not found: ${item.serviceId}` });
+      }
+      return {
+        serviceId: item.serviceId, serviceName: service.name, quantity: item.quantity,
+        unitPrice: parseFloat(service.price), discount: item.manualDiscount ?? 0,
+        isMainService: service.is_main_service,
+      };
+    });
+    const subtotal = cartItems.reduce((s, ci) => s + ci.quantity * ci.unitPrice - ci.discount, 0);
+    return this.evaluatePromotions(tenantId, outletId, cartItems, Math.max(0, subtotal), !!membershipId);
   }
 
   /**

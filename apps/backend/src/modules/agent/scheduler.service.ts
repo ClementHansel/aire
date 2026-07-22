@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ScheduledAnalysisService } from './scheduled-analysis.service';
+import { JobMonitorService } from '../job-monitor';
 
 /**
  * Schedule configuration for a tenant's periodic AI analysis.
@@ -64,6 +65,8 @@ export class SchedulerService implements OnModuleDestroy {
   private readonly jobs = new Map<string, ScheduledJob>();
 
   private scheduledAnalysisService: ScheduledAnalysisService | null = null;
+
+  constructor(@Optional() private readonly jobMonitor?: JobMonitorService) {}
 
   /**
    * Set the ScheduledAnalysisService reference.
@@ -178,10 +181,25 @@ export class SchedulerService implements OnModuleDestroy {
     );
 
     if (this.scheduledAnalysisService) {
-      this.scheduledAnalysisService.runScheduledAnalysis(tenantId).catch((error) => {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`Scheduled analysis failed for tenant ${tenantId}: ${message}`);
-      });
+      const start = Date.now();
+      this.scheduledAnalysisService.runScheduledAnalysis(tenantId)
+        .then((run) => {
+          // Heartbeat so the scheduled-analysis loop is visible in the job monitor
+          // even when it skips (AI off / no automation toggles enabled).
+          void this.jobMonitor?.recordRun('scheduled-ai-analysis', {
+            label: 'Scheduled AI analysis', status: 'ok',
+            detail: run ? `tenant ${tenantId}: ${run.insights_found ?? 0} insight(s)` : `tenant ${tenantId}: skipped (AI off / no toggles)`,
+            durationMs: Date.now() - start,
+          });
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          this.logger.error(`Scheduled analysis failed for tenant ${tenantId}: ${message}`);
+          void this.jobMonitor?.recordRun('scheduled-ai-analysis', {
+            label: 'Scheduled AI analysis', status: 'error', detail: `tenant ${tenantId}: ${message}`,
+            durationMs: Date.now() - start,
+          });
+        });
     } else {
       this.logger.warn(
         `ScheduledAnalysisService not wired — skipping analysis for tenant ${tenantId}`,

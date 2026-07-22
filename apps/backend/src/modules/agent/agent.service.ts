@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleInit, Inject, Optional, forwardRef } from '@nestjs/common';
+import { Pool } from 'pg';
 import Ajv, { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
+import { DATABASE_POOL } from '../auth/database.provider';
 import type { ToolDefinition, ToolInvocation, ToolResult, ActionProposal } from './agent.types';
 import {
   registerTool,
@@ -39,9 +41,32 @@ export class AgentService implements OnModuleInit {
     private readonly auditService: AuditService,
     @Optional() private readonly agentToolsService?: AgentToolsService,
     @Optional() private readonly monitoring?: MonitoringService,
+    @Optional() @Inject(DATABASE_POOL) private readonly pool?: Pool,
   ) {
     this.ajv = new Ajv({ allErrors: true });
     addFormats(this.ajv);
+  }
+
+  /**
+   * Resolve a default outlet for tenant-wide actions when the caller has no
+   * outlet in context (e.g. a tenant_owner whose JWT carries outlet_id=null).
+   * Without this, EVERY action tool fails the outlet_id guard, so an owner-level
+   * co-pilot user can never execute or even propose an action. Picks the tenant's
+   * first active outlet. Returns null if the tenant has none (or no pool in tests).
+   */
+  private async resolveDefaultOutlet(tenantId: string): Promise<string | null> {
+    if (!this.pool) return null;
+    try {
+      const r = await this.pool.query<{ id: string }>(
+        `SELECT id FROM outlets WHERE tenant_id = $1 AND COALESCE(is_active, true) = true
+         ORDER BY created_at ASC LIMIT 1`,
+        [tenantId],
+      );
+      return r.rows[0]?.id ?? null;
+    } catch (e) {
+      this.logger.warn(`resolveDefaultOutlet(${tenantId}) failed: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
   }
 
   /**
@@ -117,9 +142,18 @@ export class AgentService implements OnModuleInit {
       return { success: false, error: 'tenant_id is required' };
     }
     // outlet_id is required for action tools (data scoping); read-only tools are exempt.
-    if (!tool.readOnly && (!outletId || outletId.trim() === '')) {
-      return { success: false, error: 'outlet_id is required' };
+    // When the caller has no outlet in context (e.g. a tenant_owner, outlet_id=null),
+    // fall back to the tenant's default outlet so owner-initiated actions aren't
+    // dead-on-arrival. Reads never need an outlet.
+    let effectiveOutletId = outletId;
+    if (!tool.readOnly && (!effectiveOutletId || effectiveOutletId.trim() === '')) {
+      effectiveOutletId = (await this.resolveDefaultOutlet(tenantId)) ?? '';
+      if (!effectiveOutletId) {
+        return { success: false, error: 'outlet_id is required (no active outlet found for this tenant)' };
+      }
     }
+    // Downstream execution/audit/proposal all use the resolved outlet.
+    const inv: ToolInvocation = { ...invocation, outletId: effectiveOutletId };
 
     // 3. Validate input parameters against tool's inputSchema (Req 5.6)
     const validationError = this.validateToolInput(tool, parameters);
@@ -129,13 +163,20 @@ export class AgentService implements OnModuleInit {
 
     // Read-only tools (the agent's "eyes") bypass toggle/approval gating.
     if (tool.readOnly) {
-      return this.executeWithRetry(invocation, tool);
+      return this.executeWithRetry(inv, tool);
     }
 
     // 4. Check automation toggle is enabled (Req 5.2)
     // Settings are re-loaded on each call, so mode changes apply immediately (Req 7.5)
     const settings = await this.loadSettingsForToggleCheck(tenantId, tool);
     if (!settings) {
+      // Record the gated attempt so a disabled action tool is visible in
+      // monitoring instead of vanishing silently.
+      await this.monitoring?.record({
+        tenantId, outletId: effectiveOutletId || null, kind: 'tool', name: toolName,
+        status: 'error', error: 'Automation not enabled (toggle off)',
+        metadata: { gated: true, reason: 'toggle_off' },
+      });
       return { success: false, error: 'Automation not enabled' };
     }
 
@@ -144,7 +185,7 @@ export class AgentService implements OnModuleInit {
 
     if (approvalMode === 'autonomous') {
       // Execute immediately and audit-log (Req 7.2, 7.3)
-      const result = await this.executeWithRetry(invocation, tool);
+      const result = await this.executeWithRetry(inv, tool);
 
       // Audit-log autonomous execution with action_type, parameters, reasoning, and result (Req 7.3)
       await this.auditService.log({
@@ -173,6 +214,14 @@ export class AgentService implements OnModuleInit {
         reasoning ?? 'AI-determined action awaiting approval',
         confidence ?? 0.5,
       );
+
+      // Record the proposal on the same monitoring feed as executed tools, so the
+      // approval-required path is not a blind spot (previously only autonomous /
+      // read tools produced a kind='tool' invocation row).
+      await this.monitoring?.record({
+        tenantId, outletId: effectiveOutletId || null, kind: 'tool', name: toolName,
+        status: 'success', metadata: { proposalId: proposal.id, status: 'proposal_created' },
+      });
 
       return {
         success: true,

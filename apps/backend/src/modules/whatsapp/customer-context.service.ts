@@ -42,6 +42,23 @@ export interface PublicInfo {
 export class CustomerContextService {
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
 
+  /**
+   * Per-category "what may the customer AI reveal" flags (agent_configs.customer_knowledge).
+   * Missing key = visible (backward compatible); only an explicit `false` hides a category.
+   * Gating lives HERE, in the single data gateway, so every surface (built-in agent,
+   * rigid templates, and the n8n bridge) honors the tenant's choices identically.
+   */
+  async getKnowledgeFlags(tenantId: string): Promise<Record<string, boolean>> {
+    const r = await this.pool.query<{ customer_knowledge: Record<string, boolean> | null }>(
+      `SELECT customer_knowledge FROM agent_configs WHERE tenant_id = $1`,
+      [tenantId],
+    );
+    return r.rows[0]?.customer_knowledge ?? {};
+  }
+  private catOn(flags: Record<string, boolean>, key: string): boolean {
+    return flags[key] !== false;
+  }
+
   /** Resolve a WhatsApp number to a customer within the tenant (or null = prospect). */
   async resolveCustomer(tenantId: string, rawPhone: string): Promise<ResolvedCustomer | null> {
     const digits = (rawPhone || '').replace(/@.*/, '');
@@ -193,6 +210,9 @@ export class CustomerContextService {
 
   /** Active (unredeemed) voucher codes for this customer's phone, with expiry. */
   async activeVoucherCodes(tenantId: string, normalizedPhone: string): Promise<{ code: string; expiryDate: string | null }[]> {
+    // Gated by the 'vouchers' category flag.
+    const flags = await this.getKnowledgeFlags(tenantId);
+    if (!this.catOn(flags, 'vouchers')) return [];
     const r = await this.pool.query(
       `SELECT t.code, b.expiry_date::text AS expiry_date
        FROM voucher_tickets t JOIN voucher_books b ON b.id = t.book_id
@@ -203,30 +223,40 @@ export class CustomerContextService {
     return r.rows.map((x: any) => ({ code: x.code, expiryDate: x.expiry_date ?? null }));
   }
 
-  /** Branch location + opening hours. With outletId: that branch (if active). Without: a short list of active branches. */
+  /** Branch location + hours + contact. Gated by the branches/opening_hours/branch_contact
+   *  category flags and per-outlet customer_visible. With outletId: that branch. Without: a list. */
   async getBranchInfo(tenantId: string, outletId?: string | null): Promise<
-    | { branch: { name: string; address: string | null; timezone: string | null; openingHours: unknown } }
-    | { branches: { name: string; address: string | null; openingHours: unknown }[] }
+    | { branch: { name: string; address: string | null; timezone: string | null; openingHours: unknown; phone: string | null; mapsUrl: string | null } | null }
+    | { branches: { name: string; address: string | null; openingHours: unknown; phone: string | null; mapsUrl: string | null }[]; note?: string }
   > {
+    const flags = await this.getKnowledgeFlags(tenantId);
+    if (!this.catOn(flags, 'branches')) {
+      return { branches: [], note: 'Branch info is not shared here — please ask our team.' };
+    }
+    const showHours = this.catOn(flags, 'opening_hours');
+    const showContact = this.catOn(flags, 'branch_contact');
+    const shape = (b: any) => ({
+      name: b.name,
+      address: b.address ?? null,
+      openingHours: showHours ? (b.opening_hours ?? null) : null,
+      phone: showContact ? (b.phone ?? null) : null,
+      mapsUrl: showContact ? (b.maps_url ?? null) : null,
+    });
     if (outletId) {
       const r = await this.pool.query(
-        `SELECT name, address, timezone, opening_hours FROM outlets WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+        `SELECT name, address, timezone, opening_hours, phone, maps_url FROM outlets
+         WHERE id = $1 AND tenant_id = $2 AND is_active = true AND customer_visible = true`,
         [outletId, tenantId],
       );
       const b = r.rows[0];
-      return {
-        branch: b
-          ? { name: b.name, address: b.address ?? null, timezone: b.timezone ?? null, openingHours: b.opening_hours ?? null }
-          : { name: '', address: null, timezone: null, openingHours: null },
-      };
+      return { branch: b ? { timezone: b.timezone ?? null, ...shape(b) } : null };
     }
     const r = await this.pool.query(
-      `SELECT name, address, opening_hours FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name LIMIT 10`,
+      `SELECT name, address, opening_hours, phone, maps_url FROM outlets
+       WHERE tenant_id = $1 AND is_active = true AND customer_visible = true ORDER BY name LIMIT 10`,
       [tenantId],
     );
-    return {
-      branches: r.rows.map((x: any) => ({ name: x.name, address: x.address ?? null, openingHours: x.opening_hours ?? null })),
-    };
+    return { branches: r.rows.map(shape) };
   }
 
   /**
@@ -313,32 +343,36 @@ export class CustomerContextService {
 
   /** Public, non-personal info every customer/prospect may see. */
   async getPublicInfo(tenantId: string, outletId?: string | null): Promise<PublicInfo> {
+    const flags = await this.getKnowledgeFlags(tenantId);
     const svcParams: unknown[] = [tenantId];
     let outletClause = '';
     if (outletId) {
       svcParams.push(outletId);
       outletClause = ` AND (outlet_id = $2 OR (outlet_id IS NULL AND (outlet_ids IS NULL OR outlet_ids = '{}')) OR $2 = ANY(outlet_ids))`;
     }
+    // Each category is gated by the tenant's customer_knowledge flag; within an
+    // enabled category, per-item customer_visible hides individual rows.
+    const empty = { rows: [] as any[] };
     const [services, plans, promotions] = await Promise.all([
-      this.pool.query(
+      this.catOn(flags, 'service_prices') ? this.pool.query(
         `SELECT name, business_unit, price FROM services
-         WHERE tenant_id = $1 AND is_active = true${outletClause}
+         WHERE tenant_id = $1 AND is_active = true AND customer_visible = true${outletClause}
          ORDER BY business_unit, sort_order, name LIMIT 60`,
         svcParams,
-      ),
-      this.pool.query(
+      ) : Promise.resolve(empty),
+      this.catOn(flags, 'membership_plans') ? this.pool.query(
         `SELECT name, price, duration_months FROM membership_plans
-         WHERE tenant_id = $1 AND is_active = true ORDER BY price LIMIT 20`,
+         WHERE tenant_id = $1 AND is_active = true AND customer_visible = true ORDER BY price LIMIT 20`,
         [tenantId],
-      ),
-      this.pool.query(
+      ) : Promise.resolve(empty),
+      this.catOn(flags, 'promotions') ? this.pool.query(
         `SELECT name FROM promotions
-         WHERE tenant_id = $1 AND is_active = true
+         WHERE tenant_id = $1 AND is_active = true AND customer_visible = true
            AND (start_date IS NULL OR start_date <= CURRENT_DATE)
            AND (end_date IS NULL OR end_date >= CURRENT_DATE)
          ORDER BY created_at DESC LIMIT 10`,
         [tenantId],
-      ).catch(() => ({ rows: [] as { name: string }[] })),
+      ).catch(() => empty) : Promise.resolve(empty),
     ]);
     return {
       services: services.rows.map((x: any) => ({ unit: x.business_unit, name: x.name, price: Number(x.price) })),

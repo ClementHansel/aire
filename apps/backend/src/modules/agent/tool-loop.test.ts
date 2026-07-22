@@ -34,9 +34,10 @@ describe('parseAction', () => {
     expect(a.kind).toBe('tool');
     expect(a.tool).toBe('get_my_summary');
   });
-  it('never leaks unparseable protocol JSON to the user', () => {
+  it('flags unparseable protocol JSON (no leak, no silent final)', () => {
     const a = parseAction('{"action":"tool","tool": get_x, oops not valid json}');
-    expect(a.kind).toBe('final');
+    expect(a.kind).toBe('unparseable');
+    expect(a.message).toBe('');
     expect(a.message).not.toContain('"action"');
   });
   it('extracts a tool call embedded after prose', () => {
@@ -88,6 +89,34 @@ describe('runToolLoop', () => {
     });
     expect(res.reply).toBeNull();
     expect(res.llmError).toBe(true);
+  });
+
+  it('re-prompts once on malformed protocol, then recovers to a final answer', async () => {
+    const llm = scriptedLlm([
+      '{"action":"tool", bogus not json}',        // unparseable → triggers one re-prompt
+      '{"action":"final","message":"recovered"}', // model corrects itself
+    ]);
+    const execute = vi.fn();
+    const res = await runToolLoop({
+      llm, tenantId: 't1',
+      messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
+      execute,
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(res.reply).toBe('recovered');
+    expect(res.llmError).toBe(false);
+  });
+
+  it('returns the surface fallback (never raw JSON) if malformed protocol persists', async () => {
+    const llm = scriptedLlm(['{"action":"tool", still bogus}']); // always unparseable
+    const res = await runToolLoop({
+      llm, tenantId: 't1',
+      messages: [{ role: 'system', content: 'sys' }],
+      execute: vi.fn(),
+      fallbackReply: 'FALLBACK',
+    });
+    expect(res.reply).toBe('FALLBACK');
+    expect(res.reply).not.toContain('action');
   });
 
   it('stops at the iteration cap without looping forever', async () => {

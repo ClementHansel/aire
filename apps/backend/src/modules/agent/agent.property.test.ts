@@ -1151,7 +1151,7 @@ describe('Feature: smart-automation, Property 21: Tenant Context Always Passed t
           });
 
           expect(result.success).toBe(false);
-          expect(result.error).toBe('outlet_id is required');
+          expect(result.error).toContain('outlet_id is required');
         },
       ),
       { numRuns: 100 },
@@ -1209,7 +1209,7 @@ describe('Feature: smart-automation, Property 21: Tenant Context Always Passed t
           });
 
           expect(result.success).toBe(false);
-          expect(result.error).toBe('outlet_id is required');
+          expect(result.error).toContain('outlet_id is required');
         },
       ),
       { numRuns: 100 },

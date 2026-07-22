@@ -5,14 +5,19 @@ import {
   Logger,
   BadRequestException,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { JobMonitorService } from '../job-monitor';
 
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
+
+/** Auto-broadcast scheduler sweep cadence — at boot, then every minute. */
+const SCHEDULE_SWEEP_MS = 60 * 1000;
 
 export type AudienceSegment = 'all' | 'members_active' | 'members_expired' | 'tag';
 
@@ -68,16 +73,77 @@ const CAMPAIGN_COLS = `id, tenant_id, name, message, audience_filter, status, sc
  * (per-recipient try/catch) and pausable (it stops when status leaves 'sending').
  */
 @Injectable()
-export class BroadcastService {
+export class BroadcastService implements OnModuleInit {
   private readonly logger = new Logger(BroadcastService.name);
   /** Campaign ids with an in-flight sender loop (double-start guard). */
   private readonly running = new Set<string>();
+  /** Overlap guard for the scheduled-campaign sweep. */
+  private schedulerSweeping = false;
 
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly whatsapp: WhatsappService,
     @Optional() private readonly eventBus?: EventBusService,
+    @Optional() private readonly jobMonitor?: JobMonitorService,
   ) {}
+
+  onModuleInit(): void {
+    // Promote due 'scheduled' campaigns to 'sending' at boot, then every minute.
+    // Dependency-free (no @nestjs/schedule), overlap-guarded, and unref'd so it
+    // never holds the process open — mirrors WhatsappService's approval SLA sweep.
+    void this.runScheduledSweep().catch((e) => this.logger.warn(`initial broadcast scheduler sweep failed: ${String(e)}`));
+    setInterval(() => {
+      void this.runScheduledSweep().catch((e) => this.logger.warn(`broadcast scheduler sweep failed: ${String(e)}`));
+    }, SCHEDULE_SWEEP_MS).unref?.();
+  }
+
+  /**
+   * Auto-broadcast scheduler: promotes every 'scheduled' campaign whose
+   * scheduled_at has arrived (any tenant) to 'sending' via the same
+   * materialize-recipients-then-runSender flow startCampaign uses. Safe to call
+   * manually (idempotent, overlap-guarded — re-checks each row's status is still
+   * 'scheduled' right before starting it, so a manual start/cancel always wins a race).
+   */
+  async runScheduledSweep(): Promise<number> {
+    if (this.schedulerSweeping) return 0;
+    this.schedulerSweeping = true;
+    const start = Date.now();
+    let started = 0;
+    try {
+      const due = await this.pool.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM broadcast_campaigns
+         WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()`,
+      );
+      for (const d of due.rows) {
+        if (this.running.has(d.id)) continue; // already has a sender loop somehow
+        try {
+          const row = await this.loadCampaign(d.tenant_id, d.id);
+          if (row.status !== 'scheduled') continue; // raced with a manual start/cancel
+          const includeNoConsent = String(row.include_no_consent) === 'true';
+          await this.beginSending(d.tenant_id, d.id, row, includeNoConsent);
+          started++;
+        } catch (e) {
+          this.logger.warn(`Broadcast auto-start failed for campaign ${d.id}: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+      if (started) this.logger.log(`Auto-broadcast scheduler: started ${started} campaign(s)`);
+      void this.jobMonitor?.recordRun('broadcast-scheduler', {
+        label: 'Auto-broadcast scheduler', status: 'ok',
+        detail: `${started} campaign(s) started`,
+        durationMs: Date.now() - start, intervalMs: SCHEDULE_SWEEP_MS,
+      });
+      return started;
+    } catch (e) {
+      void this.jobMonitor?.recordRun('broadcast-scheduler', {
+        label: 'Auto-broadcast scheduler', status: 'error',
+        detail: e instanceof Error ? e.message : String(e),
+        durationMs: Date.now() - start, intervalMs: SCHEDULE_SWEEP_MS,
+      });
+      throw e;
+    } finally {
+      this.schedulerSweeping = false;
+    }
+  }
 
   // ─── CRUD ───────────────────────────────────────────────────────────────────
 
@@ -245,6 +311,22 @@ export class BroadcastService {
     if (this.running.has(id)) throw new BadRequestException('Campaign is already sending');
 
     const includeNoConsent = dto.includeNoConsent === true;
+    await this.beginSending(tenantId, id, row, includeNoConsent);
+    return this.getCampaign(tenantId, id);
+  }
+
+  /**
+   * Resolve the audience, materialize the recipient queue, flip the campaign to
+   * 'sending', emit BroadcastStarted, and fire off the paced sender. Shared by
+   * the manual /start endpoint and the auto-broadcast scheduler sweep so both
+   * paths promote a campaign through the exact same machinery.
+   */
+  private async beginSending(
+    tenantId: string,
+    id: string,
+    row: Record<string, string>,
+    includeNoConsent: boolean,
+  ): Promise<void> {
     const filter = this.normalizeFilter(row.audience_filter);
     const recipients = await this.resolveAudience(tenantId, filter);
 
@@ -287,7 +369,6 @@ export class BroadcastService {
 
     // Fire-and-forget paced sender — must NOT block the request.
     void this.runSender(tenantId, id, String(row.message), Number(row.throttle_per_min));
-    return this.getCampaign(tenantId, id);
   }
 
   async pauseCampaign(tenantId: string, id: string): Promise<Record<string, unknown>> {

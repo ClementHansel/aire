@@ -48,6 +48,21 @@ interface MemberLookupResp {
   memberships: { id: string; planName: string; status: string; endDate: string }[];
 }
 
+/** A promo the cashier can opt into for the current cart (previewed server-side —
+ * never auto-applied; only ids the cashier checks are sent to createOrder). */
+interface PromoOption {
+  id: string;
+  name: string;
+  rewardType: string;
+  rewardValue: number;
+  amount: number;
+  memberOnly: boolean;
+  stackable: boolean;
+  minPurchase: number;
+  eligible: boolean;
+  reason?: string;
+}
+
 interface QueuePickEntry {
   id: string; plate: string | null; brand: string | null; model: string | null;
   customerName: string | null; customerPhone: string | null; businessUnit: string | null;
@@ -145,6 +160,12 @@ export default function NewOrderPage() {
   const [voucherInput, setVoucherInput] = useState('');
   const [voucherMsg, setVoucherMsg] = useState('');
   const [checkingVoucher, setCheckingVoucher] = useState(false);
+
+  // Promotions are no longer auto-applied — the cashier previews eligible promos
+  // for the current cart and explicitly ticks the ones to apply.
+  const [promoOptions, setPromoOptions] = useState<PromoOption[]>([]);
+  const [selectedPromoIds, setSelectedPromoIds] = useState<string[]>([]);
+  const [loadingPromos, setLoadingPromos] = useState(false);
 
   // payment state
   const [order, setOrder] = useState<CreatedOrder | null>(null);
@@ -379,6 +400,47 @@ export default function NewOrderPage() {
     setVoucherMsg('');
   };
 
+  // Preview eligible promos for the current cart. Re-runs whenever the cart or the
+  // attached member changes; nothing is auto-applied — the cashier must tick a promo.
+  useEffect(() => {
+    if (cart.length === 0) {
+      setPromoOptions([]);
+      setSelectedPromoIds([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingPromos(true);
+    api
+      .post<PromoOption[]>('/orders/promotions/preview', {
+        items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty })),
+        membershipId: membershipId ?? undefined,
+        operatingOutletId: operatingOutletId ?? undefined,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setPromoOptions(res);
+        // Drop selections that no longer exist or became ineligible (cart/member changed).
+        setSelectedPromoIds((prev) => prev.filter((id) => res.some((p) => p.id === id && p.eligible)));
+      })
+      .catch(() => { if (!cancelled) setPromoOptions([]); })
+      .finally(() => { if (!cancelled) setLoadingPromos(false); });
+    return () => { cancelled = true; };
+  }, [cart, membershipId, operatingOutletId]);
+
+  const togglePromo = (id: string) => {
+    const promo = promoOptions.find((p) => p.id === id);
+    if (!promo || !promo.eligible) return;
+    setSelectedPromoIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  // Naive sum of what the cashier selected — the server is authoritative on stacking
+  // (a non-stackable pick applies alone); the UI hints that below the promo list.
+  const promoDiscount = promoOptions
+    .filter((p) => selectedPromoIds.includes(p.id))
+    .reduce((sum, p) => sum + p.amount, 0);
+  const hasNonStackableSelected = selectedPromoIds.length > 1 &&
+    promoOptions.some((p) => selectedPromoIds.includes(p.id) && !p.stackable);
+
   const placeOrder = async () => {
     setError('');
     if (!openShift) {
@@ -398,6 +460,7 @@ export default function NewOrderPage() {
         salespersonName: salesperson.trim() || undefined,
         salespersonEmployeeId: salespersonEmployeeId || undefined,
         voucherCodes: voucherCodes.length ? voucherCodes : undefined,
+        promotionIds: selectedPromoIds.length ? selectedPromoIds : undefined,
         operatingOutletId: operatingOutletId ?? undefined,
         membershipId: membershipId ?? undefined,
         selectedPlate: selectedPlate ?? undefined,
@@ -443,6 +506,7 @@ export default function NewOrderPage() {
     setCart([]);
     setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
     setVoucherCodes([]); setVoucherInput(''); setVoucherMsg('');
+    setPromoOptions([]); setSelectedPromoIds([]);
     setOrder(null); setQr(null); setPolling(false); setPaying(false); setSelectedPmId(null);
     setQueueEntryId(null); setMembershipId(null); setSelectedPlate(null); setMemberBanner(null);
     setMemberExpiry(null); setMemberAlert(null); setFindInput('');
@@ -656,7 +720,58 @@ export default function NewOrderPage() {
           </div>
 
           <div className="border-t border-border pt-3 mt-3">
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('pos.new.promoSectionTitle', 'Promo')}</label>
+            {cart.length === 0 ? (
+              <p className="text-xs text-text-muted">{t('pos.new.promoAddItemsFirst', 'Add items to see available promos.')}</p>
+            ) : loadingPromos ? (
+              <p className="text-xs text-text-muted">{t('pos.new.promoLoading', 'Checking eligible promos…')}</p>
+            ) : promoOptions.length === 0 ? (
+              <p className="text-xs text-text-muted">{t('pos.new.promoNone', 'No promotions available for this cart.')}</p>
+            ) : (
+              <div className="space-y-1.5">
+                {promoOptions.map((p) => (
+                  <label
+                    key={p.id}
+                    className={`flex items-start gap-2 text-sm p-2 rounded-lg border ${
+                      p.eligible ? 'border-border cursor-pointer hover:border-primary-300' : 'border-border opacity-50 cursor-not-allowed'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      disabled={!p.eligible}
+                      checked={selectedPromoIds.includes(p.id)}
+                      onChange={() => togglePromo(p.id)}
+                    />
+                    <span className="flex-1 min-w-0">
+                      <span className="block font-medium text-text-primary">
+                        {p.name}
+                        {!p.stackable && <span className="ml-1.5 badge bg-amber-50 text-amber-700 text-[10px] align-middle">{t('pos.new.promoNonStackable', 'Not combinable')}</span>}
+                        {p.memberOnly && <span className="ml-1.5 badge bg-emerald-50 text-emerald-700 text-[10px] align-middle">{t('pos.new.promoMemberOnly', 'Member only')}</span>}
+                      </span>
+                      {p.eligible ? (
+                        <span className="block text-xs text-green-600">−{fmt(p.amount)}</span>
+                      ) : (
+                        <span className="block text-xs text-rose-500">{p.reason || t('pos.new.promoIneligible', 'Not eligible')}</span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {hasNonStackableSelected && (
+              <p className="mt-1.5 text-xs text-amber-600">
+                {t('pos.new.promoStackNote', 'Some selected promos cannot be combined — the system will apply only one non-stackable promo at checkout.')}
+              </p>
+            )}
+          </div>
+
+          <div className="border-t border-border pt-3 mt-3">
             <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium">{fmt(subtotal)}</span></div>
+            {promoDiscount > 0 && (
+              <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.promoSectionTitle', 'Promo')}</span><span className="font-medium text-green-600">−{fmt(promoDiscount)}</span></div>
+            )}
+            <div className="flex justify-between text-sm font-semibold mb-1"><span>{t('pos.new.estimatedTotal', 'Estimated total')}</span><span className="text-primary-600">{fmt(Math.max(0, subtotal - promoDiscount))}</span></div>
             <p className="text-xs text-text-muted mb-3">{t('pos.new.serviceChargeTaxNote', 'Service charge & tax calculated at order time.')}</p>
             <button onClick={placeOrder} disabled={placing || cart.length === 0 || !openShift} className="btn-primary w-full">
               {placing ? t('pos.new.placing', 'Placing…') : !openShift ? t('pos.new.openShiftFirst', 'Open a shift first') : t('pos.new.placeOrder', 'Place Order')}

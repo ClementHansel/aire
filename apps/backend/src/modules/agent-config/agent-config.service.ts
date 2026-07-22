@@ -51,6 +51,30 @@ export interface AdminBrainUpdateDto {
   maxMessagesPerDay?: number;
 }
 
+// ── Tenant-managed AI knowledge (product knowledge + what the customer AI shares) ──
+export const CUSTOMER_KNOWLEDGE_CATEGORIES = [
+  'service_prices', 'promotions', 'membership_plans', 'vouchers', 'branches', 'opening_hours', 'branch_contact',
+] as const;
+export type CustomerKnowledgeCategory = typeof CUSTOMER_KNOWLEDGE_CATEGORIES[number];
+
+export interface KnowledgeItem { id: string; name: string; customerVisible: boolean; }
+export interface KnowledgeOutlet { id: string; name: string; phone: string | null; mapsUrl: string | null; customerVisible: boolean; }
+export interface KnowledgeResponse {
+  productKnowledge: string | null;
+  skills: string | null;
+  /** Per-category visibility flags for the customer AI (see CUSTOMER_KNOWLEDGE_CATEGORIES). */
+  categories: Record<string, boolean>;
+  /** Per-item visibility (overrides within an enabled category). */
+  items: { services: KnowledgeItem[]; promotions: KnowledgeItem[]; plans: KnowledgeItem[]; outlets: KnowledgeOutlet[] };
+}
+export interface KnowledgeUpdateDto {
+  productKnowledge?: string | null;
+  skills?: string | null;
+  categories?: Record<string, boolean>;
+  itemVisibility?: { type: 'service' | 'promotion' | 'plan' | 'outlet'; id: string; visible: boolean }[];
+  outletContacts?: { id: string; phone?: string | null; mapsUrl?: string | null }[];
+}
+
 // Bahasa Indonesia defaults — kept identical to migration 074_agent_default_prompts.sql
 // (column DEFAULTs + backfill) so a tenant with no agent_configs row still shows/serves
 // the same working, grounded assistant the DB defaults to.
@@ -204,6 +228,70 @@ export class AgentConfigService {
    * and the admin brain path ({@link adminUpdateBrain}) so the SQL lives in
    * exactly one place.
    */
+  // ── Tenant-managed AI knowledge ─────────────────────────────────────────────
+
+  /** Read the product knowledge, skills, category flags, and per-item visibility. */
+  async getKnowledge(tenantId: string): Promise<KnowledgeResponse> {
+    const [cfg, svc, promo, plan, out] = await Promise.all([
+      this.pool.query('SELECT product_knowledge, skills, customer_knowledge FROM agent_configs WHERE tenant_id = $1', [tenantId]),
+      this.pool.query('SELECT id, name, customer_visible FROM services WHERE tenant_id = $1 AND is_active = true ORDER BY business_unit, sort_order, name', [tenantId]),
+      this.pool.query('SELECT id, name, customer_visible FROM promotions WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]),
+      this.pool.query('SELECT id, name, customer_visible FROM membership_plans WHERE tenant_id = $1 AND is_active = true ORDER BY price', [tenantId]),
+      this.pool.query('SELECT id, name, phone, maps_url, customer_visible FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name', [tenantId]),
+    ]);
+    const r = cfg.rows[0] ?? {};
+    const flags: Record<string, boolean> = r.customer_knowledge ?? {};
+    const categories: Record<string, boolean> = {};
+    for (const k of CUSTOMER_KNOWLEDGE_CATEGORIES) categories[k] = flags[k] !== false; // missing = visible
+    const item = (x: any): KnowledgeItem => ({ id: x.id, name: x.name, customerVisible: x.customer_visible !== false });
+    return {
+      productKnowledge: r.product_knowledge ?? null,
+      skills: r.skills ?? null,
+      categories,
+      items: {
+        services: svc.rows.map(item),
+        promotions: promo.rows.map(item),
+        plans: plan.rows.map(item),
+        outlets: out.rows.map((x: any) => ({ id: x.id, name: x.name, phone: x.phone ?? null, mapsUrl: x.maps_url ?? null, customerVisible: x.customer_visible !== false })),
+      },
+    };
+  }
+
+  /** Update product knowledge, skills, category flags, per-item visibility, and branch contacts. */
+  async setKnowledge(tenantId: string, dto: KnowledgeUpdateDto): Promise<KnowledgeResponse> {
+    if (dto.productKnowledge !== undefined || dto.skills !== undefined || dto.categories !== undefined) {
+      // Ensure a config row exists (defaults from migration 074/080), then update.
+      await this.pool.query('INSERT INTO agent_configs (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING', [tenantId]).catch(() => undefined);
+      const set: string[] = []; const v: unknown[] = [tenantId]; let i = 2;
+      if (dto.productKnowledge !== undefined) { set.push(`product_knowledge = $${i++}`); v.push(dto.productKnowledge); }
+      if (dto.skills !== undefined) { set.push(`skills = $${i++}`); v.push(dto.skills); }
+      if (dto.categories !== undefined) {
+        // Only persist known category keys, coerced to booleans; merged into existing flags.
+        const clean: Record<string, boolean> = {};
+        for (const k of CUSTOMER_KNOWLEDGE_CATEGORIES) if (k in dto.categories) clean[k] = !!dto.categories[k];
+        set.push(`customer_knowledge = COALESCE(customer_knowledge, '{}'::jsonb) || $${i++}::jsonb`); v.push(JSON.stringify(clean));
+      }
+      if (set.length) { set.push('updated_at = NOW()'); await this.pool.query(`UPDATE agent_configs SET ${set.join(', ')} WHERE tenant_id = $1`, v); }
+    }
+    // Per-item visibility overrides.
+    const TABLE: Record<string, string> = { service: 'services', promotion: 'promotions', plan: 'membership_plans', outlet: 'outlets' };
+    for (const it of dto.itemVisibility ?? []) {
+      const t = TABLE[it.type];
+      if (!t) continue;
+      await this.pool.query(`UPDATE ${t} SET customer_visible = $1 WHERE id = $2 AND tenant_id = $3`, [!!it.visible, it.id, tenantId]);
+    }
+    // Branch contacts (phone / maps link).
+    for (const c of dto.outletContacts ?? []) {
+      const set: string[] = []; const v: unknown[] = []; let i = 1;
+      if (c.phone !== undefined) { set.push(`phone = $${i++}`); v.push(c.phone); }
+      if (c.mapsUrl !== undefined) { set.push(`maps_url = $${i++}`); v.push(c.mapsUrl); }
+      if (!set.length) continue;
+      v.push(c.id, tenantId);
+      await this.pool.query(`UPDATE outlets SET ${set.join(', ')}, updated_at = NOW() WHERE id = $${i} AND tenant_id = $${i + 1}`, v);
+    }
+    return this.getKnowledge(tenantId);
+  }
+
   private async upsertAgentRow(tenantId: string, fields: {
     basePrompt?: string | null;
     productKnowledge?: string | null;

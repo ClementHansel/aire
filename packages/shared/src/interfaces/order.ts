@@ -35,6 +35,14 @@ export interface CreateOrderRequest {
   salespersonEmployeeId?: string;
   voucherCodes?: string[];
   membershipId?: string;
+  /**
+   * Promotions the cashier explicitly chose to apply. Promotions are NO LONGER
+   * auto-applied — checkout only applies the ids listed here, and each is
+   * re-validated server-side (active, in-window, quota, outlet, service trigger,
+   * min_purchase, and member_only vs the order's membership). Omitted/empty → no
+   * promo discount.
+   */
+  promotionIds?: string[];
   selectedPlate?: string;
   note?: string;
   /**
@@ -58,6 +66,32 @@ export interface CreateOrderRequest {
    */
   channel?: 'pos' | 'kiosk' | 'customer';
 }
+
+/** Request body for POST /api/orders/promotions/preview (POS promo picker). */
+export interface PromoPreviewRequest {
+  items: OrderItemInput[];
+  membershipId?: string;
+  operatingOutletId?: string;
+  voucherCodes?: string[];
+}
+
+/** One promotion the cashier may choose to apply, with its computed discount. */
+export interface PromoOption {
+  id: string;
+  name: string;
+  rewardType: string;
+  rewardValue: number;
+  /** Rupiah this promo would take off the current subtotal. */
+  amount: number;
+  memberOnly: boolean;
+  stackable: boolean;
+  minPurchase: number;
+  /** True when the order currently satisfies every gate (member/min/outlet/service). */
+  eligible: boolean;
+  /** Human-readable reason when not eligible (for the POS to show greyed-out). */
+  reason?: string;
+}
+
 
 /**
  * Pay order request body.

@@ -3,7 +3,7 @@ import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
-import { AgentConfigService, UpdateAgentConfigDto, UpdateBranchWaConfigDto } from './agent-config.service';
+import { AgentConfigService, UpdateAgentConfigDto, UpdateBranchWaConfigDto, KnowledgeUpdateDto } from './agent-config.service';
 
 @Controller('api/agent-config')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -19,6 +19,17 @@ export class AgentConfigController {
   @Put()
   update(@CurrentUser() user: JWTPayload, @Body() dto: UpdateAgentConfigDto) {
     return this.service.update(user.tenant_id, dto);
+  }
+
+  // ── Tenant-managed AI knowledge (product knowledge + customer-visibility) ────
+  @Get('knowledge')
+  getKnowledge(@CurrentUser() user: JWTPayload) {
+    return this.service.getKnowledge(user.tenant_id);
+  }
+
+  @Put('knowledge')
+  setKnowledge(@CurrentUser() user: JWTPayload, @Body() dto: KnowledgeUpdateDto) {
+    return this.service.setKnowledge(user.tenant_id, dto);
   }
 
   // ── Per-branch WhatsApp lines (only meaningful when perBranchWaEnabled) ──────

@@ -52,7 +52,9 @@ Rules:
 - When a TOOL_RESULT message is provided, use it to decide the next step.`;
 
 export interface ParsedAction {
-  kind: 'tool' | 'final';
+  /** 'unparseable' = the turn looked like protocol JSON but did not parse; the
+   *  loop should re-prompt for a valid object rather than treat it as an answer. */
+  kind: 'tool' | 'final' | 'unparseable';
   tool: string;
   parameters?: Record<string, unknown>;
   reasoning?: string;
@@ -110,9 +112,12 @@ export function parseAction(content: string): ParsedAction {
   }
 
   // Looks like the model tried to speak the protocol but we couldn't parse a
-  // valid action — do NOT echo raw JSON to the customer.
+  // valid action — do NOT echo raw JSON to the user, and do NOT silently pass it
+  // off as a final answer (that leaked a hardcoded, customer-voiced fallback into
+  // the staff surface). Signal 'unparseable' so runToolLoop can re-prompt for a
+  // valid protocol object, then fall back to a surface-appropriate message.
   if (txt.startsWith('{') && /"(action|tool)"\s*:/.test(txt)) {
-    return { kind: 'final', tool: '', message: 'Maaf kak, boleh diulangi pertanyaannya? 😊' };
+    return { kind: 'unparseable', tool: '', message: '' };
   }
 
   return { kind: 'final', tool: '', message: txt || 'OK' };
@@ -139,6 +144,10 @@ export interface RunToolLoopOptions {
   maxTokens?: number;
   /** Persistence hook, invoked after each tool executes. */
   onToolResult?: (tool: string, result: ToolResult) => Promise<void> | void;
+  /** Surface-appropriate message returned when the model keeps emitting protocol
+   *  JSON we cannot parse (after one corrective re-prompt). Defaults to a neutral,
+   *  persona-free line so the customer "Irene" voice never leaks into staff chat. */
+  fallbackReply?: string;
 }
 
 /**
@@ -155,8 +164,10 @@ export async function runToolLoop(opts: RunToolLoopOptions): Promise<ToolLoopRes
   const maxIterations = opts.maxIterations ?? 5;
   const temperature = opts.temperature ?? 0.4;
   const maxTokens = opts.maxTokens ?? 800;
+  const fallbackReply = opts.fallbackReply ?? 'Maaf, boleh diulangi lagi? / Sorry, could you rephrase that?';
 
   const toolsUsed: { tool: string; ok: boolean }[] = [];
+  let reprompted = false;
 
   for (let iter = 0; iter < maxIterations; iter++) {
     const res = await llm.chat(tenantId, messages, { temperature, max_tokens: maxTokens, outletId: outletId ?? null });
@@ -167,6 +178,23 @@ export async function runToolLoop(opts: RunToolLoopOptions): Promise<ToolLoopRes
     const action = parseAction(res.content);
     if (action.kind === 'final') {
       return { reply: action.message, toolsUsed, llmError: false };
+    }
+
+    // Malformed protocol: give the model exactly ONE chance to correct itself,
+    // otherwise return a safe, surface-appropriate line (never the raw JSON).
+    if (action.kind === 'unparseable') {
+      if (reprompted) {
+        return { reply: fallbackReply, toolsUsed, llmError: false };
+      }
+      reprompted = true;
+      messages.push({ role: 'assistant', content: res.content });
+      messages.push({
+        role: 'user',
+        content:
+          'SYSTEM: Your previous reply was not a valid PROTOCOL JSON object. ' +
+          'Reply with EXACTLY ONE JSON object — either {"action":"tool",...} or {"action":"final","message":"..."} — and nothing else.',
+      });
+      continue;
     }
 
     // Tool call: echo the model turn, run the tool, feed the result back.

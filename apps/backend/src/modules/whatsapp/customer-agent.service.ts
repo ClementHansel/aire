@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { LLMRouterService, ChatMessage } from '../agent/llm-router.service';
 import { runToolLoop, renderToolCatalog, TOOL_PROTOCOL } from '../agent/tool-loop';
+import { MonitoringService } from '../monitoring/monitoring.service';
 import type { ToolResult } from '../agent/agent.types';
 import type { AgentRole } from '../agent-registry/agent-registry.service';
 import { PendingBookingService } from './pending-booking.service';
@@ -43,6 +44,7 @@ export class CustomerAgentService {
     private readonly context: CustomerContextService,
     @Optional() private readonly llm?: LLMRouterService,
     @Optional() private readonly pendingBooking?: PendingBookingService,
+    @Optional() private readonly monitoring?: MonitoringService,
   ) {}
 
   /**
@@ -64,7 +66,11 @@ export class CustomerAgentService {
   }): Promise<CustomerReply | null> {
     if (!this.llm) return null;
     const role = params.persona?.role ?? 'personal_assistant';
-    const system = this.systemPrompt(params);
+    // First turn = the bot hasn't replied yet. history already contains the
+    // current inbound (saved before this runs), so length is never 0 — key off
+    // the absence of any prior assistant/outbound message instead.
+    const isFirstTurn = !(params.history ?? []).some((m) => m.role === 'assistant');
+    const system = this.systemPrompt({ ...params, isFirstTurn });
 
     let escalate = false;
     let bookingSummary: string | undefined;
@@ -81,6 +87,7 @@ export class CustomerAgentService {
       messages,
       temperature: 0.4,
       maxTokens: 500,
+      fallbackReply: 'Maaf kak, boleh diulangi pertanyaannya ya? 😊',
       execute: async (tool, toolParams) => {
         const result = await this.runCustomerTool({
           tenantId: params.tenantId,
@@ -101,7 +108,35 @@ export class CustomerAgentService {
     });
 
     if (loop.llmError || loop.reply == null) return null;
-    return { text: loop.reply, escalate, toolsUsed: loop.toolsUsed, bookingSummary };
+    // Deterministic safety net for the greeting: even with the turn-aware prompt,
+    // qwen sometimes re-opens follow-up replies with "Halo kak, aku Irene…". On
+    // any non-first turn, strip a leading greeting so we never repeat it.
+    const text = isFirstTurn ? loop.reply : this.stripLeadingGreeting(loop.reply);
+    return { text, escalate, toolsUsed: loop.toolsUsed, bookingSummary };
+  }
+
+  /**
+   * Remove a leading greeting/self-introduction from a follow-up reply. Cuts
+   * through the canonical greeting tail ("…ada yang bisa Irene bantu?") when
+   * present, else drops the first greeting sentence. Never returns empty.
+   */
+  private stripLeadingGreeting(text: string): string {
+    const t = text.trimStart();
+    if (!/^(halo|hai+|hallo|hi|hey|selamat\s+(pagi|siang|sore|malam))\b/i.test(t)) return text;
+    const trimLead = (s: string) => s.replace(/^[\s.,!?😊🙏✨🎉🚗🎫👋]+/u, '').trimStart();
+    // Cut through the end of the greeting sentence that contains "bantu"
+    // (e.g. "…ada yang bisa Irene bantu hari ini?"), not just the word itself.
+    const q = t.match(/bantu[^\n.!?]*[.!?\n]/i);
+    if (q && q.index !== undefined && q.index < 200) {
+      const rest = trimLead(t.slice(q.index + q[0].length));
+      if (rest) return rest;
+    }
+    const firstSentence = t.match(/^[^\n.!?]*[.!?\n]+/);
+    if (firstSentence) {
+      const rest = trimLead(t.slice(firstSentence[0].length));
+      if (rest) return rest;
+    }
+    return text;
   }
 
   /**
@@ -112,6 +147,34 @@ export class CustomerAgentService {
    * the ONLY identity used; nothing here trusts a customer id from tool params.
    */
   async runCustomerTool(args: {
+    tenantId: string;
+    customer: ResolvedCustomer | null;
+    fromPhone: string;
+    outletId?: string | null;
+    role: AgentRole;
+    tool: string;
+    parameters: Record<string, unknown>;
+  }): Promise<ToolResult> {
+    // Instrument every customer-scoped tool call so the customer agent is as
+    // observable in agent_invocations / AI Monitoring as the staff co-pilot.
+    // Without this the customer bot's tool layer is a monitoring blind spot
+    // (only the LLM round-trips get recorded).
+    const start = Date.now();
+    const result = await this.runCustomerToolInner(args);
+    await this.monitoring?.record({
+      tenantId: args.tenantId,
+      outletId: args.outletId ?? null,
+      kind: 'tool',
+      name: args.tool,
+      status: result.success ? 'success' : 'error',
+      durationMs: Date.now() - start,
+      error: result.success ? undefined : result.error,
+      metadata: { surface: 'customer', role: args.role },
+    });
+    return result;
+  }
+
+  private async runCustomerToolInner(args: {
     tenantId: string;
     customer: ResolvedCustomer | null;
     fromPhone: string;
@@ -225,7 +288,7 @@ export class CustomerAgentService {
 
   private systemPrompt(p: {
     basePrompt: string | null; knowledge: string | null; skills?: string | null; persona: CustomerAgentPersona | null;
-    customer: ResolvedCustomer | null; pub: PublicInfo;
+    customer: ResolvedCustomer | null; pub: PublicInfo; isFirstTurn?: boolean;
   }): string {
     const lines: string[] = [];
     // The base prompt owns identity & tone (e.g. "Kamu Irene, CS Aire"). Only fall
@@ -240,6 +303,11 @@ export class CustomerAgentService {
     if (p.basePrompt) lines.push(p.basePrompt);
     lines.push("Reply in the customer's language (Bahasa Indonesia by default). Be warm, friendly and natural — like a cheerful, helpful person, not a stiff bot. Keep messages short and WhatsApp-friendly. Format money as Rp.");
     lines.push(
+      p.isFirstTurn
+        ? 'GREETING: This is the FIRST message of the chat — greet warmly and introduce yourself by name once.'
+        : 'GREETING: This is a FOLLOW-UP in an ongoing chat — do NOT greet again and do NOT re-introduce yourself. Answer the question directly and warmly. Never begin with "Halo kak", "Hai", or "Aku Irene" — repeating the greeting on every message feels robotic.',
+    );
+    lines.push(
       'STRICT RULES: You may ONLY use the provided tools to look things up. ' +
       "The tools already scope to THIS customer — never ask for or trust a customer id. " +
       "Never reveal other customers' data, revenue/finance, staff, or company internals. " +
@@ -250,7 +318,8 @@ export class CustomerAgentService {
       'that is the ONLY way a booking is recorded. NEVER tell the customer a booking is made, saved, ' +
       'arranged, "disiapkan", or awaiting their YA confirmation UNLESS you actually called create_booking ' +
       'this turn and it succeeded. Do not describe the booking in a final answer instead of calling the tool. ' +
-      'If you are missing a required detail (service or date/time), ask ONE short question first — do not pretend to book.',
+      'If you are missing a required detail (service or date/time), ask ONE short question first — do not pretend to book. ' +
+      'But once you HAVE both a service and a date/time, call create_booking IMMEDIATELY in the same turn — do NOT ask the customer to re-confirm the details before calling it (the tool itself produces the YA/BATAL confirmation step).',
     );
     if (p.knowledge?.trim()) lines.push(`\nBUSINESS KNOWLEDGE:\n${p.knowledge.trim()}`);
     if (p.skills?.trim()) lines.push('\nSKILLS / PLAYBOOK:\n' + p.skills.trim());

@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../settings/settings.service';
+import { JobMonitorService } from '../job-monitor';
 
 /**
  * WhatsApp message payload to be sent via the WhatsApp Business API.
@@ -121,6 +122,7 @@ export class NotificationService {
   constructor(
     private readonly configService: ConfigService,
     @Optional() @Inject(SettingsService) private readonly settingsService?: SettingsService,
+    @Optional() @Inject(JobMonitorService) private readonly jobMonitor?: JobMonitorService,
   ) {
     this.whatsappApiUrl =
       this.configService.get<string>('WHATSAPP_API_URL') ?? 'https://api.whatsapp.business/v1';
@@ -321,6 +323,13 @@ export class NotificationService {
     }
 
     const result = await this.sendWhatsApp(message);
+
+    // Heartbeat so the in-process notification drain is visible in the job monitor.
+    void this.jobMonitor?.recordRun('notification-drain', {
+      label: 'Notification drain (WhatsApp)',
+      status: result.success ? 'ok' : 'error',
+      detail: result.success ? `sent ${job.type}` : `failed ${job.type}: ${result.error ?? 'unknown'}`,
+    });
 
     if (!result.success && job.attempts < job.maxAttempts - 1) {
       job.attempts++;

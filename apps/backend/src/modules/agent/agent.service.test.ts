@@ -166,6 +166,27 @@ describe('AgentService.executeTool', () => {
     expect(result.error).toContain('outlet_id is required');
   });
 
+  it('resolves the tenant default outlet when outlet_id is missing (owner path)', async () => {
+    // A tenant_owner has outlet_id=null; the action tool should still run by
+    // falling back to the tenant's first active outlet, not dead-end on the guard.
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'default-outlet-1' }] }) };
+    service = new AgentService(
+      mockSettingsService, mockProposalService, mockSchedulerService,
+      mockScheduledAnalysisService, mockAuditService, undefined, undefined, pool as any,
+    );
+    service.onModuleInit();
+    service.registerTool(TEST_TOOL);
+
+    const result = await service.executeTool({
+      toolName: 'test_tool', tenantId: 'tenant-123', outletId: '',
+      parameters: { message: 'hello', count: 5 },
+    });
+
+    expect(result.success).toBe(true);
+    // The default-outlet lookup was performed.
+    expect(pool.query).toHaveBeenCalled();
+  });
+
   it('should reject when input parameters fail schema validation (missing required field)', async () => {
     const invocation: ToolInvocation = {
       toolName: 'test_tool',

@@ -21,6 +21,7 @@ import {
   Role,
   CreateOrderRequest,
   PayOrderRequest,
+  PromoPreviewRequest,
 } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles, RequirePermission, RequiresOnboarding } from '../../common/decorators';
@@ -53,6 +54,23 @@ export class OrderController {
       throw new BadRequestException('customer name, phone, and at least one item are required');
     }
     return this.orderService.createOrder(body, user);
+  }
+
+  /**
+   * POST /api/orders/promotions/preview
+   * Lists the promotions applicable to the current cart with their computed
+   * discount + eligibility, so the cashier can CONFIRM which to apply. Promotions
+   * are no longer auto-applied — the selected ids are sent back on createOrder.
+   */
+  @Post('promotions/preview')
+  @HttpCode(HttpStatus.OK)
+  async previewPromotions(
+    @CurrentUser() user: JWTPayload,
+    @Body() body: PromoPreviewRequest,
+  ) {
+    if (!body?.items?.length) return [];
+    const outletId = body.operatingOutletId ?? user.outlet_id ?? undefined;
+    return this.orderService.previewPromotionsForCart(user.tenant_id, outletId, body.items, body.membershipId);
   }
 
   /**

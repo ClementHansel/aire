@@ -6,6 +6,8 @@ import { AgentRuntimeService } from './agent-runtime.service';
 import { PendingBookingService } from './pending-booking.service';
 import { CustomerContextService, ResolvedCustomer } from './customer-context.service';
 import { ChatMessage, LLMRouterService, LLMErrorResponse } from '../agent/llm-router.service';
+import { JobMonitorService } from '../job-monitor';
+import { normalizePhone } from '@aire/shared';
 
 /** Once-per-chat identity request, appended after the first reply to an unknown sender. */
 const IDENTITY_ASK =
@@ -95,6 +97,7 @@ export class WhatsappService implements OnModuleInit {
     @Optional() private readonly llm?: LLMRouterService,
     @Optional() private readonly pendingBooking?: PendingBookingService,
     @Optional() private readonly customerContext?: CustomerContextService,
+    @Optional() private readonly jobMonitor?: JobMonitorService,
   ) {}
 
   onModuleInit(): void {
@@ -116,6 +119,7 @@ export class WhatsappService implements OnModuleInit {
   async runApprovalSla(): Promise<number> {
     if (!this.pendingBooking || this.slaRunning) return 0;
     this.slaRunning = true;
+    const start = Date.now();
     try {
       const expired = await this.pendingBooking.sweepExpired();
       for (const e of expired) {
@@ -125,7 +129,19 @@ export class WhatsappService implements OnModuleInit {
         await this.sendText(e.tenantId, e.customerPhone, text);
       }
       if (expired.length) this.logger.log(`Approval SLA: auto-cancelled ${expired.length} stale booking(s)`);
+      void this.jobMonitor?.recordRun('booking-sla-sweep', {
+        label: 'Booking approval SLA sweep', status: 'ok',
+        detail: `${expired.length} stale booking(s) auto-cancelled`,
+        durationMs: Date.now() - start, intervalMs: APPROVAL_SLA_SWEEP_MS,
+      });
       return expired.length;
+    } catch (e) {
+      void this.jobMonitor?.recordRun('booking-sla-sweep', {
+        label: 'Booking approval SLA sweep', status: 'error',
+        detail: e instanceof Error ? e.message : String(e), durationMs: Date.now() - start,
+        intervalMs: APPROVAL_SLA_SWEEP_MS,
+      });
+      throw e;
     } finally {
       this.slaRunning = false;
     }
@@ -226,6 +242,18 @@ export class WhatsappService implements OnModuleInit {
 
   // ── Outbound ────────────────────────────────────────────────────────────────
   // outletId selects the branch line (per-branch WhatsApp); omit for the tenant line.
+  /**
+   * Build a WhatsApp chatId from a phone/JID, normalizing Indonesian local format
+   * (leading 0) to canonical 62… — WAHA cannot route "08xx@c.us". Fixes outbound
+   * to any number stored in local format (payment/voucher/broadcast/booking notes).
+   */
+  private toChatId(to: string): string {
+    if (to.includes('@')) return to;
+    const { normalized, valid } = normalizePhone(to);
+    const digits = valid && normalized ? normalized : to.replace(/[^0-9]/g, '');
+    return `${digits}@c.us`;
+  }
+
   async sendText(tenantId: string, to: string, text: string, outletId?: string | null): Promise<boolean> {
     const cfg = await this.config(tenantId, outletId);
     if (!cfg) return false;
@@ -244,11 +272,14 @@ export class WhatsappService implements OnModuleInit {
         return res.ok;
       }
       const session = cfg.waha_session || 'default';
-      const chatId = to.includes('@') ? to : `${to.replace(/[^0-9]/g, '')}@c.us`;
+      const chatId = this.toChatId(to);
       const res = await fetch(`${this.wahaUrl}/api/sendText`, {
         method: 'POST', headers: this.wahaHeaders(true),
         body: JSON.stringify({ session, chatId, text }),
       });
+      // Surface delivery failures instead of swallowing them — a locally-formatted
+      // number that reaches WAHA unroutable (the old bug) used to fail silently.
+      if (!res.ok) this.logger.warn(`WA send to ${chatId} failed: HTTP ${res.status}`);
       return res.ok;
     } catch (e) { this.logger.warn(`WA send failed: ${String(e)}`); return false; }
   }
@@ -302,7 +333,7 @@ export class WhatsappService implements OnModuleInit {
   private async recordMockOutbox(tenantId: string, cfg: AgentCfgRow, to: string, text: string): Promise<boolean> {
     const provider = cfg.wa_provider === 'kapso' ? 'kapso' : 'waha';
     const session = provider === 'waha' ? (cfg.waha_session || 'default') : null;
-    const chatId = to.includes('@') ? to : `${to.replace(/[^0-9]/g, '')}@c.us`;
+    const chatId = this.toChatId(to);
     try {
       await this.pool.query(
         `INSERT INTO wa_mock_outbox (tenant_id, provider, chat_id, to_phone, body, session) VALUES ($1,$2,$3,$4,$5,$6)`,

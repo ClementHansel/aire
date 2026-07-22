@@ -19,7 +19,7 @@ import {
   Tags, CreditCard, Package, ShoppingBag, ShoppingCart, Wallet, ArrowLeftRight,
   UsersRound, Banknote, Bot, Workflow, BrainCircuit, MessageSquare,
   RadioTower, KeyRound, Settings, LogOut, Tablet, ClipboardCheck, LineChart, Car, Landmark, ChefHat, BookOpen, MonitorSmartphone, Cctv, ScrollText, Coins, Rocket,
-  FileType, Waypoints, HardDrive,
+  FileType, Waypoints, HardDrive, Brain,
   RotateCcw, Star, Megaphone, HandCoins, Barcode, type LucideIcon,
 } from 'lucide-react';
 
@@ -109,6 +109,7 @@ const navSections: NavSection[] = [
       { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: Bot, module: 'ai_assistant' },
       { id: 'agents', label: 'Agent Workflow', href: '/dashboard/agents', icon: Workflow, module: 'ai_assistant' },
       { id: 'ai-agent', label: 'WhatsApp', href: '/dashboard/ai-agent', icon: BrainCircuit, module: 'whatsapp' },
+      { id: 'knowledge', label: 'AI Knowledge', href: '/dashboard/knowledge', icon: Brain, module: 'whatsapp', roles: ['tenant_owner'] },
       { id: 'conversations', label: 'Conversations', href: '/dashboard/conversations', icon: MessageSquare, module: 'whatsapp' },
       { id: 'monitoring', label: 'AI Monitoring', href: '/dashboard/monitoring', icon: RadioTower, module: 'whatsapp' },
     ],
