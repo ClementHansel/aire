@@ -184,7 +184,7 @@ async function seed(): Promise<void> {
           3,
           500000,
           ARRAY['44444444-4444-4444-4444-444444444401'::uuid, '44444444-4444-4444-4444-444444444402'::uuid],
-          true
+          false
         ),
         (
           '66666666-6666-6666-6666-666666666602',
@@ -196,11 +196,14 @@ async function seed(): Promise<void> {
           2,
           275000,
           ARRAY['44444444-4444-4444-4444-444444444401'::uuid],
-          true
+          false
         )
       ON CONFLICT DO NOTHING;
     `, [tenantId]);
-    console.log('  ✓ Membership plans created (2)');
+    // Seeded inactive: the real AIRE catalog is "Unlimited Wash" (migration 018) +
+    // the 10x voucher pack. "Silver/Gold" were placeholder demo tiers that don't
+    // exist for AIRE (client feedback 2026-07-22) — kept for schema demo but hidden.
+    console.log('  ✓ Membership plans seeded (Silver/Gold inactive; Unlimited via migration 018)');
 
     // Voucher Templates (sellable packs)
     await client.query(`

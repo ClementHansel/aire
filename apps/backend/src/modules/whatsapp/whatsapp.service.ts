@@ -457,6 +457,11 @@ export class WhatsappService implements OnModuleInit {
     // and BIND it to the chat; (3) if still unknown, Irene asks once (see below).
     let boundCustomer: ResolvedCustomer | null = null;
     let justIdentified = false;
+    // True only when we resolved them from an identifier they TYPED (phone/member
+    // no./plate) — i.e. a reply to the identity ask. When their own phone number
+    // simply matched a member on a normal question, this stays false so we answer
+    // the question in the same turn instead of stopping at a bare "got it" ack.
+    let identifiedFromText = false;
     // Name to greet by when the sender isn't a resolved member (their WA push
     // name, or a name they typed like "I'm Hansel").
     let displayNameHint: string | null = conv.customer_name ?? null;
@@ -465,12 +470,12 @@ export class WhatsappService implements OnModuleInit {
         boundCustomer = await this.customerContext.resolveById(tenantId, conv.identified_customer_id);
       }
       if (!boundCustomer) {
-        const found =
-          (await this.customerContext.resolveIdentityFromText(tenantId, inboundText))
-          ?? (await this.customerContext.resolveCustomer(tenantId, senderPhone));
+        const fromText = await this.customerContext.resolveIdentityFromText(tenantId, inboundText);
+        const found = fromText ?? (await this.customerContext.resolveCustomer(tenantId, senderPhone));
         if (found) {
           boundCustomer = found;
           justIdentified = true;
+          identifiedFromText = !!fromText;
           await this.bindConversationCustomer(conv.id, found);
         } else {
           // Not a member (yet) — but if they introduced themselves, remember the
@@ -484,9 +489,12 @@ export class WhatsappService implements OnModuleInit {
       }
     }
 
-    // If they just told us who they are, acknowledge warmly and stop — the next
-    // message carries their actual question (and now resolves to their account).
-    if (justIdentified && boundCustomer) {
+    // If they REPLIED WITH AN IDENTIFIER (phone/member no./plate) to the identity
+    // ask, that reply carried no real question — acknowledge warmly and stop; their
+    // next message carries the question (now resolved to their account). But when
+    // their own phone simply matched a member on a normal question, DON'T stop:
+    // fall through so the agent answers that question in the same turn.
+    if (justIdentified && boundCustomer && identifiedFromText) {
       const ack = `Makasih kak ${boundCustomer.name}! 😊 Sekarang Irene sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa Irene bantu?`;
       await this.addMessage(tenantId, conv.id, 'outbound', ack, true, 'Irene');
       await this.sendText(tenantId, params.from, ack, outletId);

@@ -25,7 +25,6 @@ describe('ReportService', () => {
             paid_count: '20',
             cancelled_count: '3',
             unique_members: '8',
-            new_members: '2',
           },
         ],
       });
@@ -54,6 +53,10 @@ describe('ReportService', () => {
           { service_id: 'svc-2', name: 'Basic Wash', total_quantity: '10', total_revenue: '1000000.00' },
         ],
       });
+
+      // New-members count — fires LAST (getOverviewStats issues it after awaiting
+      // the overview query, so it lands after the parallel payment/BU/service calls).
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '2' }] });
 
       const result = await reportService.getSummary('tenant-1', {
         dateFrom: '2024-01-01',
@@ -90,13 +93,13 @@ describe('ReportService', () => {
             paid_count: '0',
             cancelled_count: '0',
             unique_members: '0',
-            new_members: '0',
           },
         ],
       });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '0' }] }); // new-members count (fires last)
 
       const result = await reportService.getSummary('tenant-1', {
         dateFrom: '2024-01-01',
@@ -123,10 +126,10 @@ describe('ReportService', () => {
             paid_count: '4',
             cancelled_count: '1',
             unique_members: '2',
-            new_members: '1',
           },
         ],
       });
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '1' }] }); // new-members count
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
@@ -137,9 +140,9 @@ describe('ReportService', () => {
         outletIds: ['outlet-123'],
       });
 
-      // Overview, payment, business-unit, and service queries all receive the
-      // scoped outlet ids (passed as a single uuid[] parameter).
-      expect(mockPool.query).toHaveBeenCalledTimes(4);
+      // Overview, new-members, payment, business-unit, and service queries all
+      // receive the scoped outlet ids (passed as a single uuid[] parameter).
+      expect(mockPool.query).toHaveBeenCalledTimes(5);
       for (const call of mockPool.query.mock.calls) {
         expect(call[1]).toContainEqual(['outlet-123']);
       }
@@ -154,10 +157,10 @@ describe('ReportService', () => {
             paid_count: '8',
             cancelled_count: '2',
             unique_members: '4',
-            new_members: '1',
           },
         ],
       });
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '1' }] }); // new-members count
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       mockPool.query.mockResolvedValueOnce({ rows: [] });

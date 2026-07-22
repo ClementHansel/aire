@@ -299,20 +299,33 @@ export class ReportService {
       paid_count: string;
       cancelled_count: string;
       unique_members: string;
-      new_members: string;
     }>(
       `SELECT
         COUNT(*)::int AS total_orders,
         COALESCE(SUM(CASE WHEN status IN ('paid', 'confirmed', 'completed') THEN total ELSE 0 END), 0) AS revenue,
         COUNT(CASE WHEN status IN ('paid', 'confirmed', 'completed') THEN 1 END)::int AS paid_count,
         COUNT(CASE WHEN status = 'cancelled' THEN 1 END)::int AS cancelled_count,
-        COUNT(DISTINCT CASE WHEN membership_id IS NOT NULL THEN customer_id END)::int AS unique_members,
-        COUNT(DISTINCT CASE WHEN membership_id IS NOT NULL AND status IN ('paid', 'confirmed', 'completed') THEN membership_id END)::int AS new_members
+        COUNT(DISTINCT CASE WHEN membership_id IS NOT NULL THEN customer_id END)::int AS unique_members
        FROM orders
        WHERE created_at >= $1::timestamptz
          AND created_at < ($2::date + INTERVAL '1 day')
          ${filter}`,
       queryParams,
+    );
+
+    // New members = memberships actually SIGNED UP (created) in the window, counted
+    // from the memberships table — NOT from orders. Counting members who transacted
+    // (the old query) merely re-derived uniqueMembers. Scoped by the membership's
+    // home outlet when an outlet filter is applied.
+    const nmParams: unknown[] = [dateFrom, dateTo, tenantId];
+    let nmFilter = '';
+    if (outletIds != null) { nmParams.push(outletIds); nmFilter = ` AND home_outlet_id = ANY($${nmParams.length}::uuid[])`; }
+    const nm = await this.pool.query<{ n: string }>(
+      `SELECT COUNT(*)::int AS n FROM memberships
+       WHERE tenant_id = $3
+         AND created_at >= $1::timestamptz
+         AND created_at < ($2::date + INTERVAL '1 day')${nmFilter}`,
+      nmParams,
     );
 
     const row = result.rows[0]!;
@@ -322,7 +335,7 @@ export class ReportService {
       paidCount: parseInt(row.paid_count, 10),
       cancelledCount: parseInt(row.cancelled_count, 10),
       uniqueMembers: parseInt(row.unique_members, 10),
-      newMembers: parseInt(row.new_members, 10),
+      newMembers: parseInt(nm.rows[0]?.n ?? '0', 10),
     };
   }
 

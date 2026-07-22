@@ -26,8 +26,6 @@ import {
   MembershipBenefit,
   assignCustomerTags,
   CustomerTag,
-  checkQuota,
-  MembershipStatus,
   ERR_VALIDATION_FAILED,
   VoucherType,
   VoucherData,
@@ -261,8 +259,7 @@ export class OrderService {
     let membershipQuotaWarning: string | undefined;
     let membershipBenefits: MembershipBenefit[] = [];
     if (request.membershipId) {
-      const plate = request.selectedPlate ?? request.customer.licensePlate ?? '';
-      const meta = await this.getMembershipBenefits(request.membershipId, plate);
+      const meta = await this.getMembershipBenefits(request.membershipId);
       membershipQuotaWarning = meta.quotaWarning;
       membershipBenefits = meta.benefits;
     }
@@ -1558,7 +1555,6 @@ export class OrderService {
    */
   private async getMembershipBenefits(
     membershipId: string,
-    plate: string,
   ): Promise<{ benefits: MembershipBenefit[]; homeOutletId: string | null; settlementAmount: number; quotaWarning?: string }> {
     // Look up the membership and its plan. Benefits require status 'active' AND a
     // paid period that hasn't ended — a date-expired-but-stale-'active' row (or a
@@ -1575,44 +1571,41 @@ export class OrderService {
 
     const membership = membershipResult.rows[0]!;
 
-    // Quota gate (handbook §5.2): enforce the plan's daily limit (per plate) and
-    // lifetime quota, both keyed to the Jakarta business day (resets 00:00 WIB).
-    // If the member is over their daily limit or has exhausted their lifetime
-    // quota, we grant NO benefit here — pricing then charges the normal price and
-    // the POS surfaces the returned quotaWarning. Consumption itself is recorded
-    // at payment (see payOrder → recordMembershipConsumption).
-    const plateNorm = (plate ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const currentDateWIB = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-    const todayUsages = await this.pool.query<{ plate_normalized: string; used_at_wib: string }>(
-      `SELECT plate_normalized,
-              to_char(used_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD"T"HH24:MI:SS') AS used_at_wib
-       FROM membership_usages
-       WHERE membership_id = $1 AND reversed = false
-         AND (used_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
-      [membershipId],
-    );
-    const quota = checkQuota(
-      {
-        membershipId: membership.id,
-        usesCount: membership.uses_count ?? 0,
-        // max_uses <= 0 (or null) means "unlimited" — never block on lifetime quota.
-        maxUses: membership.max_uses && membership.max_uses > 0 ? membership.max_uses : Number.MAX_SAFE_INTEGER,
-        dailyLimit: membership.daily_limit ?? 1,
-        status: (membership.status as MembershipStatus) ?? MembershipStatus.Active,
-      },
-      plateNorm,
-      todayUsages.rows.map((r) => ({ plateNormalized: r.plate_normalized, usedAt: r.used_at_wib })),
-      currentDateWIB,
-    );
-    if (!quota.canUse) {
+    // Quota gate (handbook §5.2): enforce the plan's daily limit and lifetime quota,
+    // keyed to the Jakarta business day (resets 00:00 WIB). If the member is over
+    // their daily limit or has exhausted their lifetime quota, we grant NO benefit
+    // here — pricing then charges the normal price and the POS surfaces the returned
+    // quotaWarning. Consumption itself is recorded at payment.
+    //
+    // IMPORTANT: the daily limit is PER MEMBERSHIP, not per plate. An Unlimited plan
+    // covers up to `max_plates` (e.g. 3) vehicles but still allows only `daily_limit`
+    // (e.g. 1) free wash PER DAY across ALL of them — washing plate B today consumes
+    // the day's allowance for plates B, C and D alike. So we count today's usages for
+    // the whole membership (any plate), not just the plate being rung up now.
+    const maxUses = membership.max_uses && membership.max_uses > 0 ? membership.max_uses : Number.MAX_SAFE_INTEGER;
+    const dailyLimit = membership.daily_limit ?? 1;
+
+    if ((membership.uses_count ?? 0) >= maxUses) {
       return {
         benefits: [],
         homeOutletId: membership.home_outlet_id ?? null,
         settlementAmount: 0,
-        quotaWarning:
-          quota.reason === 'daily_limit_reached'
-            ? 'Kendaraan ini sudah cuci hari ini — batas harian membership tercapai. Dikenakan harga normal.'
-            : 'Kuota membership sudah habis. Dikenakan harga normal.',
+        quotaWarning: 'Kuota membership sudah habis. Dikenakan harga normal.',
+      };
+    }
+
+    const dailyUsed = await this.pool.query(
+      `SELECT COUNT(*)::int AS n FROM membership_usages
+       WHERE membership_id = $1 AND reversed = false
+         AND (used_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+      [membershipId],
+    );
+    if ((dailyUsed.rows[0]?.n ?? 0) >= dailyLimit) {
+      return {
+        benefits: [],
+        homeOutletId: membership.home_outlet_id ?? null,
+        settlementAmount: 0,
+        quotaWarning: 'Membership ini sudah dipakai cuci hari ini — batas harian tercapai (berlaku untuk semua mobil di membership ini). Dikenakan harga normal.',
       };
     }
 
