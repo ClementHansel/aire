@@ -26,6 +26,12 @@ interface OrderRow {
   status: string;
   total: string;
   created_at: string;
+  subtotal?: string;
+  service_charge?: string;
+  tax?: string;
+  voucher_discount?: string;
+  promo_discount?: string;
+  payment_method?: string | null;
 }
 
 /**
@@ -104,7 +110,13 @@ export class OrderListService {
         u.name AS operator_name,
         o.status,
         o.total::text,
-        o.created_at::text
+        o.created_at::text,
+        o.subtotal::text,
+        o.service_charge::text,
+        o.tax::text,
+        o.voucher_discount::text,
+        o.promo_discount::text,
+        o.payment_method
       FROM orders o
       JOIN users u ON o.operator_id = u.id
       ${whereClause}
@@ -150,6 +162,12 @@ export class OrderListService {
       operatorName: row.operator_name,
       status: row.status as OrderStatus,
       items: itemsByOrder[row.id] ?? [],
+      subtotal: row.subtotal != null ? parseFloat(row.subtotal) : 0,
+      serviceCharge: row.service_charge != null ? parseFloat(row.service_charge) : 0,
+      tax: row.tax != null ? parseFloat(row.tax) : 0,
+      voucherDiscount: row.voucher_discount != null ? parseFloat(row.voucher_discount) : 0,
+      promoDiscount: row.promo_discount != null ? parseFloat(row.promo_discount) : 0,
+      paymentMethod: row.payment_method ?? null,
       total: parseFloat(row.total),
       createdAt: row.created_at,
     }));

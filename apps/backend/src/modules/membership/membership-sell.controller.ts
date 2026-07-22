@@ -21,7 +21,16 @@ import { PlateRegistrationDto } from './dto';
 
 interface SellMembershipBody {
   planId: string;
-  customer: { name: string; phone: string; email?: string };
+  customer: {
+    name: string;
+    phone: string;
+    email?: string;
+    /** Optional vehicle captured at sale time — stored on the fee order so the
+     *  plate-registration step can pre-fill its first row from it. */
+    licensePlate?: string;
+    vehicleBrand?: string;
+    vehicleModel?: string;
+  };
 }
 
 interface ActivateBody {
@@ -98,7 +107,10 @@ export class MembershipSellController {
 
     // Create the customer + pending order atomically.
     const client = await this.checkout.db.connect();
-    let order: { id: string; orderNumber: string; total: number };
+    let order: {
+      id: string; orderNumber: string; total: number;
+      licensePlate?: string; vehicleBrand?: string; vehicleModel?: string;
+    };
     let customerId: string;
     try {
       await client.query('BEGIN');
@@ -115,6 +127,9 @@ export class MembershipSellController {
         customerPhone: body.customer.phone.trim(),
         total: plan.price,
         note: `Membership: ${plan.name}`,
+        licensePlate: body.customer.licensePlate,
+        vehicleBrand: body.customer.vehicleBrand,
+        vehicleModel: body.customer.vehicleModel,
       });
       await client.query('COMMIT');
     } catch (err) {
@@ -142,10 +157,10 @@ export class MembershipSellController {
 
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
-  async activate(@Param('id') id: string, @Body() body: ActivateBody) {
+  async activate(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: ActivateBody) {
     if (!Array.isArray(body.plates) || body.plates.length === 0) {
       throw new BadRequestException('At least one plate is required to activate the membership');
     }
-    return this.sellService.activateMembership(id, { plates: body.plates });
+    return this.sellService.activateMembership(id, { plates: body.plates }, user.tenant_id, user.sub);
   }
 }

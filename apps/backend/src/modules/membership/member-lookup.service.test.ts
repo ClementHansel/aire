@@ -23,6 +23,7 @@ describe('MemberLookupService', () => {
     uses_count: 5,
     max_uses: 30,
     daily_limit: 1,
+    max_plates: 3,
     free_service_ids: ['svc-1', 'svc-2'],
     discounted_services: [{ serviceId: 'svc-3', discountPct: 20 }],
   };
@@ -36,6 +37,7 @@ describe('MemberLookupService', () => {
     uses_count: 2,
     max_uses: 60,
     daily_limit: 2,
+    max_plates: 5,
     free_service_ids: ['svc-4'],
     discounted_services: null,
   };
@@ -78,6 +80,7 @@ describe('MemberLookupService', () => {
       expect(result!.customer.phone).toBe('6281234567890');
       expect(result!.memberships).toHaveLength(1);
       expect(result!.memberships[0]!.planName).toBe('Gold Plan');
+      expect(result!.memberships[0]!.maxPlates).toBe(3);
 
       // Verify the normalized phone was used in the query
       const firstQuery = mockPool.query.mock.calls[0];

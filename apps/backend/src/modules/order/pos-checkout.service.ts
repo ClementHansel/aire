@@ -10,6 +10,9 @@ export interface PackOrderResult {
   orderNumber: string;
   total: number;
   customerId: string;
+  licensePlate?: string;
+  vehicleBrand?: string;
+  vehicleModel?: string;
 }
 
 /**
@@ -102,6 +105,11 @@ export class PosCheckoutService {
       note: string;
       paidNow?: boolean;
       paymentMethod?: string;
+      /** Vehicle captured at sale time (e.g. membership sign-up) — stored on
+       *  the order so the plate-registration step can pre-fill from it. */
+      licensePlate?: string;
+      vehicleBrand?: string;
+      vehicleModel?: string;
     },
   ): Promise<Omit<PackOrderResult, 'customerId'>> {
     const orderNumber = await this.generateOrderNumber(client, user.outlet_id!);
@@ -109,15 +117,21 @@ export class PosCheckoutService {
     const status = paidNow ? 'paid' : 'ordered';
     const paymentMethod = paidNow ? (params.paymentMethod ?? 'cash') : null;
     const amountReceived = paidNow ? params.total : null;
+    const licensePlate = params.licensePlate?.trim() || null;
+    const vehicleBrand = params.vehicleBrand?.trim() || null;
+    const vehicleModel = params.vehicleModel?.trim() || null;
 
-    const res = await client.query<{ id: string; order_number: string; total: string }>(
+    const res = await client.query<{
+      id: string; order_number: string; total: string;
+      license_plate: string | null; vehicle_brand: string | null; vehicle_model: string | null;
+    }>(
       `INSERT INTO orders
         (tenant_id, outlet_id, operator_id, customer_id, order_number, status,
-         customer_name, customer_phone, subtotal, total, note,
-         payment_method, amount_received, paid_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11, $12,
+         customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
+         subtotal, total, note, payment_method, amount_received, paid_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15,
                CASE WHEN $6 = 'paid' THEN NOW() ELSE NULL END)
-       RETURNING id, order_number, total`,
+       RETURNING id, order_number, total, license_plate, vehicle_brand, vehicle_model`,
       [
         user.tenant_id,
         user.outlet_id,
@@ -127,6 +141,9 @@ export class PosCheckoutService {
         status,
         params.customerName,
         params.customerPhone,
+        licensePlate,
+        vehicleBrand,
+        vehicleModel,
         params.total,
         params.note,
         paymentMethod,
@@ -141,7 +158,14 @@ export class PosCheckoutService {
       [order.id, status, user.sub],
     );
 
-    return { id: order.id, orderNumber: order.order_number, total: parseFloat(order.total) };
+    return {
+      id: order.id,
+      orderNumber: order.order_number,
+      total: parseFloat(order.total),
+      licensePlate: order.license_plate ?? undefined,
+      vehicleBrand: order.vehicle_brand ?? undefined,
+      vehicleModel: order.vehicle_model ?? undefined,
+    };
   }
 
   /** Expose the pool for callers needing a transaction client. */

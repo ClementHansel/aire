@@ -5,6 +5,15 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
+interface OutletSettings {
+  service_charge_pct?: number;
+  tax_pct?: number;
+  free_void_window_minutes?: number;
+  /** Owner cap on the cashier's per-line manual discount, 0-1 fraction (e.g. 0.3 = 30%). */
+  max_manual_discount_pct?: number;
+  [key: string]: unknown;
+}
+
 interface Branch {
   id: string;
   name: string;
@@ -15,18 +24,23 @@ interface Branch {
   phone: string | null;
   mapsUrl: string | null;
   isActive: boolean;
+  settings?: OutletSettings;
 }
 
 interface LegalEntity { id: string; name: string; isActive: boolean }
 
-interface FormState { name: string; code: string; legalEntityId: string; address: string; phone: string; mapsUrl: string }
-const EMPTY: FormState = { name: '', code: '', legalEntityId: '', address: '', phone: '', mapsUrl: '' };
+interface FormState { name: string; code: string; legalEntityId: string; address: string; phone: string; mapsUrl: string; maxManualDiscountPct: string }
+const EMPTY: FormState = { name: '', code: '', legalEntityId: '', address: '', phone: '', mapsUrl: '', maxManualDiscountPct: '30' };
 
 function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Branch | null; legalEntities: LegalEntity[]; onClose: () => void; onSaved: () => void }) {
   const { t } = useI18n();
   const [form, setForm] = useState<FormState>(
     initial
-      ? { name: initial.name, code: initial.code ?? '', legalEntityId: initial.legalEntityId ?? '', address: initial.address ?? '', phone: initial.phone ?? '', mapsUrl: initial.mapsUrl ?? '' }
+      ? {
+          name: initial.name, code: initial.code ?? '', legalEntityId: initial.legalEntityId ?? '',
+          address: initial.address ?? '', phone: initial.phone ?? '', mapsUrl: initial.mapsUrl ?? '',
+          maxManualDiscountPct: String(Math.round((initial.settings?.max_manual_discount_pct ?? 0.3) * 100)),
+        }
       : EMPTY,
   );
   const [saving, setSaving] = useState(false);
@@ -35,6 +49,8 @@ function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Br
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true); setError('');
+    const pct = Number(form.maxManualDiscountPct);
+    const clampedPct = Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : 30;
     const payload = {
       name: form.name,
       code: form.code || undefined,
@@ -43,6 +59,12 @@ function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Br
       address: form.address || undefined,
       phone: form.phone || undefined,
       mapsUrl: form.mapsUrl || undefined,
+      // `settings` is replaced wholesale server-side, so merge onto the existing
+      // object rather than sending only the field this form edits.
+      settings: {
+        ...(initial?.settings ?? {}),
+        max_manual_discount_pct: clampedPct / 100,
+      },
     };
     try {
       if (initial) await api.put(`/outlets/${initial.id}`, payload);
@@ -98,6 +120,17 @@ function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Br
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.branches.mapsLink', 'Google Maps link')}</label>
               <input className="input-field" value={form.mapsUrl} onChange={(e) => setForm({ ...form, mapsUrl: e.target.value })} placeholder="https://maps.app.goo.gl/…" />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.branches.maxManualDiscount', 'Max manual discount at the register (%)')}</label>
+            <input
+              aria-label={t('dash.branches.maxManualDiscount', 'Max manual discount at the register (%)')}
+              type="number" min="0" max="100" step="1"
+              className="input-field w-32"
+              value={form.maxManualDiscountPct}
+              onChange={(e) => setForm({ ...form, maxManualDiscountPct: e.target.value })}
+            />
+            <p className="text-xs text-text-muted mt-1">{t('dash.branches.maxManualDiscountHint', 'Caps the per-line discount a cashier can apply manually at checkout. Enforced by the server; default is 30%.')}</p>
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" className="btn-secondary" onClick={onClose}>{t('dash.branches.cancel', 'Cancel')}</button>

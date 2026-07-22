@@ -65,6 +65,7 @@ import { FeedbackModule } from './modules/feedback/feedback.module';
 import { BroadcastModule } from './modules/broadcast/broadcast.module';
 import { TaxInvoiceModule } from './modules/tax-invoice/tax-invoice.module';
 import { BarcodeModule } from './modules/barcode/barcode.module';
+import { CampaignModule } from './modules/campaign';
 
 @Module({
   imports: [
@@ -134,6 +135,7 @@ import { BarcodeModule } from './modules/barcode/barcode.module';
     BroadcastModule,
     TaxInvoiceModule,
     BarcodeModule,
+    CampaignModule,
   ],
   controllers: [AppController],
   providers: [AppService],

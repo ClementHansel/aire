@@ -116,6 +116,8 @@ export class MembershipSellService {
   async activateMembership(
     membershipId: string,
     dto: ActivateMembershipDto,
+    tenantId?: string,
+    operatorId?: string,
   ): Promise<Membership> {
     // 1. Fetch the membership
     const membershipResult = await this.pool.query<MembershipRow>(
@@ -128,6 +130,14 @@ export class MembershipSellService {
     }
 
     const membership = membershipResult.rows[0]!;
+
+    // 1b. Tenant scoping: a caller-supplied tenantId must match. Callers that
+    // omit it (internal/legacy call sites) skip the check — but the POS
+    // controller always passes the authenticated caller's tenant, so a
+    // cross-tenant activation attempt 404s instead of leaking existence.
+    if (tenantId && membership.tenant_id !== tenantId) {
+      throw new NotFoundException(ERR_MEMBERSHIP_NOT_FOUND);
+    }
 
     // 2. Get plan to know max_plates and duration
     const planResult = await this.pool.query(
@@ -177,8 +187,36 @@ export class MembershipSellService {
       }
     } catch { /* membership number issuance is best-effort */ }
 
+    // 6c. Tag the fee order 'new_member' — this activation is always the
+    // first activation of a freshly-sold membership row. Idempotent via
+    // ON CONFLICT; non-fatal if it fails.
+    try {
+      await this.pool.query(
+        `INSERT INTO order_tags (order_id, tag) VALUES ($1, 'new_member') ON CONFLICT (order_id, tag) DO NOTHING`,
+        [membership.order_id],
+      );
+    } catch { /* tagging is best-effort */ }
+
     // 7. Schedule expiry reminders (H-30, H-7, H-day)
     await this.scheduleExpiryReminders(membershipId, endDate);
+
+    // 7b. Audit the activation itself (status transition + plate count).
+    // Best-effort: must never block an already-successful activation.
+    try {
+      await this.pool.query(
+        `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          membership.tenant_id,
+          operatorId ?? null,
+          'membership_activated',
+          'membership',
+          membershipId,
+          JSON.stringify({ status: membership.status }),
+          JSON.stringify({ status: MembershipStatus.Active, startDate, endDate, plates: dto.plates.length }),
+        ],
+      );
+    } catch { /* audit logging is best-effort */ }
 
     void this.eventBus?.emit({
       type: DomainEventType.MembershipActivated,

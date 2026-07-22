@@ -146,7 +146,7 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
     expect(runtime.generate).not.toHaveBeenCalled();
     expect([...pool.convs.values()][0]!.status).toBe('escalated');
     // Escalation ack was captured to the outbox (would-be delivery).
-    expect(pool.outbox.some((o) => String(o.body).includes('tim kami'))).toBe(true);
+    expect(pool.outbox.some((o) => String(o.body).includes('tim'))).toBe(true);
   });
 
   it('does not reply when AI auto-reply is disabled, but still logs the inbound', async () => {

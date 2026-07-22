@@ -47,11 +47,13 @@ export default function ReportsPage() {
     if (q === 'designer' || q === 'reports') setTab(q);
   }, []);
 
-  const loadReport = useCallback(async () => {
+  const loadReport = useCallback(async (overrides?: { from: string; to: string }) => {
+    const from = overrides?.from ?? dateFrom;
+    const to = overrides?.to ?? dateTo;
     setLoading(true);
     setError('');
     try {
-      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${businessUnit ? `&businessUnit=${businessUnit}` : ''}${branch ? `&outletId=${branch}` : ''}`;
+      const qs = `dateFrom=${from}&dateTo=${to}${businessUnit ? `&businessUnit=${businessUnit}` : ''}${branch ? `&outletId=${branch}` : ''}`;
       const [summary, dailyRows, shiftRows] = await Promise.all([
         api.get<SummaryResponse>(`/reports/summary?${qs}`),
         api.get<DailyRow[]>(`/reports/daily-sales?${qs}`),
@@ -150,6 +152,18 @@ export default function ReportsPage() {
             <label htmlFor="report-date-to" className="block text-xs font-medium text-text-secondary mb-1">{t('dash.reports.to', 'To')}</label>
             <input id="report-date-to" aria-label={t('dash.reports.toDate', 'To date')} type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" />
           </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              const t0 = today();
+              setDateFrom(t0);
+              setDateTo(t0);
+              loadReport({ from: t0, to: t0 });
+            }}
+          >
+            {t('dash.reports.today', 'Today')}
+          </button>
           <div>
             <label htmlFor="report-business-unit" className="block text-xs font-medium text-text-secondary mb-1">{t('dash.reports.businessUnit', 'Business unit')}</label>
             <select id="report-business-unit" aria-label={t('dash.reports.businessUnit', 'Business unit')} value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
@@ -159,7 +173,7 @@ export default function ReportsPage() {
             </select>
           </div>
           <BranchFilter value={branch} onChange={setBranch} label={t('dash.reports.branch', 'Branch')} />
-          <button className="btn-primary" onClick={loadReport} disabled={loading}>
+          <button className="btn-primary" onClick={() => loadReport()} disabled={loading}>
             {loading ? t('dash.reports.loading', 'Loading…') : t('dash.reports.generateReport', 'Generate Report')}
           </button>
           {data && (
@@ -195,6 +209,14 @@ export default function ReportsPage() {
             <div className="card">
               <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.reports.cancelled', 'Cancelled')}</p>
               <p className="text-2xl font-bold text-error mt-1">{data.cancelledCount}</p>
+            </div>
+            <div className="card">
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.reports.uniqueMembers', 'Unique Members')}</p>
+              <p className="text-2xl font-bold text-text-primary mt-1">{data.uniqueMembers}</p>
+            </div>
+            <div className="card">
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.reports.newMembers', 'New Members')}</p>
+              <p className="text-2xl font-bold text-text-primary mt-1">{data.newMembers}</p>
             </div>
           </div>
 

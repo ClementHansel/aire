@@ -7,7 +7,16 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────── Types ──────
 interface ItemRow { id: string; name: string; customerVisible: boolean }
-interface OutletRow extends ItemRow { phone: string | null; mapsUrl: string | null }
+type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+interface DayHours { open?: string; close?: string; closed?: boolean }
+type OpeningHours = Partial<Record<DayKey, DayHours>>;
+interface OutletRow extends ItemRow { phone: string | null; mapsUrl: string | null; openingHours: OpeningHours | null }
+
+const WEEK_DAYS: { key: DayKey; label: string }[] = [
+  { key: 'mon', label: 'Senin' }, { key: 'tue', label: 'Selasa' }, { key: 'wed', label: 'Rabu' },
+  { key: 'thu', label: 'Kamis' }, { key: 'fri', label: 'Jumat' }, { key: 'sat', label: 'Sabtu' },
+  { key: 'sun', label: 'Minggu' },
+];
 
 interface Categories {
   service_prices: boolean;
@@ -77,10 +86,17 @@ function KnowledgeItemRow({
   item: ItemRow | OutletRow;
   disabled: boolean;
   onVisible: (v: boolean) => void;
-  onOutletField?: (patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl'>>) => void;
+  onOutletField?: (patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl' | 'openingHours'>>) => void;
 }) {
   const { t } = useI18n();
   if ('phone' in item) {
+    const hours = item.openingHours ?? {};
+    const setDay = (day: DayKey, patch: DayHours | null) => {
+      const next: OpeningHours = { ...hours };
+      if (patch === null) delete next[day];
+      else next[day] = patch;
+      onOutletField?.({ openingHours: Object.keys(next).length ? next : null });
+    };
     return (
       <div className="rounded-lg border border-border/70 p-2.5 space-y-2">
         <div className="flex items-center justify-between">
@@ -105,6 +121,47 @@ function KnowledgeItemRow({
             aria-label={t('dash.knowledge.mapsUrlLabel', 'Google Maps URL')}
           />
         </div>
+        {/* Opening hours — editable per weekday so the AI always answers "jam buka?" correctly. */}
+        <div className="pt-1">
+          <p className="text-xs font-medium text-text-secondary mb-1">{t('dash.knowledge.openingHoursLabel', 'Opening hours')}</p>
+          <div className="space-y-1">
+            {WEEK_DAYS.map(({ key, label }) => {
+              const d = hours[key] ?? {};
+              const closed = d.closed === true;
+              return (
+                <div key={key} className="flex items-center gap-2 text-xs">
+                  <span className="w-14 shrink-0 text-text-muted">{label}</span>
+                  <input
+                    type="time"
+                    className="input-field text-xs py-1 px-1.5 w-24"
+                    disabled={disabled || closed}
+                    value={d.open ?? ''}
+                    onChange={(e) => setDay(key, { ...d, closed: false, open: e.target.value })}
+                    aria-label={`${label} ${t('dash.knowledge.openLabel', 'open')}`}
+                  />
+                  <span className="text-text-muted">–</span>
+                  <input
+                    type="time"
+                    className="input-field text-xs py-1 px-1.5 w-24"
+                    disabled={disabled || closed}
+                    value={d.close ?? ''}
+                    onChange={(e) => setDay(key, { ...d, closed: false, close: e.target.value })}
+                    aria-label={`${label} ${t('dash.knowledge.closeLabel', 'close')}`}
+                  />
+                  <label className="flex items-center gap-1 ml-auto text-text-muted cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      disabled={disabled}
+                      checked={closed}
+                      onChange={(e) => setDay(key, e.target.checked ? { closed: true } : null)}
+                    />
+                    {t('dash.knowledge.closedLabel', 'Tutup')}
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     );
   }
@@ -127,7 +184,7 @@ function CategorySection({
   onExpandToggle: () => void;
   items: (ItemRow | OutletRow)[] | null;
   onItemVisible?: (id: string, v: boolean) => void;
-  onOutletField?: (id: string, patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl'>>) => void;
+  onOutletField?: (id: string, patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl' | 'openingHours'>>) => void;
 }) {
   const { t } = useI18n();
   const hasItems = items != null;
@@ -206,7 +263,7 @@ export default function KnowledgePage() {
       return { ...d, items: { ...d.items, [listKey]: list } };
     });
 
-  const setOutletField = (id: string, patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl'>>) =>
+  const setOutletField = (id: string, patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl' | 'openingHours'>>) =>
     setData((d) => {
       if (!d) return d;
       return { ...d, items: { ...d.items, outlets: d.items.outlets.map((o) => (o.id === id ? { ...o, ...patch } : o)) } };
@@ -238,11 +295,17 @@ export default function KnowledgePage() {
     });
     if (itemVisibility.length) payload.itemVisibility = itemVisibility;
 
-    const outletContacts: { id: string; phone?: string | null; mapsUrl?: string | null }[] = [];
+    const outletContacts: { id: string; phone?: string | null; mapsUrl?: string | null; openingHours?: OpeningHours | null }[] = [];
     data.items.outlets.forEach((o) => {
       const orig = original.items.outlets.find((x) => x.id === o.id);
-      if (orig && (orig.phone !== o.phone || orig.mapsUrl !== o.mapsUrl)) {
-        outletContacts.push({ id: o.id, phone: o.phone, mapsUrl: o.mapsUrl });
+      if (!orig) return;
+      const hoursChanged = JSON.stringify(orig.openingHours ?? null) !== JSON.stringify(o.openingHours ?? null);
+      if (orig.phone !== o.phone || orig.mapsUrl !== o.mapsUrl || hoursChanged) {
+        const entry: { id: string; phone?: string | null; mapsUrl?: string | null; openingHours?: OpeningHours | null } = { id: o.id };
+        if (orig.phone !== o.phone) entry.phone = o.phone;
+        if (orig.mapsUrl !== o.mapsUrl) entry.mapsUrl = o.mapsUrl;
+        if (hoursChanged) entry.openingHours = o.openingHours;
+        outletContacts.push(entry);
       }
     });
     if (outletContacts.length) payload.outletContacts = outletContacts;

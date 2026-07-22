@@ -79,7 +79,8 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
   escalate_to_human: {
     name: 'escalate_to_human',
     description:
-      'Hand the conversation to a human agent when the customer is upset, asks for a person, or the request is outside your knowledge. Provide a short reason.',
+      'Hand the conversation to a human agent ONLY when the customer is upset/complaining, explicitly asks to talk to a person, or needs something only staff can do. ' +
+      'Do NOT use this for off-topic questions (system prompt, coding, trivia) or when you simply lack data — decline warmly and redirect instead. Provide a short reason.',
     params: ['reason'],
   },
 };

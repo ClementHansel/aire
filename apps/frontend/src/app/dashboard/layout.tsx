@@ -20,7 +20,7 @@ import {
   UsersRound, Banknote, Bot, Workflow, BrainCircuit, MessageSquare,
   RadioTower, KeyRound, Settings, LogOut, Tablet, ClipboardCheck, LineChart, Car, Landmark, ChefHat, BookOpen, MonitorSmartphone, Cctv, ScrollText, Coins, Rocket,
   FileType, Waypoints, HardDrive, Brain,
-  RotateCcw, Star, Megaphone, HandCoins, Barcode, type LucideIcon,
+  RotateCcw, Star, Megaphone, HandCoins, Barcode, Gift, type LucideIcon,
 } from 'lucide-react';
 
 // `module` maps a nav item to a toggleable per-tenant module (see @aire/shared
@@ -58,6 +58,7 @@ const navSections: NavSection[] = [
       { id: 'bookings', label: 'Bookings', href: '/dashboard/bookings', icon: CalendarDays, module: 'crm' },
       { id: 'memberships', label: 'Memberships', href: '/dashboard/memberships', icon: Ticket, module: 'memberships' },
       { id: 'vouchers', label: 'Vouchers & Promotions', href: '/dashboard/vouchers', icon: TicketPercent, module: 'vouchers', permission: 'vouchers.write' },
+      { id: 'campaigns', label: 'Campaigns', href: '/dashboard/campaigns', icon: Gift, module: 'memberships', roles: ['tenant_owner'] },
       { id: 'feedback', label: 'Feedback & NPS', href: '/dashboard/feedback', icon: Star, module: 'crm', permission: 'customers.read' },
       { id: 'broadcast', label: 'WA Broadcast', href: '/dashboard/broadcast', icon: Megaphone, module: 'whatsapp' },
     ],

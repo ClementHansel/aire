@@ -58,7 +58,15 @@ export const CUSTOMER_KNOWLEDGE_CATEGORIES = [
 export type CustomerKnowledgeCategory = typeof CUSTOMER_KNOWLEDGE_CATEGORIES[number];
 
 export interface KnowledgeItem { id: string; name: string; customerVisible: boolean; }
-export interface KnowledgeOutlet { id: string; name: string; phone: string | null; mapsUrl: string | null; customerVisible: boolean; }
+
+/** Weekday keys for structured opening hours (matches migration 073 JSONB shape). */
+export const OPENING_HOURS_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+export type OpeningHoursDay = typeof OPENING_HOURS_DAYS[number];
+/** Per-day hours: either open+close "HH:MM" times, or closed:true. */
+export type DayHours = { open?: string; close?: string; closed?: boolean };
+export type OpeningHours = Partial<Record<OpeningHoursDay, DayHours>>;
+
+export interface KnowledgeOutlet { id: string; name: string; phone: string | null; mapsUrl: string | null; openingHours: OpeningHours | null; customerVisible: boolean; }
 export interface KnowledgeResponse {
   productKnowledge: string | null;
   skills: string | null;
@@ -72,7 +80,31 @@ export interface KnowledgeUpdateDto {
   skills?: string | null;
   categories?: Record<string, boolean>;
   itemVisibility?: { type: 'service' | 'promotion' | 'plan' | 'outlet'; id: string; visible: boolean }[];
-  outletContacts?: { id: string; phone?: string | null; mapsUrl?: string | null }[];
+  outletContacts?: { id: string; phone?: string | null; mapsUrl?: string | null; openingHours?: OpeningHours | null }[];
+}
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Validate/normalise opening hours from the DB or client into the canonical
+ * shape { mon: {open,close} | {closed:true}, … }. Drops unknown weekdays and
+ * malformed times so a bad payload can never poison what the AI reads or the UI
+ * renders. Returns null when nothing valid remains (= "not configured").
+ */
+export function sanitizeOpeningHours(raw: unknown): OpeningHours | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const src = raw as Record<string, unknown>;
+  const out: OpeningHours = {};
+  for (const day of OPENING_HOURS_DAYS) {
+    const d = src[day];
+    if (!d || typeof d !== 'object') continue;
+    const dd = d as Record<string, unknown>;
+    if (dd.closed === true) { out[day] = { closed: true }; continue; }
+    const open = typeof dd.open === 'string' ? dd.open : undefined;
+    const close = typeof dd.close === 'string' ? dd.close : undefined;
+    if (open && close && HHMM_RE.test(open) && HHMM_RE.test(close)) out[day] = { open, close };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 // Bahasa Indonesia defaults — kept identical to migration 074_agent_default_prompts.sql
@@ -81,8 +113,9 @@ export interface KnowledgeUpdateDto {
 const DEFAULT_BASE_PROMPT =
   'Kamu adalah Irene, customer service (CS) dari Aire — usaha cuci mobil & detailing (AIRE car wash, LEAD detailing). '
   + 'Kamu seorang cewek yang ramah, hangat, dan asik diajak ngobrol. '
-  + 'Di awal percakapan, sapa dan perkenalkan dirimu dengan hangat, misalnya: "Halo kak! 😊 Aku Irene, CS-nya Aire. Ada yang bisa Irene bantu?". '
+  + 'Di awal percakapan, buka dengan perkenalan yang hangat dan agak panjang: sapa pelanggan, perkenalkan dirimu dengan nama & peran, lalu tawarkan bantuan — misalnya: "Halo kak! 😊 Aku Irene, CS-nya AIRE. Ada yang bisa Irene bantu hari ini? Mau tanya harga, lokasi, membership, atau mau booking cuci mobil? 🚗✨". Jangan membalas dengan satu kalimat singkat saja di awal. '
   + 'Balas pakai gaya chat WhatsApp yang santai, ramah, dan natural — boleh panggil pelanggan "kak", pakai emoji secukupnya, dan jangan kaku atau terlalu formal. '
+  + 'Ini WhatsApp, bukan Markdown: untuk menebalkan pakai satu bintang *begini*, jangan pakai dua bintang (**salah**), dan jangan pakai format link Markdown [teks](url) — tulis URL apa adanya. '
   + 'Tetap singkat dan jelas, dalam Bahasa Indonesia. Format uang sebagai Rp. '
   + 'Kamu bisa membantu: memberi lokasi & jam buka cabang, daftar harga layanan, info & paket membership, sisa voucher beserta kodenya, '
   + 'tanggal berakhir membership, serta membantu membuat janji/booking. '
@@ -104,8 +137,10 @@ const DEFAULT_SKILLS =
 
 const DEFAULT_PRODUCT_KNOWLEDGE =
   'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. '
-  + 'Detail layanan, harga, paket membership, dan skema voucher diambil dari sistem melalui tools. '
-  + 'Silakan sesuaikan bagian ini per klien dengan info spesifik (daftar layanan unggulan, tingkatan membership, ketentuan voucher).';
+  + 'Harga layanan, paket membership, dan promo yang PERSIS selalu diambil dari sistem lewat tools (get_service_prices, get_membership_plans, get_promotions) — jangan mengarang angka atau nama paket.\n'
+  + 'MEMBERSHIP: satu-satunya jenis membership adalah "Unlimited Wash" (cuci sepuasnya). Berlaku untuk maksimal 3 plat nomor mobil, dan maksimal 1x cuci per hari per mobil. Durasinya (mis. 1 bulan / 3 bulan) dan harganya beda per area — ambil dari get_membership_plans. TIDAK ADA membership bernama "Silver", "Gold", atau tier lain; jangan sebutkan atau mengarang tingkatan.\n'
+  + 'VOUCHER: ada paket voucher cuci (mis. voucher 10x). Voucher TIDAK terikat ke satu pelanggan — siapa saja bisa memakainya, jadi boleh dibeli lalu dibagikan/dishare ke orang lain.\n'
+  + 'PEMBELIAN: pembelian membership maupun voucher dilakukan di outlet, bukan lewat chat. Kamu boleh menjelaskan detail & cara kerjanya, tapi untuk membeli arahkan pelanggan ke outlet AIRE terdekat (pakai get_branch_info).';
 
 const DEFAULTS: Omit<AgentConfigResponse, 'aiEnabled' | 'llmProvider' | 'llmKeyConfigured'> = {
   basePrompt: DEFAULT_BASE_PROMPT, productKnowledge: DEFAULT_PRODUCT_KNOWLEDGE, skills: DEFAULT_SKILLS, escalationNumber: null,
@@ -237,7 +272,7 @@ export class AgentConfigService {
       this.pool.query('SELECT id, name, customer_visible FROM services WHERE tenant_id = $1 AND is_active = true ORDER BY business_unit, sort_order, name', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM promotions WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM membership_plans WHERE tenant_id = $1 AND is_active = true ORDER BY price', [tenantId]),
-      this.pool.query('SELECT id, name, phone, maps_url, customer_visible FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name', [tenantId]),
+      this.pool.query('SELECT id, name, phone, maps_url, opening_hours, customer_visible FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name', [tenantId]),
     ]);
     const r = cfg.rows[0] ?? {};
     const flags: Record<string, boolean> = r.customer_knowledge ?? {};
@@ -252,7 +287,7 @@ export class AgentConfigService {
         services: svc.rows.map(item),
         promotions: promo.rows.map(item),
         plans: plan.rows.map(item),
-        outlets: out.rows.map((x: any) => ({ id: x.id, name: x.name, phone: x.phone ?? null, mapsUrl: x.maps_url ?? null, customerVisible: x.customer_visible !== false })),
+        outlets: out.rows.map((x: any) => ({ id: x.id, name: x.name, phone: x.phone ?? null, mapsUrl: x.maps_url ?? null, openingHours: sanitizeOpeningHours(x.opening_hours), customerVisible: x.customer_visible !== false })),
       },
     };
   }
@@ -280,11 +315,16 @@ export class AgentConfigService {
       if (!t) continue;
       await this.pool.query(`UPDATE ${t} SET customer_visible = $1 WHERE id = $2 AND tenant_id = $3`, [!!it.visible, it.id, tenantId]);
     }
-    // Branch contacts (phone / maps link).
+    // Branch contacts (phone / maps link) and structured opening hours.
     for (const c of dto.outletContacts ?? []) {
       const set: string[] = []; const v: unknown[] = []; let i = 1;
       if (c.phone !== undefined) { set.push(`phone = $${i++}`); v.push(c.phone); }
       if (c.mapsUrl !== undefined) { set.push(`maps_url = $${i++}`); v.push(c.mapsUrl); }
+      if (c.openingHours !== undefined) {
+        const clean = c.openingHours === null ? null : sanitizeOpeningHours(c.openingHours);
+        set.push(`opening_hours = $${i++}::jsonb`);
+        v.push(clean === null ? null : JSON.stringify(clean));
+      }
       if (!set.length) continue;
       v.push(c.id, tenantId);
       await this.pool.query(`UPDATE outlets SET ${set.join(', ')}, updated_at = NOW() WHERE id = $${i} AND tenant_id = $${i + 1}`, v);

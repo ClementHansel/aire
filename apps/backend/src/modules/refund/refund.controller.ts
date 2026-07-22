@@ -41,4 +41,17 @@ export class RefundController {
   create(@CurrentUser() user: JWTPayload, @Body() dto: CreateRefundDto) {
     return this.service.createRefund(user.tenant_id, dto, user);
   }
+
+  /**
+   * POST /api/refunds/:orderId/pin — issues a one-time 6-digit PIN (WhatsApp
+   * to the tenant's escalation number, else emailed to the tenant owner)
+   * authorizing a refund on this order past the free-window. Same posture as
+   * the order-void PIN request: any signed-in cashier+ may request one;
+   * createRefund is what actually enforces who needs it.
+   */
+  @Post(':orderId/pin')
+  @HttpCode(HttpStatus.OK)
+  requestPin(@CurrentUser() user: JWTPayload, @Param('orderId') orderId: string) {
+    return this.service.requestRefundPin(orderId, user);
+  }
 }

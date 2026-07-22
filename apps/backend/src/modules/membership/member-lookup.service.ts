@@ -40,6 +40,7 @@ interface MembershipJoinRow {
   uses_count: number;
   max_uses: number;
   daily_limit: number;
+  max_plates: number;
   free_service_ids: string[] | null;
   discounted_services: DiscountedServiceInfo[] | null;
 }
@@ -209,7 +210,7 @@ export class MemberLookupService {
     const membershipsResult = await this.pool.query<MembershipJoinRow>(
       `SELECT m.id, mp.name AS plan_name, m.status,
               m.start_date::text, m.end_date::text,
-              m.uses_count, m.max_uses, m.daily_limit,
+              m.uses_count, m.max_uses, m.daily_limit, mp.max_plates,
               mp.free_service_ids, mp.discounted_services
        FROM memberships m
        JOIN membership_plans mp ON m.plan_id = mp.id
@@ -278,6 +279,7 @@ export class MemberLookupService {
         usesCount: row.uses_count,
         maxUses: row.max_uses,
         dailyLimit: row.daily_limit,
+        maxPlates: row.max_plates,
         plates,
         freeServices: row.free_service_ids ?? [],
         discountedServices: row.discounted_services ?? [],

@@ -160,6 +160,15 @@ export class VoucherPackService {
       client.release();
     }
 
+    // Tag the fee order 'buy_voucher_pack' for reporting. Idempotent via
+    // ON CONFLICT; non-fatal if it fails.
+    try {
+      await this.pool.query(
+        `INSERT INTO order_tags (order_id, tag) VALUES ($1, 'buy_voucher_pack') ON CONFLICT (order_id, tag) DO NOTHING`,
+        [orderId],
+      );
+    } catch { /* tagging is best-effort */ }
+
     // Deliver plaintext codes to the customer's WhatsApp (best-effort).
     let whatsappDelivered = false;
     try {

@@ -2,12 +2,16 @@ import {
   Injectable,
   Inject,
   Optional,
+  Logger,
   BadRequestException,
 } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
+import { randomInt } from 'node:crypto';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { NotificationService } from '../notification/notification.service';
+import { WhatsappService } from '../whatsapp';
 import {
   CreateOrderRequest,
   OrderStatus,
@@ -15,12 +19,15 @@ import {
   validateOrder,
   OrderValidationInput,
   calculateCartSummary,
+  applyManualDiscount,
   CartItem,
   CartConfig,
   applyMembershipPricing,
   MembershipBenefit,
   assignCustomerTags,
   CustomerTag,
+  checkQuota,
+  MembershipStatus,
   ERR_VALIDATION_FAILED,
   VoucherType,
   VoucherData,
@@ -35,6 +42,14 @@ import {
 } from '@aire/shared';
 import * as bcrypt from 'bcrypt';
 import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
+
+/**
+ * Fallback cap on a cashier's per-line manual discount (30%) used when an
+ * outlet hasn't configured its own `max_manual_discount_pct` setting. Cart
+ * items are always clamped to a cap — never left uncapped — so this constant
+ * is the last line of defense, not just a UI hint.
+ */
+const DEFAULT_MAX_MANUAL_DISCOUNT_PCT = 0.3;
 
 /**
  * Database row shape for orders table.
@@ -134,14 +149,23 @@ export interface CreatedOrderResponse {
   }>;
   tags: CustomerTag[];
   createdAt: Date;
+  /** Set when a member's benefit was withheld (daily limit / lifetime quota); the
+   *  POS shows this so the cashier can explain the normal-price charge. */
+  membershipQuotaWarning?: string;
 }
 
 @Injectable()
 export class OrderService {
   private readonly stateMachine = new OrderStateMachine();
+  private readonly logger = new Logger(OrderService.name);
+
+  /** One-time void-PIN validity window (requestVoidPin / voidOrder). */
+  private static readonly VOID_PIN_TTL_MINUTES = 10;
 
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
+    @Optional() private readonly notification?: NotificationService,
+    @Optional() private readonly whatsapp?: WhatsappService,
   ) {}
 
   /**
@@ -223,19 +247,24 @@ export class OrderService {
       };
     });
 
-    // Step 5: Apply membership pricing if membershipId is provided
+    // Step 5: Look up membership benefits, but DEFER applying them until after
+    // voucher resolution — the Golden Rule (handbook §6.2) says a voucher WINS, so
+    // when a voucher applies we must NOT also apply membership pricing (and must not
+    // consume quota). We keep the benefit LOOKUP here (its queries stay in place),
+    // and only apply the pricing at Step 6b once we know whether a voucher won.
     let membershipApplied = false;
-    let membershipSettlement: { homeOutletId: string | null; amount: number } = { homeOutletId: null, amount: 0 };
-    // Captured for the post-commit SettlementAccrued event (drives ledger accrual).
-    let settlementAccrual: { entryId: string; owingOutletId: string; servingOutletId: string; amount: number } | null = null;
+    // Service ids whose discount is a membership benefit (free/percentage-off), not
+    // the cashier's manual discount — the cap-clamp pass must leave these alone.
+    const memberPricedServiceIds = new Set<string>();
+    // Surfaced to the cashier when a member's benefit was withheld because they
+    // hit their daily limit or exhausted their lifetime quota (handbook §5.2/§5.6).
+    let membershipQuotaWarning: string | undefined;
+    let membershipBenefits: MembershipBenefit[] = [];
     if (request.membershipId) {
-      const meta = await this.getMembershipBenefits(request.membershipId);
-      membershipSettlement = { homeOutletId: meta.homeOutletId, amount: meta.settlementAmount };
-      if (meta.benefits.length > 0) {
-        const pricingResult = applyMembershipPricing(cartItems, meta.benefits);
-        cartItems = pricingResult.items;
-        membershipApplied = pricingResult.appliedPricing.length > 0;
-      }
+      const plate = request.selectedPlate ?? request.customer.licensePlate ?? '';
+      const meta = await this.getMembershipBenefits(request.membershipId, plate);
+      membershipQuotaWarning = meta.quotaWarning;
+      membershipBenefits = meta.benefits;
     }
 
     // Every order is booked into an open cashier shift and inherits that shift's
@@ -257,6 +286,21 @@ export class OrderService {
     }
     const operatingOutletId = shift.outletId;
     const shiftId = shift.id;
+
+    // Step 5b: Get outlet config for charges + the manual-discount cap (moved
+    // ahead of its original position so the cap can be enforced below, before
+    // voucher/promo math reads item.discount). Then clamp every line's manual
+    // discount to that cap via the shared cart-calculator helper — the server,
+    // never the POS UI, is the source of truth on the max discount %. Items a
+    // membership benefit already priced (their discount is the benefit amount,
+    // not a manual discount) are left untouched by this pass.
+    const outletConfig = await this.getOutletConfig(operatingOutletId!);
+    for (const item of request.items) {
+      const requestedDiscount = item.manualDiscount ?? 0;
+      if (requestedDiscount > 0 && !memberPricedServiceIds.has(item.serviceId)) {
+        cartItems = applyManualDiscount(cartItems, item.serviceId, requestedDiscount, outletConfig);
+      }
+    }
 
     // Step 6: Apply voucher discounts — resolve codes (read-only) and compute
     // the discount. Codes are atomically redeemed inside the transaction below.
@@ -289,8 +333,20 @@ export class OrderService {
       resolvedTicketCodes = digital.codes;
     }
 
-    // Step 7: Get outlet config for charges
-    const outletConfig = await this.getOutletConfig(operatingOutletId!);
+    // Step 6b: Apply membership pricing — but ONLY when no voucher won this order.
+    // Golden Rule (handbook §6.2): "if a voucher is applied, the membership is NOT
+    // used up — the voucher wins, charged once." So a voucher suppresses membership
+    // pricing entirely (no double discount), and quota consumption is likewise
+    // skipped at payment. With no voucher, the member benefit applies as normal.
+    if (membershipBenefits.length > 0 && voucherDiscount === 0) {
+      const pricingResult = applyMembershipPricing(cartItems, membershipBenefits);
+      cartItems = pricingResult.items;
+      membershipApplied = pricingResult.appliedPricing.length > 0;
+      for (const p of pricingResult.appliedPricing) memberPricedServiceIds.add(p.serviceId);
+    }
+
+    // Step 7: outletConfig was already fetched above (Step 5b), ahead of the
+    // manual-discount clamp, so it's reused here rather than re-queried.
 
     // Step 7b: Resolve active promotions (discount rewards applied to the total).
     const promoSubtotal = Math.max(0, cartItems.reduce((s, ci) => s + ci.quantity * ci.unitPrice - ci.discount, 0) - voucherDiscount);
@@ -479,30 +535,12 @@ export class OrderService {
         );
       }
 
-      // Record membership usage + inter-branch settlement when the wash is
-      // redeemed at a branch other than where the membership was bought.
-      if (request.membershipId) {
-        const plateNorm = (request.selectedPlate ?? request.customer.licensePlate ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-        const usage = await client.query<{ id: string }>(
-          `INSERT INTO membership_usages (membership_id, plate_normalized, order_id, outlet_id)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
-          [request.membershipId, plateNorm, order.id, operatingOutletId ?? null],
-        );
-        if (membershipSettlement.homeOutletId && operatingOutletId &&
-            membershipSettlement.homeOutletId !== operatingOutletId && membershipSettlement.amount > 0) {
-          const seRes = await client.query<{ id: string }>(
-            `INSERT INTO settlement_entries (tenant_id, membership_id, usage_id, owing_outlet_id, serving_outlet_id, amount)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-            [user.tenant_id, request.membershipId, usage.rows[0]!.id, membershipSettlement.homeOutletId, operatingOutletId, membershipSettlement.amount],
-          );
-          settlementAccrual = {
-            entryId: seRes.rows[0]!.id,
-            owingOutletId: membershipSettlement.homeOutletId,
-            servingOutletId: operatingOutletId,
-            amount: membershipSettlement.amount,
-          };
-        }
-      }
+      // NOTE: membership usage consumption + inter-branch settlement are recorded
+      // at PAYMENT, not here — an order that is created but never paid must not
+      // burn a member's quota (handbook §5.2: "recorded when the order is paid").
+      // See payOrder → recordMembershipConsumption. Member PRICING is still applied
+      // above at order creation (so the total is correct); only the quota
+      // consumption is deferred to payment.
 
       // Auto-deduct recipe (BOM) stock for each line and freeze a per-unit COGS
       // snapshot — inside the transaction so stock and the sale commit atomically.
@@ -525,6 +563,22 @@ export class OrderService {
           [order.id, request.queueEntryId, user.tenant_id],
         );
       }
+
+      // Cashier activity audit: every rung-up order lands in the central audit log
+      // (operator, order, totals) — not just the orders table / status logs.
+      await client.query(
+        `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+         VALUES ($1, $2, 'order.create', 'order', $3, NULL, $4)`,
+        [user.tenant_id, user.sub, order.id, JSON.stringify({
+          orderNumber: order.order_number,
+          outletId: operatingOutletId,
+          total: parseFloat(order.total),
+          itemCount: cartItems.length,
+          membershipId: request.membershipId ?? null,
+          voucherDiscount,
+          promoDiscount,
+        })],
+      );
 
       await client.query('COMMIT');
 
@@ -555,18 +609,12 @@ export class OrderService {
         });
       }
 
-      // Inter-branch settlement accrual → drives the accounting ledger accrual.
-      if (settlementAccrual) {
-        void this.eventBus?.emit({
-          type: DomainEventType.SettlementAccrued,
-          tenantId: user.tenant_id,
-          outletId: settlementAccrual.servingOutletId,
-          actor: user.sub,
-          payload: settlementAccrual,
-        });
-      }
+      // Inter-branch settlement accrual is emitted at PAYMENT alongside the
+      // membership-usage recording it derives from (see recordMembershipConsumption).
 
-      // Determine customer type tags (will be persisted on payment)
+      // Preview customer-type tags for the response (persisted at payment). The
+      // NEW_MEMBER / RENEWAL / BUY_VOUCHER_PACK tags come from the Sell Pack flows,
+      // not a plain wash order, so they are false here.
       const tags = assignCustomerTags({
         hasVoucherPackPurchase: false,
         hasNewMembership: false,
@@ -596,6 +644,7 @@ export class OrderService {
         items: orderItems,
         tags,
         createdAt: order.created_at,
+        membershipQuotaWarning,
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -675,39 +724,105 @@ export class OrderService {
     );
     const payShiftId = psh.rows[0]?.id ?? null;
 
-    const updated = await this.pool.query(
-      `UPDATE orders
-       SET status = 'paid',
-           payment_method = $1,
-           payment_reference = $2,
-           amount_received = $3,
-           change_amount = $4,
-           payment_channel = $5,
-           shift_id = COALESCE($6, shift_id),
-           paid_at = NOW(),
-           updated_at = NOW()
-       WHERE id = $7
-       RETURNING *`,
-      [
-        payment.method,
-        payment.referenceNumber ?? null,
-        payment.amountReceived ?? null,
-        changeAmount,
-        paymentChannel,
-        payShiftId,
-        orderId,
-      ],
-    );
+    // Payment is the point of consumption: mark paid, record membership usage
+    // (unless a voucher won — golden rule), and persist customer-type tags — all
+    // in ONE transaction so the sale and its side effects commit atomically.
+    const client = await this.pool.connect();
+    let row: Record<string, any>;
+    let itemRows: Array<Record<string, any>>;
+    let persistedTags: CustomerTag[];
+    let accrual: { entryId: string; owingOutletId: string; servingOutletId: string; amount: number } | null = null;
+    try {
+      await client.query('BEGIN');
 
-    const itemsRes = await this.pool.query(
-      `SELECT oi.*, s.name AS service_name
-       FROM order_items oi
-       JOIN services s ON s.id = oi.service_id
-       WHERE oi.order_id = $1`,
-      [orderId],
-    );
+      const updated = await client.query(
+        `UPDATE orders
+         SET status = 'paid',
+             payment_method = $1,
+             payment_reference = $2,
+             amount_received = $3,
+             change_amount = $4,
+             payment_channel = $5,
+             shift_id = COALESCE($6, shift_id),
+             paid_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $7
+         RETURNING *`,
+        [
+          payment.method,
+          payment.referenceNumber ?? null,
+          payment.amountReceived ?? null,
+          changeAmount,
+          paymentChannel,
+          payShiftId,
+          orderId,
+        ],
+      );
+      row = updated.rows[0];
 
-    const row = updated.rows[0];
+      const itemsRes = await client.query(
+        `SELECT oi.*, s.name AS service_name
+         FROM order_items oi
+         JOIN services s ON s.id = oi.service_id
+         WHERE oi.order_id = $1`,
+        [orderId],
+      );
+      itemRows = itemsRes.rows;
+
+      const voucherApplied = parseFloat(row.voucher_discount ?? '0') > 0;
+      const memberPricingApplied = itemRows.some((i) => i.is_member_pricing === true);
+      // Golden Rule (handbook §6.2): a voucher in the order means the membership is
+      // NOT consumed this transaction — the voucher wins, quota is preserved.
+      const consumeMembership = !!row.membership_id && memberPricingApplied && !voucherApplied;
+
+      if (consumeMembership) {
+        const res = await this.recordMembershipConsumption(client, {
+          tenantId: user.tenant_id,
+          orderId,
+          membershipId: row.membership_id,
+          plate: row.license_plate,
+          outletId: row.outlet_id ?? null,
+        });
+        accrual = res.accrual;
+      }
+
+      // Persist customer-type tags for the owner's reports (handbook §8). MEMBER /
+      // VOUCHER apply to a wash order; NEW_MEMBER / RENEWAL / BUY_VOUCHER_PACK are
+      // tagged by the Sell Pack flows on their own orders.
+      persistedTags = assignCustomerTags({
+        hasVoucherPackPurchase: false,
+        hasNewMembership: false,
+        hasMembershipRenewal: false,
+        hasVoucherRedemption: voucherApplied,
+        hasMemberBenefitsApplied: consumeMembership,
+      });
+      for (const tag of persistedTags) {
+        await client.query(
+          `INSERT INTO order_tags (order_id, tag) VALUES ($1, $2) ON CONFLICT (order_id, tag) DO NOTHING`,
+          [orderId, tag],
+        );
+      }
+
+      // Cashier activity audit: the payment action (who took what, how, how much).
+      await client.query(
+        `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+         VALUES ($1, $2, 'order.pay', 'order', $3, NULL, $4)`,
+        [user.tenant_id, user.sub, orderId, JSON.stringify({
+          orderNumber: row.order_number,
+          method: payment.method,
+          total: parseFloat(row.total),
+          reference: payment.referenceNumber ?? null,
+          changeAmount,
+        })],
+      );
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
 
     void this.eventBus?.emit({
       type: DomainEventType.OrderPaid,
@@ -721,6 +836,15 @@ export class OrderService {
         paymentMethod: payment.method,
       },
     });
+    if (accrual) {
+      void this.eventBus?.emit({
+        type: DomainEventType.SettlementAccrued,
+        tenantId: user.tenant_id,
+        outletId: accrual.servingOutletId,
+        actor: user.sub,
+        payload: accrual,
+      });
+    }
 
     return {
       id: row.id,
@@ -739,7 +863,7 @@ export class OrderService {
       total: parseFloat(row.total),
       note: row.note,
       membershipId: row.membership_id,
-      items: itemsRes.rows.map((i) => ({
+      items: itemRows.map((i) => ({
         id: i.id,
         serviceId: i.service_id,
         serviceName: i.service_name,
@@ -749,9 +873,61 @@ export class OrderService {
         subtotal: parseFloat(i.subtotal),
         isMemberPricing: i.is_member_pricing ?? false,
       })),
-      tags: [],
+      tags: persistedTags,
       createdAt: row.created_at,
     };
+  }
+
+  /**
+   * Record a membership's consumption of one wash at PAYMENT time: insert the
+   * per-plate usage row, increment the lifetime counter (auto-expiring the
+   * membership when its quota is exhausted, handbook §5.2/§5.6), and accrue an
+   * inter-branch settlement when the wash is redeemed away from the home outlet.
+   * Runs inside the caller's transaction. Returns the settlement accrual (if any)
+   * so the caller can emit SettlementAccrued after commit.
+   */
+  private async recordMembershipConsumption(
+    client: PoolClient,
+    opts: { tenantId: string; orderId: string; membershipId: string; plate: string | null; outletId: string | null },
+  ): Promise<{ accrual: { entryId: string; owingOutletId: string; servingOutletId: string; amount: number } | null }> {
+    const plateNorm = (opts.plate ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const m = await client.query<{ home_outlet_id: string | null; settlement_amount: string | null }>(
+      `SELECT m.home_outlet_id, p.settlement_amount
+       FROM memberships m JOIN membership_plans p ON p.id = m.plan_id
+       WHERE m.id = $1 AND m.tenant_id = $2`,
+      [opts.membershipId, opts.tenantId],
+    );
+    if (m.rows.length === 0) return { accrual: null };
+    const mem = m.rows[0]!;
+
+    const usage = await client.query<{ id: string }>(
+      `INSERT INTO membership_usages (membership_id, plate_normalized, order_id, outlet_id)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [opts.membershipId, plateNorm, opts.orderId, opts.outletId],
+    );
+
+    // Increment lifetime usage; auto-expire when the finite quota is exhausted.
+    // max_uses <= 0 (or null) = unlimited → never auto-expire.
+    await client.query(
+      `UPDATE memberships
+       SET uses_count = uses_count + 1,
+           status = CASE WHEN max_uses IS NOT NULL AND max_uses > 0 AND uses_count + 1 >= max_uses
+                         THEN 'expired' ELSE status END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [opts.membershipId],
+    );
+
+    const amount = mem.settlement_amount ? parseFloat(mem.settlement_amount) : 0;
+    if (mem.home_outlet_id && opts.outletId && mem.home_outlet_id !== opts.outletId && amount > 0) {
+      const se = await client.query<{ id: string }>(
+        `INSERT INTO settlement_entries (tenant_id, membership_id, usage_id, owing_outlet_id, serving_outlet_id, amount)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [opts.tenantId, opts.membershipId, usage.rows[0]!.id, mem.home_outlet_id, opts.outletId, amount],
+      );
+      return { accrual: { entryId: se.rows[0]!.id, owingOutletId: mem.home_outlet_id, servingOutletId: opts.outletId, amount } };
+    }
+    return { accrual: null };
   }
 
   /**
@@ -963,10 +1139,12 @@ export class OrderService {
       [orderId, user.tenant_id],
     );
 
-    // 4. Reverse membership usage + void any still-pending settlement it accrued.
-    const usages = await client.query<{ id: string }>(
+    // 4. Reverse membership usage + void any still-pending settlement it accrued,
+    //    and give the lifetime quota back (un-expiring a membership that was
+    //    auto-expired by this very wash, as long as it hasn't date-expired).
+    const usages = await client.query<{ id: string; membership_id: string }>(
       `UPDATE membership_usages SET reversed = true, reversed_at = NOW()
-       WHERE order_id = $1 AND reversed = false RETURNING id`,
+       WHERE order_id = $1 AND reversed = false RETURNING id, membership_id`,
       [orderId],
     );
     if (usages.rows.length > 0) {
@@ -976,7 +1154,131 @@ export class OrderService {
          WHERE usage_id = ANY($1::uuid[]) AND status = 'pending'`,
         [ids],
       );
+      // Refund one lifetime use per reversed usage, per membership.
+      const perMembership = new Map<string, number>();
+      for (const u of usages.rows) perMembership.set(u.membership_id, (perMembership.get(u.membership_id) ?? 0) + 1);
+      for (const [membershipId, count] of perMembership) {
+        await client.query(
+          `UPDATE memberships
+           SET uses_count = GREATEST(uses_count - $2, 0),
+               status = CASE WHEN status = 'expired' AND end_date >= CURRENT_DATE THEN 'active' ELSE status END,
+               updated_at = NOW()
+           WHERE id = $1 AND tenant_id = $3`,
+          [membershipId, count, user.tenant_id],
+        );
+      }
     }
+
+    // 4b. Cancel any membership this order ACTIVATED (a membership sale/Sell Pack).
+    //     Voiding the fee order must not leave a live membership behind.
+    await client.query(
+      `UPDATE memberships SET status = 'cancelled', updated_at = NOW()
+       WHERE order_id = $1 AND tenant_id = $2 AND status <> 'cancelled'`,
+      [orderId, user.tenant_id],
+    );
+
+    // 4c. Reverse an applied renewal this order performed. The renewal row doesn't
+    //     store the prior end_date, so we roll the extension back by the plan's
+    //     duration (best-effort; guarded not to fall before the start date).
+    const renewals = await client.query<{ membership_id: string; plan_id: string }>(
+      `UPDATE membership_renewals SET applied = false, applied_at = NULL
+       WHERE order_id = $1 AND tenant_id = $2 AND applied = true
+       RETURNING membership_id, plan_id`,
+      [orderId, user.tenant_id],
+    );
+    for (const r of renewals.rows) {
+      await client.query(
+        `UPDATE memberships m
+         SET end_date = GREATEST(m.start_date, (m.end_date - (p.duration_months || ' months')::interval)::date),
+             updated_at = NOW()
+         FROM membership_plans p
+         WHERE m.id = $1 AND p.id = $2 AND m.tenant_id = $3`,
+        [r.membership_id, r.plan_id, user.tenant_id],
+      );
+    }
+  }
+
+  /**
+   * Issues a one-time 6-digit admin PIN authorizing a void of this order past
+   * the free-void window, and emails it to the tenant's owner. Replaces the old
+   * static preset (users.admin_pin_hash, seeded "1234") — every PIN is fresh,
+   * single-use (consumed_at, set at void time), and expires in
+   * VOID_PIN_TTL_MINUTES. Any prior unconsumed PIN for this order is invalidated
+   * first, so only the most recently requested PIN is ever valid.
+   */
+  async requestVoidPin(
+    orderId: string,
+    user: JWTPayload,
+  ): Promise<{ sent: boolean; expiresInMinutes: number }> {
+    const cur = await this.pool.query<{ id: string; outlet_id: string | null; order_number: string }>(
+      `SELECT id, outlet_id, order_number FROM orders WHERE id = $1 AND tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const order = cur.rows[0];
+    if (!order) throw new BadRequestException('Order not found');
+
+    // Owner delivery targets: email (any active owner) + the tenant's configured
+    // WhatsApp escalation/owner line. We deliver on WHATEVER channel is available.
+    const ownerRes = await this.pool.query<{ email: string }>(
+      `SELECT email FROM users
+       WHERE tenant_id = $1 AND role = 'tenant_owner' AND is_active = true
+       ORDER BY created_at ASC LIMIT 1`,
+      [user.tenant_id],
+    );
+    const ownerEmail = ownerRes.rows[0]?.email ?? null;
+    const waRes = await this.pool.query<{ escalation_number: string | null }>(
+      `SELECT escalation_number FROM agent_configs WHERE tenant_id = $1`,
+      [user.tenant_id],
+    );
+    const ownerPhone = waRes.rows[0]?.escalation_number ?? null;
+
+    const pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const pinHash = bcrypt.hashSync(pin, 10);
+    const expiresAt = new Date(Date.now() + OrderService.VOID_PIN_TTL_MINUTES * 60_000);
+
+    // Invalidate any still-live PIN for this order first — a new request
+    // supersedes it rather than leaving two valid codes at once.
+    await this.pool.query(
+      `UPDATE void_pin_requests SET consumed_at = NOW()
+       WHERE tenant_id = $1 AND order_id = $2 AND consumed_at IS NULL`,
+      [user.tenant_id, orderId],
+    );
+    await this.pool.query(
+      `INSERT INTO void_pin_requests (tenant_id, outlet_id, order_id, pin_hash, requested_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [user.tenant_id, order.outlet_id, orderId, pinHash, user.sub, expiresAt.toISOString()],
+    );
+
+    let delivered = false;
+    // Primary channel: WhatsApp to the owner/escalation line via the LIVE WAHA
+    // free-text integration (the same path booking approvals use) — works today
+    // without an approved Business-API template. Mirrors the refund PIN flow.
+    if (ownerPhone && this.whatsapp) {
+      const text = `Kode PIN void untuk order ${order.order_number}: ${pin}\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Jangan bagikan kode ini.`;
+      const ok = await this.whatsapp.sendText(user.tenant_id, ownerPhone, text).catch(() => false);
+      if (ok) delivered = true;
+      else this.logger.warn(`Void PIN WhatsApp (WAHA) failed for order ${orderId}`);
+    }
+    // Secondary channel: email.
+    if (ownerEmail && this.notification) {
+      const em = await this.notification.sendEmail({
+        to: ownerEmail,
+        subject: `Kode PIN Void — Order ${order.order_number}`,
+        body: `Kode PIN void untuk order ${order.order_number}: ${pin}\n\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Jangan bagikan kode ini kepada siapa pun.`,
+      });
+      if (em.success) delivered = true;
+      else this.logger.warn(`Void PIN email failed for order ${orderId}: ${em.error}`);
+    }
+    if (!ownerPhone && !ownerEmail) {
+      throw new BadRequestException('No owner WhatsApp number or email is configured to receive the void PIN');
+    }
+    // Neither channel is wired yet (no WhatsApp template / no email vendor): log the
+    // PIN so the flow still works in dev/demo, mirroring auth.forgotPassword.
+    if (!delivered) {
+      this.logger.warn(`Void PIN for order ${order.order_number} could not be delivered on any channel; PIN=${pin} (dev/demo fallback — configure a WhatsApp 'void_pin' template or EMAIL_API_* to deliver for real).`);
+    }
+
+    return { sent: delivered, expiresInMinutes: OrderService.VOID_PIN_TTL_MINUTES };
   }
 
   /**
@@ -984,10 +1286,12 @@ export class OrderService {
    * this is the cashier-facing path: authorization is decided by the shared
    * void-authorization rules — a reason is always required; within the outlet's
    * free-void window (default 0 min) any cashier may void; after it, an admin PIN
-   * is required (owner bypasses). The reversal (restock, restore vouchers, reverse
-   * membership usage + settlement, restore promotion quota, cancel) runs in one
-   * transaction. Money already collected is NOT auto-refunded — the caller is told
-   * to refund separately (VOID_PAID_WARNING_MESSAGE).
+   * is required (owner bypasses). The PIN is the one-time emailed code from
+   * requestVoidPin (single-use — consumed here on success), not the old static
+   * preset. The reversal (restock, restore vouchers, reverse membership usage +
+   * settlement, restore promotion quota, cancel) runs in one transaction. Money
+   * already collected is NOT auto-refunded — the caller is told to refund
+   * separately (VOID_PAID_WARNING_MESSAGE).
    */
   async voidOrder(
     orderId: string,
@@ -1012,16 +1316,18 @@ export class OrderService {
 
     const freeWindow = Number(row.outlet_settings?.free_void_window_minutes ?? 0) || 0;
 
-    // Verify an admin PIN against any owner/outlet-admin who has one set.
-    let pinRows: { admin_pin_hash: string }[] = [];
+    // Verify the submitted PIN against the latest unconsumed, unexpired
+    // one-time PIN issued for this order (requestVoidPin) — the static preset
+    // (users.admin_pin_hash) is no longer read here.
+    let pinRow: { id: string; pin_hash: string } | null = null;
     if (input.adminPin) {
-      const pr = await this.pool.query<{ admin_pin_hash: string }>(
-        `SELECT admin_pin_hash FROM users
-         WHERE tenant_id = $1 AND admin_pin_hash IS NOT NULL
-           AND role IN ('tenant_owner', 'outlet_admin')`,
-        [user.tenant_id],
+      const pr = await this.pool.query<{ id: string; pin_hash: string }>(
+        `SELECT id, pin_hash FROM void_pin_requests
+         WHERE tenant_id = $1 AND order_id = $2 AND consumed_at IS NULL AND expires_at > NOW()
+         ORDER BY created_at DESC LIMIT 1`,
+        [user.tenant_id, orderId],
       );
-      pinRows = pr.rows;
+      pinRow = pr.rows[0] ?? null;
     }
 
     const auth = checkVoidAuthorization(
@@ -1033,7 +1339,7 @@ export class OrderService {
         currentTime: new Date().toISOString(),
         freeVoidWindowMinutes: freeWindow,
       },
-      (pin) => pinRows.some((r) => !!r.admin_pin_hash && bcrypt.compareSync(pin, r.admin_pin_hash)),
+      (pin) => !!pinRow && bcrypt.compareSync(pin, pinRow.pin_hash),
     );
     if (!auth.authorized) {
       // requiresPin lets the POS reveal the PIN field and retry.
@@ -1067,7 +1373,14 @@ export class OrderService {
         [orderId, user.tenant_id],
       );
 
-      // 6. Audit (reason + whether a PIN was used).
+      // 6. Single-use: consume the one-time PIN so it can't be replayed. Done
+      // in the same transaction as the void itself, so a rollback (e.g. a
+      // later step throwing) leaves the PIN valid to retry with.
+      if (pinRow) {
+        await client.query(`UPDATE void_pin_requests SET consumed_at = NOW() WHERE id = $1`, [pinRow.id]);
+      }
+
+      // 7. Audit (reason + whether a PIN was used).
       await client.query(
         `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
          VALUES ($1, $2, 'order.void', 'order', $3, $4, $5)`,
@@ -1245,7 +1558,8 @@ export class OrderService {
    */
   private async getMembershipBenefits(
     membershipId: string,
-  ): Promise<{ benefits: MembershipBenefit[]; homeOutletId: string | null; settlementAmount: number }> {
+    plate: string,
+  ): Promise<{ benefits: MembershipBenefit[]; homeOutletId: string | null; settlementAmount: number; quotaWarning?: string }> {
     // Look up the membership and its plan. Benefits require status 'active' AND a
     // paid period that hasn't ended — a date-expired-but-stale-'active' row (or a
     // grace/revoked one) must NOT grant benefits. See MembershipLifecycleService.
@@ -1260,6 +1574,47 @@ export class OrderService {
     }
 
     const membership = membershipResult.rows[0]!;
+
+    // Quota gate (handbook §5.2): enforce the plan's daily limit (per plate) and
+    // lifetime quota, both keyed to the Jakarta business day (resets 00:00 WIB).
+    // If the member is over their daily limit or has exhausted their lifetime
+    // quota, we grant NO benefit here — pricing then charges the normal price and
+    // the POS surfaces the returned quotaWarning. Consumption itself is recorded
+    // at payment (see payOrder → recordMembershipConsumption).
+    const plateNorm = (plate ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    const currentDateWIB = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+    const todayUsages = await this.pool.query<{ plate_normalized: string; used_at_wib: string }>(
+      `SELECT plate_normalized,
+              to_char(used_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD"T"HH24:MI:SS') AS used_at_wib
+       FROM membership_usages
+       WHERE membership_id = $1 AND reversed = false
+         AND (used_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+      [membershipId],
+    );
+    const quota = checkQuota(
+      {
+        membershipId: membership.id,
+        usesCount: membership.uses_count ?? 0,
+        // max_uses <= 0 (or null) means "unlimited" — never block on lifetime quota.
+        maxUses: membership.max_uses && membership.max_uses > 0 ? membership.max_uses : Number.MAX_SAFE_INTEGER,
+        dailyLimit: membership.daily_limit ?? 1,
+        status: (membership.status as MembershipStatus) ?? MembershipStatus.Active,
+      },
+      plateNorm,
+      todayUsages.rows.map((r) => ({ plateNormalized: r.plate_normalized, usedAt: r.used_at_wib })),
+      currentDateWIB,
+    );
+    if (!quota.canUse) {
+      return {
+        benefits: [],
+        homeOutletId: membership.home_outlet_id ?? null,
+        settlementAmount: 0,
+        quotaWarning:
+          quota.reason === 'daily_limit_reached'
+            ? 'Kendaraan ini sudah cuci hari ini — batas harian membership tercapai. Dikenakan harga normal.'
+            : 'Kuota membership sudah habis. Dikenakan harga normal.',
+      };
+    }
 
     // Get the plan details
     const planResult = await this.pool.query<MembershipPlanRow>(
@@ -1537,7 +1892,8 @@ export class OrderService {
   }
 
   /**
-   * Gets outlet configuration for service charge and tax percentages.
+   * Gets outlet configuration for service charge, tax percentages, and the
+   * cashier's manual-discount cap.
    */
   private async getOutletConfig(outletId: string): Promise<CartConfig> {
     const result = await this.pool.query<{ settings: Record<string, unknown> }>(
@@ -1547,7 +1903,7 @@ export class OrderService {
 
     if (result.rows.length === 0) {
       // Default config if outlet not found
-      return { serviceChargePct: 0, taxPct: 0 };
+      return { serviceChargePct: 0, taxPct: 0, maxManualDiscountPct: DEFAULT_MAX_MANUAL_DISCOUNT_PCT };
     }
 
     const settings = result.rows[0]!.settings ?? {};
@@ -1557,6 +1913,14 @@ export class OrderService {
           ? settings.service_charge_pct
           : 0,
       taxPct: typeof settings.tax_pct === 'number' ? settings.tax_pct : 0,
+      // Owner-configurable per outlet; falls back to a conservative platform
+      // default so a line discount is NEVER left uncapped even when the owner
+      // hasn't set one (this is the server-side source of truth — the POS UI's
+      // own cap is cosmetic only).
+      maxManualDiscountPct:
+        typeof settings.max_manual_discount_pct === 'number'
+          ? settings.max_manual_discount_pct
+          : DEFAULT_MAX_MANUAL_DISCOUNT_PCT,
     };
   }
 

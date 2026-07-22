@@ -19,7 +19,16 @@ import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
 import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
+import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { useI18n } from '@/lib/i18n';
+import {
+  type PlateRow,
+  emptyPlateRow,
+  prefillPlateRow,
+  validatePlateRows,
+  canAddPlateRow,
+} from '@/lib/membership-plates';
+import type { MemberLookupResponse } from '@aire/shared/interfaces/member';
 
 type Tab = 'membership' | 'voucher';
 
@@ -48,6 +57,9 @@ interface SaleOrder {
   id: string;
   orderNumber: string;
   total: number;
+  licensePlate?: string;
+  vehicleBrand?: string;
+  vehicleModel?: string;
 }
 
 interface MembershipSale {
@@ -82,12 +94,6 @@ interface IssuedPack {
   whatsappDelivered: boolean;
 }
 
-interface PlateEntry {
-  plate: string;
-  brand: string;
-  model: string;
-}
-
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
 const voucherSummary = (tpl: VoucherTemplate, tr: (key: string, fallback?: string) => string): string => {
@@ -117,6 +123,11 @@ export default function SellPackPage() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  // Optional vehicle captured at sale time — stored on the fee order and used
+  // to pre-fill the first plate row on the post-payment registration step.
+  const [vehiclePlate, setVehiclePlate] = useState('');
+  const [vehicleBrand, setVehicleBrand] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
 
   // sale + payment
   const [sale, setSale] = useState<Sale | null>(null);
@@ -129,7 +140,8 @@ export default function SellPackPage() {
   const [paid, setPaid] = useState(false);
 
   // membership activation
-  const [plates, setPlates] = useState<PlateEntry[]>([{ plate: '', brand: '', model: '' }]);
+  const [plates, setPlates] = useState<PlateRow[]>([emptyPlateRow()]);
+  const [plateError, setPlateError] = useState('');
   const [activating, setActivating] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -137,10 +149,11 @@ export default function SellPackPage() {
   const [issuing, setIssuing] = useState(false);
   const [issued, setIssued] = useState<IssuedPack | null>(null);
 
-  // renewal (existing member)
+  // member lookup: drives both "renew existing member" and the member
+  // management panel (view/edit plates, cancel) below it.
   const [renewLookup, setRenewLookup] = useState('');
   const [renewFinding, setRenewFinding] = useState(false);
-  const [renewMember, setRenewMember] = useState<{ name: string; memberships: { id: string; planName: string; status: string; endDate: string }[] } | null>(null);
+  const [renewMember, setRenewMember] = useState<MemberLookupResponse | null>(null);
   const [renewPlanId, setRenewPlanId] = useState('');
 
   useEffect(() => {
@@ -171,7 +184,17 @@ export default function SellPackPage() {
       if (tab === 'membership' && selectedPlan) {
         const r = await api.post<{ order: SaleOrder; membershipId: string; maxPlates: number; planName: string }>(
           '/memberships/sell',
-          { planId: selectedPlan.id, customer: { name: name.trim(), phone: phone.trim(), email: email.trim() || undefined } },
+          {
+            planId: selectedPlan.id,
+            customer: {
+              name: name.trim(),
+              phone: phone.trim(),
+              email: email.trim() || undefined,
+              licensePlate: vehiclePlate.trim() || undefined,
+              vehicleBrand: vehicleBrand.trim() || undefined,
+              vehicleModel: vehicleModel.trim() || undefined,
+            },
+          },
         );
         setSale({ kind: 'membership', ...r });
         setAmountReceived(String(r.order.total));
@@ -198,10 +221,8 @@ export default function SellPackPage() {
     const isPhone = !isNumber && /\d/.test(v) && !/[a-z]/i.test(v);
     const key = isNumber ? 'number' : isPhone ? 'phone' : 'plate';
     try {
-      const m = await api.get<{ customer: { name: string }; memberships: { id: string; planName: string; status: string; endDate: string }[] }>(
-        `/members/lookup?${key}=${encodeURIComponent(v)}`,
-      );
-      setRenewMember({ name: m.customer.name, memberships: m.memberships ?? [] });
+      const m = await api.get<MemberLookupResponse>(`/members/lookup?${key}=${encodeURIComponent(v)}`);
+      setRenewMember(m);
       setRenewPlanId('');
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.sellpack.noMemberFound', 'No member found'));
@@ -211,13 +232,17 @@ export default function SellPackPage() {
     }
   };
 
+  /** Re-run the current lookup — used by the member-management panel after a
+   *  plate save or cancel so the displayed membership reflects the change. */
+  const reloadRenewMember = () => { if (renewLookup.trim()) void findRenewMember(); };
+
   const startRenewal = async (membershipId: string) => {
     const planId = renewPlanId || plans[0]?.id;
     if (!planId) { setError(t('pos.sellpack.selectPlanRenew', 'Select a plan to renew on.')); return; }
     setSelling(true); setError('');
     try {
       const r = await api.post<{ order: SaleOrder; membershipId: string }>(`/memberships/${membershipId}/renew`, { planId });
-      setSale({ kind: 'renewal', order: r.order, membershipId, memberName: renewMember?.name ?? t('pos.sellpack.member', 'Member') });
+      setSale({ kind: 'renewal', order: r.order, membershipId, memberName: renewMember?.customer.name ?? t('pos.sellpack.member', 'Member') });
       setAmountReceived(String(r.order.total));
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.sellpack.failedStartRenewal', 'Failed to start renewal'));
@@ -290,26 +315,38 @@ export default function SellPackPage() {
     }
   }, [paid, sale, done, activating]);
 
-  const updatePlate = (i: number, field: keyof PlateEntry, value: string) =>
+  // Enter the vehicle-registration step with the first row pre-filled from
+  // the order's plate/brand/model, if the cashier captured one at sale time.
+  useEffect(() => {
+    if (paid && sale?.kind === 'membership') {
+      setPlates([prefillPlateRow(sale.order.licensePlate, sale.order.vehicleBrand, sale.order.vehicleModel)]);
+    }
+  }, [paid, sale]);
+
+  const updatePlate = (i: number, field: keyof PlateRow, value: string) => {
     setPlates((prev) => prev.map((p, idx) => (idx === i ? { ...p, [field]: value } : p)));
+    if (i === 0 && field === 'plate') setPlateError('');
+  };
   const addPlate = () => {
-    if (sale?.kind === 'membership' && plates.length < sale.maxPlates) {
-      setPlates((prev) => [...prev, { plate: '', brand: '', model: '' }]);
+    if (sale?.kind === 'membership' && canAddPlateRow(plates.length, sale.maxPlates)) {
+      setPlates((prev) => [...prev, emptyPlateRow()]);
     }
   };
   const removePlate = (i: number) => setPlates((prev) => prev.filter((_, idx) => idx !== i));
 
   const activate = async () => {
     if (sale?.kind !== 'membership') return;
-    const valid = plates.filter((p) => p.plate.trim() !== '');
-    if (valid.length === 0) {
-      setError(t('pos.sellpack.registerAtLeastOnePlate', 'Register at least one plate.'));
+    const validation = validatePlateRows(plates, t('pos.sellpack.registerAtLeastOnePlate', 'Register at least one plate.'));
+    if (!validation.ok) {
+      setPlateError(validation.error);
+      setError(validation.error);
       return;
     }
+    setPlateError('');
     setActivating(true);
     setError('');
     try {
-      await api.post(`/memberships/${sale.membershipId}/activate`, { plates: valid });
+      await api.post(`/memberships/${sale.membershipId}/activate`, { plates: validation.plates });
       setDone(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.sellpack.activationFailed', 'Activation failed'));
@@ -323,12 +360,16 @@ export default function SellPackPage() {
     setSelectedTemplate(null);
     setName('');
     setPhone('');
+    setVehiclePlate('');
+    setVehicleBrand('');
+    setVehicleModel('');
     setSale(null);
     setQr(null);
     setPolling(false);
     setPaid(false);
     setPaying(false);
-    setPlates([{ plate: '', brand: '', model: '' }]);
+    setPlates([emptyPlateRow()]);
+    setPlateError('');
     setActivating(false);
     setDone(false);
     setIssuing(false);
@@ -387,7 +428,7 @@ export default function SellPackPage() {
                 </div>
                 {renewMember && (
                   <div className="mt-3 text-sm">
-                    <p className="font-medium text-text-primary">{renewMember.name}</p>
+                    <p className="font-medium text-text-primary">{renewMember.customer.name}</p>
                     {renewMember.memberships.length === 0 ? (
                       <p className="text-text-muted mt-1">{t('pos.sellpack.noMemberships', 'No memberships on file — use a plan below to sell new.')}</p>
                     ) : (
@@ -409,6 +450,9 @@ export default function SellPackPage() {
                   </div>
                 )}
               </div>
+              {renewMember && renewMember.memberships.length > 0 && (
+                <MemberManagementPanel member={renewMember} onChanged={reloadRenewMember} />
+              )}
               <h2 className="section-title mb-3">{t('pos.sellpack.membershipPlans', 'Membership Plans')}</h2>
               {plans.length === 0 ? (
                 <div className="card text-sm text-text-muted">{t('pos.sellpack.noPlans', 'No membership plans yet. Create them in the dashboard.')}</div>
@@ -479,6 +523,13 @@ export default function SellPackPage() {
                 <input className="input-field" placeholder={t('pos.sellpack.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
                 <input className="input-field" placeholder={t('pos.sellpack.whatsappNumber', 'WhatsApp number (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
                 {tab === 'membership' && <input className="input-field" type="email" placeholder={t('pos.sellpack.emailOptional', 'Email (optional)')} value={email} onChange={(e) => setEmail(e.target.value)} />}
+                {tab === 'membership' && (
+                  <div className="grid grid-cols-3 gap-2">
+                    <input className="input-field" placeholder={t('pos.sellpack.vehiclePlateOptional', 'Plate (optional)')} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+                    <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={vehicleBrand} onChange={(e) => setVehicleBrand(e.target.value)} />
+                    <input className="input-field" placeholder={t('pos.sellpack.model', 'Model')} value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
+                  </div>
+                )}
                 {tab === 'membership'
                   ? <p className="text-xs text-text-muted">{t('pos.sellpack.waLoginNote', 'This WhatsApp number is how the member signs in to their portal.')}</p>
                   : <p className="text-xs text-text-muted">{t('pos.sellpack.voucherSentNote', 'Voucher codes will be sent to this WhatsApp number.')}</p>}
@@ -556,7 +607,13 @@ export default function SellPackPage() {
               {plates.map((p, i) => (
                 <div key={i} className="flex gap-2 items-start">
                   <div className="flex-1 grid grid-cols-3 gap-2">
-                    <input className="input-field" placeholder={t('pos.sellpack.plateReq', 'Plate *')} value={p.plate} onChange={(e) => updatePlate(i, 'plate', e.target.value)} />
+                    <input
+                      className={`input-field ${i === 0 && plateError ? 'border-red-400 focus:ring-red-300' : ''}`}
+                      placeholder={t('pos.sellpack.plateReq', 'Plate *')}
+                      value={p.plate}
+                      onChange={(e) => updatePlate(i, 'plate', e.target.value)}
+                      data-testid={`plate-input-${i}`}
+                    />
                     <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={p.brand} onChange={(e) => updatePlate(i, 'brand', e.target.value)} />
                     <input className="input-field" placeholder={t('pos.sellpack.model', 'Model')} value={p.model} onChange={(e) => updatePlate(i, 'model', e.target.value)} />
                   </div>
@@ -564,7 +621,10 @@ export default function SellPackPage() {
                 </div>
               ))}
             </div>
-            {plates.length < sale.maxPlates && <button onClick={addPlate} className="btn-ghost mt-3 text-sm">+ {t('pos.sellpack.addVehicle', 'Add Vehicle')}</button>}
+            {plateError && <p className="mt-2 text-sm text-red-600">{plateError}</p>}
+            {canAddPlateRow(plates.length, sale.maxPlates) && (
+              <button onClick={addPlate} className="btn-ghost mt-3 text-sm">+ {t('pos.sellpack.addPlate', 'Add license plate')}</button>
+            )}
             <div className="flex justify-end mt-5">
               <button className="btn-primary" onClick={activate} disabled={activating}>{activating ? t('pos.sellpack.activating', 'Activating…') : t('pos.sellpack.saveActivate', 'Save & Activate')}</button>
             </div>

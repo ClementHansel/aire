@@ -38,6 +38,7 @@ export function RefundDialog({ orderId, onDone, onCancel }: { orderId: string; o
   const [requiresPin, setRequiresPin] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pinRequestStatus, setPinRequestStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
   useEffect(() => {
     api.get<Refundable>(`/refunds/refundable/${orderId}`)
@@ -52,6 +53,18 @@ export function RefundDialog({ orderId, onDone, onCancel }: { orderId: string; o
 
   const fmt = (n: number) => `Rp ${Math.round(n).toLocaleString('id-ID')}`;
   const total = data ? data.lines.reduce((s, l) => { const e = sel[l.orderItemId]; return s + (e?.on ? e.amount : 0); }, 0) : 0;
+
+  // Generates + delivers (WhatsApp, else email) a one-time admin PIN for this
+  // order's refund. Mirrors the void flow's requestVoidPin.
+  const requestPin = async () => {
+    setPinRequestStatus('sending');
+    try {
+      await api.post(`/refunds/${orderId}/pin`, {});
+      setPinRequestStatus('sent');
+    } catch {
+      setPinRequestStatus('error');
+    }
+  };
 
   const submit = async () => {
     if (!data) return;
@@ -136,9 +149,22 @@ export function RefundDialog({ orderId, onDone, onCancel }: { orderId: string; o
             </label>
 
             {requiresPin && (
-              <label className="mt-3 block text-sm">{t('pos.refund.adminPin', 'Admin PIN')}
-                <input type="password" className="input-field mt-1" value={adminPin} onChange={(e) => setAdminPin(e.target.value)} autoFocus />
-              </label>
+              <div className="mt-3">
+                <label className="block text-sm">{t('pos.refund.adminPin', 'Admin PIN')}
+                  <input type="password" className="input-field mt-1" value={adminPin} onChange={(e) => setAdminPin(e.target.value)} autoFocus maxLength={6} inputMode="numeric" />
+                </label>
+                <div className="mt-2 flex items-center gap-2">
+                  <button type="button" className="btn-secondary text-xs" onClick={requestPin} disabled={pinRequestStatus === 'sending'}>
+                    {pinRequestStatus === 'sending' ? t('pos.refund.pinRequestSending', 'Sending…') : t('pos.refund.requestPin', 'Request PIN')}
+                  </button>
+                  {pinRequestStatus === 'sent' && (
+                    <span role="status" className="text-xs text-emerald-600">{t('pos.refund.pinRequestSent', 'PIN sent (WhatsApp or email).')}</span>
+                  )}
+                  {pinRequestStatus === 'error' && (
+                    <span role="alert" className="text-xs text-red-600">{t('pos.refund.pinRequestFailed', 'Failed to send PIN')}</span>
+                  )}
+                </div>
+              </div>
             )}
 
             <div className="mt-5 flex justify-end gap-2">

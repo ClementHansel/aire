@@ -8,6 +8,7 @@ import { CustomerContextService, ResolvedCustomer } from './customer-context.ser
 import { ChatMessage, LLMRouterService, LLMErrorResponse } from '../agent/llm-router.service';
 import { JobMonitorService } from '../job-monitor';
 import { normalizePhone } from '@aire/shared';
+import { formatForWhatsApp } from './whatsapp-format';
 
 /** Once-per-chat identity request, appended after the first reply to an unknown sender. */
 const IDENTITY_ASK =
@@ -254,7 +255,10 @@ export class WhatsappService implements OnModuleInit {
     return `${digits}@c.us`;
   }
 
-  async sendText(tenantId: string, to: string, text: string, outletId?: string | null): Promise<boolean> {
+  async sendText(tenantId: string, to: string, rawText: string, outletId?: string | null): Promise<boolean> {
+    // WhatsApp doesn't render Markdown — normalise **bold**/links/headings the LLM
+    // emits into WhatsApp markup (single-* bold) at this single outbound chokepoint.
+    const text = formatForWhatsApp(rawText);
     const cfg = await this.config(tenantId, outletId);
     if (!cfg) return false;
     // Per-branch on but this branch has no line of its own: no-op (require own number).
@@ -677,7 +681,7 @@ export class WhatsappService implements OnModuleInit {
 
   private async escalate(tenantId: string, convId: string, cfg: AgentCfgRow | null, from: string, reason: string, outletId?: string | null): Promise<void> {
     await this.pool.query(`UPDATE wa_conversations SET status = 'escalated' WHERE id = $1`, [convId]);
-    const ack = 'Mohon menunggu, pertanyaan Anda kami teruskan ke tim kami.';
+    const ack = 'Baik kak, ini Irene teruskan dulu ke tim biar dibantu lebih lanjut ya 🙏 Mohon tunggu sebentar, nanti tim langsung menghubungi kakak. Sambil menunggu, ada lagi yang bisa Irene bantu? 😊';
     await this.addMessage(tenantId, convId, 'outbound', ack, true, 'Escalation');
     await this.sendText(tenantId, from, ack, outletId);
     if (cfg?.escalation_number && this.notifications) {

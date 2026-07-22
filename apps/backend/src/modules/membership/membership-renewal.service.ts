@@ -110,6 +110,19 @@ export class MembershipRenewalService {
     const existing = await this.getCustomerMemberships(tenantId, o.customer_id!);
     const result = await this.renewMembership(o.customer_id!, row.plan_id, orderId, existing);
     await this.pool.query(`UPDATE membership_renewals SET applied = true, applied_at = NOW() WHERE id = $1`, [row.id]);
+
+    // Tag the fee order: same-plan renewal -> 'renewal'; a different-plan or
+    // post-revocation repurchase creates a brand new membership -> 'new_member'
+    // (mirrors the CustomerTag semantics in @aire/shared customer-tagging).
+    // Idempotent via ON CONFLICT; non-fatal if it fails.
+    try {
+      const tag = result.type === 'extension' ? 'renewal' : 'new_member';
+      await this.pool.query(
+        `INSERT INTO order_tags (order_id, tag) VALUES ($1, $2) ON CONFLICT (order_id, tag) DO NOTHING`,
+        [orderId, tag],
+      );
+    } catch { /* tagging is best-effort */ }
+
     return { type: result.type, membershipId: result.membership.id };
   }
 

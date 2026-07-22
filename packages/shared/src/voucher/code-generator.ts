@@ -63,11 +63,16 @@ export function generateCode(prefix: string, length: number = 8): string {
 /**
  * Hashes a voucher code using SHA-256 for secure database storage.
  *
+ * Codes are normalised (trimmed + upper-cased) before hashing so that a code
+ * typed in lower case or with stray whitespace still matches the stored hash.
+ * Generated codes are already upper-case, so this is idempotent for them — it
+ * only rescues human entry (the cashier/customer typing "aire-vc-…").
+ *
  * @param code - The plaintext voucher code
  * @returns Hex-encoded SHA-256 hash
  */
 export function hashVoucherCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
+  return createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
 }
 
 /**

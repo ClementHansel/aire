@@ -277,6 +277,63 @@ describe('VoidDialog', () => {
     });
   });
 
+  describe('Request Admin PIN', () => {
+    it('does not render the request-PIN button when onRequestPin is not provided', () => {
+      render(<VoidDialog {...defaultProps} requiresPin={true} />);
+
+      expect(screen.queryByTestId('void-request-pin-btn')).toBeNull();
+    });
+
+    it('renders the request-PIN button when requiresPin and onRequestPin are provided', () => {
+      const onRequestPin = vi.fn();
+      render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={onRequestPin} />);
+
+      expect(screen.getByTestId('void-request-pin-btn')).toBeDefined();
+    });
+
+    it('calls onRequestPin when the button is clicked', () => {
+      const onRequestPin = vi.fn();
+      render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={onRequestPin} />);
+
+      fireEvent.click(screen.getByTestId('void-request-pin-btn'));
+      expect(onRequestPin).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a sending label and disables the button while sending', () => {
+      const onRequestPin = vi.fn();
+      render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={onRequestPin} pinRequestStatus="sending" />);
+
+      const btn = screen.getByTestId('void-request-pin-btn') as HTMLButtonElement;
+      expect(btn.disabled).toBe(true);
+      expect(btn.textContent).toBe('Sending…');
+    });
+
+    it('shows a confirmation message once the PIN has been sent', () => {
+      render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={vi.fn()} pinRequestStatus="sent" />);
+
+      expect(screen.getByTestId('void-pin-request-sent')).toBeDefined();
+    });
+
+    it('shows an error message when the request failed', () => {
+      render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={vi.fn()} pinRequestStatus="error" />);
+
+      expect(screen.getByTestId('void-pin-request-error')).toBeDefined();
+    });
+
+    it('uses provided label overrides', () => {
+      render(
+        <VoidDialog
+          {...defaultProps}
+          requiresPin={true}
+          onRequestPin={vi.fn()}
+          labels={{ requestPin: 'Minta PIN Admin', pinLabel: 'PIN Admin' }}
+        />,
+      );
+
+      expect(screen.getByTestId('void-request-pin-btn').textContent).toBe('Minta PIN Admin');
+    });
+  });
+
   describe('Error clearing', () => {
     it('should clear error when reason is typed', () => {
       render(<VoidDialog {...defaultProps} />);

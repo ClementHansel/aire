@@ -81,6 +81,13 @@ describe('hashVoucherCode', () => {
     expect(hash).not.toContain(code);
     expect(hash).not.toContain('TESTCODE');
   });
+
+  it('normalises case and whitespace so human-typed codes still match', () => {
+    const canonical = hashVoucherCode('AIRE-VC-AB12CD3E');
+    expect(hashVoucherCode('aire-vc-ab12cd3e')).toBe(canonical);
+    expect(hashVoucherCode('  AIRE-VC-AB12CD3E  ')).toBe(canonical);
+    expect(hashVoucherCode('Aire-Vc-Ab12Cd3e')).toBe(canonical);
+  });
 });
 
 describe('generateVoucherPack', () => {

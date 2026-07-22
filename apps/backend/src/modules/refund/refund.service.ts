@@ -1,8 +1,11 @@
-import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Optional, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
+import { randomInt } from 'node:crypto';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { NotificationService } from '../notification/notification.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { JWTPayload, Role, checkVoidAuthorization } from '@aire/shared';
 import * as bcrypt from 'bcrypt';
 
@@ -30,13 +33,123 @@ export interface CreateRefundDto {
  * the operator's open shift so the drawer reconciles at close. Authorization reuses
  * the shared void rules (money-out requires the same admin-PIN gate). The accounting
  * module posts a balanced reversal on RefundIssued (idempotent per refund id).
+ *
+ * Authorization PIN: reuses the same one-time, emailed/WhatsApp'd 6-digit PIN
+ * mechanism as order.service.ts's void flow (void_pin_requests, keyed by
+ * order_id — a refund is on an order, so the order's PIN authorizes it too).
+ * See requestRefundPin / the PIN verification in createRefund.
  */
 @Injectable()
 export class RefundService {
+  private readonly logger = new Logger(RefundService.name);
+
+  /** One-time refund-PIN validity window (requestRefundPin / createRefund). */
+  private static readonly REFUND_PIN_TTL_MINUTES = 10;
+
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
+    @Optional() private readonly notification?: NotificationService,
+    @Optional() private readonly whatsapp?: WhatsappService,
   ) {}
+
+  /**
+   * Issues a one-time 6-digit PIN authorizing a refund on this order, and
+   * delivers it to the tenant — over WhatsApp (to the tenant's configured
+   * escalation number) when available, else by email to the tenant owner.
+   * Reuses the same `void_pin_requests` table as the order-void flow, keyed
+   * by order_id: a refund is always against an order, so any prior unconsumed
+   * PIN for that order (from a void request or an earlier refund request) is
+   * invalidated first — only the most recently requested PIN is ever valid.
+   */
+  async requestRefundPin(
+    orderId: string,
+    user: JWTPayload,
+  ): Promise<{ sent: boolean; expiresInMinutes: number; channel: 'whatsapp' | 'email' }> {
+    const cur = await this.pool.query<{ id: string; outlet_id: string | null; order_number: string }>(
+      `SELECT id, outlet_id, order_number FROM orders WHERE id = $1 AND tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const order = cur.rows[0];
+    if (!order) throw new BadRequestException('Order not found');
+
+    const pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const pinHash = bcrypt.hashSync(pin, 10);
+    const expiresAt = new Date(Date.now() + RefundService.REFUND_PIN_TTL_MINUTES * 60_000);
+
+    // Invalidate any still-live PIN for this order first — a new request
+    // supersedes it rather than leaving two valid codes at once (shared table
+    // with the void flow, so this also supersedes a live void PIN).
+    await this.pool.query(
+      `UPDATE void_pin_requests SET consumed_at = NOW()
+       WHERE tenant_id = $1 AND order_id = $2 AND consumed_at IS NULL`,
+      [user.tenant_id, orderId],
+    );
+    await this.pool.query(
+      `INSERT INTO void_pin_requests (tenant_id, outlet_id, order_id, pin_hash, requested_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [user.tenant_id, order.outlet_id, orderId, pinHash, user.sub, expiresAt.toISOString()],
+    );
+
+    const channel = await this.deliverRefundPin(user.tenant_id, order.order_number, pin);
+    return { sent: true, expiresInMinutes: RefundService.REFUND_PIN_TTL_MINUTES, channel };
+  }
+
+  /**
+   * Delivers the plaintext refund PIN, preferring WhatsApp (to the tenant's
+   * agent-config escalation number, via the same WAHA integration the AI
+   * agent uses) and falling back to email (tenant owner) when no escalation
+   * number is configured or the WhatsApp send fails. Logs which channel won.
+   */
+  private async deliverRefundPin(
+    tenantId: string,
+    orderNumber: string,
+    pin: string,
+  ): Promise<'whatsapp' | 'email'> {
+    const text =
+      `Kode PIN refund untuk order ${orderNumber}: ${pin}\n\n` +
+      `Berlaku ${RefundService.REFUND_PIN_TTL_MINUTES} menit. Jangan bagikan kode ini kepada siapa pun.`;
+
+    if (this.whatsapp) {
+      const cfg = await this.pool.query<{ escalation_number: string | null }>(
+        `SELECT escalation_number FROM agent_configs WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      const escalationNumber = cfg.rows[0]?.escalation_number;
+      if (escalationNumber) {
+        const ok = await this.whatsapp.sendText(tenantId, escalationNumber, text);
+        if (ok) {
+          this.logger.log(`Refund PIN for order ${orderNumber} delivered via WhatsApp (escalation number)`);
+          return 'whatsapp';
+        }
+        this.logger.warn(`Refund PIN WhatsApp delivery failed for order ${orderNumber}; falling back to email`);
+      }
+    }
+
+    const ownerRes = await this.pool.query<{ email: string }>(
+      `SELECT email FROM users
+       WHERE tenant_id = $1 AND role = 'tenant_owner' AND is_active = true
+       ORDER BY created_at ASC LIMIT 1`,
+      [tenantId],
+    );
+    const ownerEmail = ownerRes.rows[0]?.email;
+    if (!ownerEmail) {
+      throw new BadRequestException(
+        'No WhatsApp escalation number or active tenant owner with an email is configured to receive the refund PIN',
+      );
+    }
+    const sendResult = await this.notification?.sendEmail({
+      to: ownerEmail,
+      subject: `Kode PIN Refund — Order ${orderNumber}`,
+      body: text,
+    });
+    if (sendResult && !sendResult.success) {
+      this.logger.warn(`Refund PIN email failed to send for order ${orderNumber}: ${sendResult.error}`);
+    } else {
+      this.logger.log(`Refund PIN for order ${orderNumber} delivered via email`);
+    }
+    return 'email';
+  }
 
   async createRefund(tenantId: string, dto: CreateRefundDto, user: JWTPayload) {
     if (!dto?.orderId) throw new BadRequestException('orderId is required');
@@ -64,16 +177,20 @@ export class RefundService {
       throw new BadRequestException('Order is day-locked (its shift is closed) and cannot be refunded');
     }
 
-    // Authorization — money-out, gated like a void.
+    // Authorization — money-out, gated like a void. Verifies against the same
+    // one-time PIN mechanism as order.service.ts's void flow: the latest
+    // unconsumed, unexpired void_pin_requests row for this order (requested
+    // via requestRefundPin, above) — not the old static users.admin_pin_hash.
     const freeWindow = Number(order.outlet_settings?.free_void_window_minutes ?? 0) || 0;
-    let pinRows: { admin_pin_hash: string }[] = [];
+    let pinRow: { id: string; pin_hash: string } | null = null;
     if (dto.adminPin) {
-      const pr = await this.pool.query<{ admin_pin_hash: string }>(
-        `SELECT admin_pin_hash FROM users
-         WHERE tenant_id = $1 AND admin_pin_hash IS NOT NULL AND role IN ('tenant_owner', 'outlet_admin')`,
-        [tenantId],
+      const pr = await this.pool.query<{ id: string; pin_hash: string }>(
+        `SELECT id, pin_hash FROM void_pin_requests
+         WHERE tenant_id = $1 AND order_id = $2 AND consumed_at IS NULL AND expires_at > NOW()
+         ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, dto.orderId],
       );
-      pinRows = pr.rows;
+      pinRow = pr.rows[0] ?? null;
     }
     const auth = checkVoidAuthorization(
       {
@@ -84,7 +201,7 @@ export class RefundService {
         currentTime: new Date().toISOString(),
         freeVoidWindowMinutes: freeWindow,
       },
-      (pin) => pinRows.some((r) => !!r.admin_pin_hash && bcrypt.compareSync(pin, r.admin_pin_hash)),
+      (pin) => !!pinRow && bcrypt.compareSync(pin, pinRow.pin_hash),
     );
     if (!auth.authorized) {
       throw new BadRequestException({
@@ -200,6 +317,13 @@ export class RefundService {
            VALUES ($1,$2,'out',$3,'refund',$4,$5)`,
           [tenantId, shiftId, total, `Refund ${refundNumber} (order ${order.order_number})`, user.sub],
         );
+      }
+
+      // Single-use: consume the one-time PIN so it can't be replayed. Done in
+      // the same transaction as the refund itself, so a rollback (e.g. a
+      // later step throwing) leaves the PIN valid to retry with.
+      if (pinRow) {
+        await client.query(`UPDATE void_pin_requests SET consumed_at = NOW() WHERE id = $1`, [pinRow.id]);
       }
 
       await client.query(

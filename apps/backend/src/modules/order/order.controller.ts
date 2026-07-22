@@ -193,6 +193,18 @@ export class OrderController {
   }
 
   /**
+   * POST /api/orders/:id/void-pin — issues a one-time 6-digit PIN (emailed to
+   * the tenant owner) authorizing a void of this order past the free-window.
+   * Same authorization posture as /void: no fixed role gate — any signed-in
+   * operator may request one; voidOrder is what actually enforces who needs it.
+   */
+  @Post(':id/void-pin')
+  @HttpCode(HttpStatus.OK)
+  async requestVoidPin(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.orderService.requestVoidPin(id, user);
+  }
+
+  /**
    * POST /api/orders/:id/void — cashier-facing void. Authorization (reason /
    * free-window / admin PIN) is enforced inside the service via the shared
    * void-authorization rules, so no fixed role gate here (any signed-in operator

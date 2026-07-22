@@ -21,6 +21,12 @@ interface OrderCard {
   operatorName: string;
   status: 'ordered' | 'paid' | 'confirmed' | 'completed' | 'cancelled';
   items: OrderCardItem[];
+  subtotal: number;
+  serviceCharge: number;
+  tax: number;
+  voucherDiscount: number;
+  promoDiscount: number;
+  paymentMethod?: string | null;
   total: number;
   createdAt: string;
 }
@@ -55,9 +61,17 @@ export default function OrdersPage() {
   const [voidTarget, setVoidTarget] = useState<OrderCard | null>(null);
   const [voidRequiresPin, setVoidRequiresPin] = useState(false);
   const [voidErr, setVoidErr] = useState('');
+  const [pinRequestStatus, setPinRequestStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
   // Refund flow state.
   const [refundTarget, setRefundTarget] = useState<OrderCard | null>(null);
+
+  // Settle (pay) flow state — for an unpaid ('ordered') order rung up but not yet paid.
+  const [payTarget, setPayTarget] = useState<OrderCard | null>(null);
+  const [payMethod, setPayMethod] = useState<'cash' | 'qris_static'>('cash');
+  const [payAmount, setPayAmount] = useState('');
+  const [paying, setPaying] = useState(false);
+  const [payErr, setPayErr] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -82,7 +96,19 @@ export default function OrdersPage() {
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
   const isPaid = (s: OrderCard['status']) => s === 'paid' || s === 'confirmed' || s === 'completed';
 
-  const openVoid = (o: OrderCard) => { setVoidTarget(o); setVoidRequiresPin(false); setVoidErr(''); };
+  const openVoid = (o: OrderCard) => { setVoidTarget(o); setVoidRequiresPin(false); setVoidErr(''); setPinRequestStatus('idle'); };
+
+  // Generates + emails a one-time admin PIN to the tenant owner for this order.
+  const requestVoidPin = async () => {
+    if (!voidTarget) return;
+    setPinRequestStatus('sending');
+    try {
+      await api.post(`/orders/${voidTarget.id}/void-pin`, {});
+      setPinRequestStatus('sent');
+    } catch {
+      setPinRequestStatus('error');
+    }
+  };
 
   const confirmVoid = async (data: { reason: string; adminPin?: string }) => {
     if (!voidTarget) return;
@@ -102,21 +128,62 @@ export default function OrdersPage() {
     }
   };
 
+  // Settle an unpaid ('ordered') order via the existing pay endpoint — reuses the
+  // same /orders/:id/pay call the new-order payment modal uses.
+  const openSettle = (o: OrderCard, method: 'cash' | 'qris_static') => {
+    setPayTarget(o); setPayMethod(method); setPayAmount(String(o.total)); setPayErr('');
+  };
+
+  const confirmSettle = async () => {
+    if (!payTarget) return;
+    setPaying(true); setPayErr('');
+    try {
+      await api.post(`/orders/${payTarget.id}/pay`, {
+        method: payMethod,
+        amountReceived: payMethod === 'cash' ? Number(payAmount) : undefined,
+      });
+      setPayTarget(null);
+      load();
+    } catch (e) {
+      setPayErr(e instanceof Error ? e.message : t('pos.orders.paymentFailed', 'Payment failed'));
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const PAYMENT_METHOD_LABELS: Record<string, string> = {
+    cash: t('pos.orders.pmCash', 'Cash'),
+    qris_static: t('pos.orders.pmQrisStatic', 'QRIS (static)'),
+    qris_dynamic: t('pos.orders.pmQrisDynamic', 'QRIS'),
+    edc: t('pos.orders.pmEdc', 'EDC / Debit'),
+    cc: t('pos.orders.pmCc', 'Credit Card'),
+    transfer: t('pos.orders.pmTransfer', 'Bank Transfer'),
+  };
+
   // Client-side printable receipt (opens a print window). Reusable for reprint.
   const printReceipt = (o: OrderCard) => {
     const branch = getPosOutletName() ?? '';
+    const paymentLabel = o.paymentMethod ? (PAYMENT_METHOD_LABELS[o.paymentMethod] ?? o.paymentMethod) : '';
 
     // Designed layout: fill the tenant's receipt template with this order.
     if (receiptTpl) {
+      const totals: DocData['totals'] = [
+        { label: t('pos.orders.subtotal', 'Subtotal'), value: fmt(o.subtotal) },
+      ];
+      if (o.serviceCharge > 0) totals.push({ label: t('pos.orders.serviceCharge', 'Service charge'), value: fmt(o.serviceCharge) });
+      if (o.tax > 0) totals.push({ label: t('pos.orders.tax', 'Tax/PPN'), value: fmt(o.tax) });
+      if (o.voucherDiscount > 0) totals.push({ label: t('pos.orders.voucher', 'Voucher'), value: `−${fmt(o.voucherDiscount)}` });
+      if (o.promoDiscount > 0) totals.push({ label: t('pos.orders.promo', 'Promo'), value: `−${fmt(o.promoDiscount)}` });
+      totals.push({ label: t('pos.orders.total', 'Total'), value: fmt(o.total), strong: true });
       const data: DocData = {
         fields: {
           outlet_name: branch, outlet_address: '', outlet_phone: '',
           order_number: o.orderNumber, datetime: new Date(o.createdAt).toLocaleString('id-ID'),
           customer_name: o.customerName, license_plate: o.licensePlate ?? '',
-          operator_name: o.operatorName ?? '', payment_method: '',
+          operator_name: o.operatorName ?? '', payment_method: paymentLabel,
         },
         items: o.items.map((it) => ({ line: `${it.quantity}× ${it.serviceName}`, subtotal: fmt(it.subtotal) })),
-        totals: [{ label: 'Total', value: fmt(o.total), strong: true }],
+        totals,
         logo: null, code: null,
       };
       const w = window.open('', '_blank', 'width=340,height=600');
@@ -128,10 +195,18 @@ export default function OrdersPage() {
 
 
     const rows = o.items.map((it) => `<tr><td>${it.quantity}× ${escapeHtml(it.serviceName)}</td><td style="text-align:right">${fmt(it.subtotal)}</td></tr>`).join('');
+    const breakdownRows = [
+      `<tr><td>${t('pos.orders.subtotal', 'Subtotal')}</td><td style="text-align:right">${fmt(o.subtotal)}</td></tr>`,
+      o.serviceCharge > 0 ? `<tr><td>${t('pos.orders.serviceCharge', 'Service charge')}</td><td style="text-align:right">${fmt(o.serviceCharge)}</td></tr>` : '',
+      o.tax > 0 ? `<tr><td>${t('pos.orders.tax', 'Tax/PPN')}</td><td style="text-align:right">${fmt(o.tax)}</td></tr>` : '',
+      o.voucherDiscount > 0 ? `<tr><td>${t('pos.orders.voucher', 'Voucher')}</td><td style="text-align:right">−${fmt(o.voucherDiscount)}</td></tr>` : '',
+      o.promoDiscount > 0 ? `<tr><td>${t('pos.orders.promo', 'Promo')}</td><td style="text-align:right">−${fmt(o.promoDiscount)}</td></tr>` : '',
+    ].filter(Boolean).join('');
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${o.orderNumber}</title>
       <style>*{font-family:ui-monospace,Menlo,Consolas,monospace}body{width:280px;margin:0 auto;padding:12px;color:#111}
       h1{font-size:15px;text-align:center;margin:0 0 2px}.muted{color:#555;font-size:11px;text-align:center;margin:0}
       table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}td{padding:2px 0}
+      .brk{border-top:1px dashed #999;margin-top:4px}
       .tot{border-top:1px dashed #999;margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;font-weight:700}
       .foot{text-align:center;font-size:11px;color:#555;margin-top:10px}</style></head>
       <body onload="window.print()">
@@ -139,8 +214,9 @@ export default function OrdersPage() {
       <p class="muted">${o.orderNumber} · ${new Date(o.createdAt).toLocaleString('id-ID')}</p>
       <p class="muted">${escapeHtml(o.customerName)}${o.customerPhone ? ' · ' + escapeHtml(o.customerPhone) : ''}${o.licensePlate ? ' · ' + escapeHtml(o.licensePlate) : ''}</p>
       <table>${rows}</table>
+      <table class="brk">${breakdownRows}</table>
       <div class="tot"><span>Total</span><span>${fmt(o.total)}</span></div>
-      <p class="foot">${o.status.toUpperCase()} · ${escapeHtml(o.operatorName || '')}</p>
+      <p class="foot">${o.status.toUpperCase()}${paymentLabel ? ' · ' + escapeHtml(paymentLabel) : ''} · ${escapeHtml(o.operatorName || '')}</p>
       <p class="foot">Terima kasih!</p>
       </body></html>`;
     const w = window.open('', '_blank', 'width=340,height=600');
@@ -189,7 +265,17 @@ export default function OrdersPage() {
                   <span className="text-xs text-text-muted">{new Date(o.createdAt).toLocaleString('id-ID')}</span>
                   <span className="font-semibold text-primary-600">{fmt(o.total)}</span>
                 </div>
-                <div className="flex gap-2 mt-3">
+                {o.status === 'ordered' && (
+                  <div className="flex gap-2 mt-3">
+                    <button className="btn-primary text-xs flex-1" onClick={() => openSettle(o, 'cash')}>
+                      💵 {t('pos.orders.settleCash', 'Cash')}
+                    </button>
+                    <button className="btn-primary text-xs flex-1" onClick={() => openSettle(o, 'qris_static')}>
+                      📱 {t('pos.orders.settleQris', 'QRIS')}
+                    </button>
+                  </div>
+                )}
+                <div className="flex gap-2 mt-2">
                   <button className="btn-secondary text-xs flex-1" onClick={() => printReceipt(o)}>
                     🖨 {t('pos.orders.receipt', 'Receipt')}
                   </button>
@@ -218,7 +304,17 @@ export default function OrdersPage() {
               requiresPin={voidRequiresPin}
               isPaidOrder={isPaid(voidTarget.status)}
               onConfirm={confirmVoid}
-              onCancel={() => { setVoidTarget(null); setVoidRequiresPin(false); setVoidErr(''); }}
+              onCancel={() => { setVoidTarget(null); setVoidRequiresPin(false); setVoidErr(''); setPinRequestStatus('idle'); }}
+              onRequestPin={requestVoidPin}
+              pinRequestStatus={pinRequestStatus}
+              labels={{
+                requestPin: t('pos.orders.requestPin', 'Request Admin PIN'),
+                requestPinSending: t('pos.orders.requestPinSending', 'Sending…'),
+                requestPinSent: t('pos.orders.requestPinSent', 'PIN sent to owner’s email.'),
+                requestPinFailed: t('pos.orders.requestPinFailed', 'Failed to send PIN'),
+                pinLabel: t('pos.orders.pinLabel', 'Admin PIN'),
+                pinPlaceholder: t('pos.orders.pinPlaceholder', 'Enter the 6-digit PIN from the email'),
+              }}
             />
           </div>
         </div>
@@ -230,6 +326,43 @@ export default function OrdersPage() {
           onDone={() => { setRefundTarget(null); load(); }}
           onCancel={() => setRefundTarget(null)}
         />
+      )}
+
+      {/* Settle payment — Cash/QRIS for an unpaid ('ordered') order. */}
+      {payTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !paying && setPayTarget(null)}>
+          <div className="card w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <h3 className="section-title">{t('pos.orders.settlePayment', 'Settle Payment')} — {payTarget.orderNumber}</h3>
+            {payErr && <div className="mt-2 rounded-lg bg-red-50 border border-red-200 p-2 text-sm text-red-700">{payErr}</div>}
+            <div className="mt-3 flex justify-between text-sm">
+              <span className="text-text-secondary">{t('pos.orders.total', 'Total')}</span>
+              <span className="font-semibold text-primary-600">{fmt(payTarget.total)}</span>
+            </div>
+            <div className="mt-3 inline-flex rounded-md border border-border bg-surface-raised p-0.5" role="group" aria-label={t('pos.orders.paymentMethod', 'Payment method')}>
+              <button type="button" onClick={() => setPayMethod('cash')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${payMethod === 'cash' ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                💵 {t('pos.orders.settleCash', 'Cash')}
+              </button>
+              <button type="button" onClick={() => setPayMethod('qris_static')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${payMethod === 'qris_static' ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}>
+                📱 {t('pos.orders.settleQris', 'QRIS')}
+              </button>
+            </div>
+            {payMethod === 'cash' ? (
+              <div className="mt-3">
+                <label className="block text-sm font-medium mb-1.5">{t('pos.new.amountReceived', 'Amount Received')}</label>
+                <input aria-label={t('pos.new.amountReceived', 'Amount received')} type="number" className="input-field" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
+                <p className="mt-1 text-sm text-text-secondary">{t('pos.new.change', 'Change:')} <span className="font-medium text-text-primary">{fmt(Math.max(0, Number(payAmount || 0) - payTarget.total))}</span></p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-text-secondary">{t('pos.orders.qrisStaticNote', "Confirm once the customer has scanned the outlet's QRIS sticker and paid.")}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-5">
+              <button className="btn-secondary" onClick={() => setPayTarget(null)} disabled={paying}>{t('pos.new.cancel', 'Cancel')}</button>
+              <button className="btn-primary" onClick={confirmSettle} disabled={paying}>
+                {paying ? t('pos.new.processing', 'Processing…') : payMethod === 'qris_static' ? t('pos.new.markPaid', 'Tandai Sudah Bayar') : t('pos.new.confirmPayment', 'Confirm Payment')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

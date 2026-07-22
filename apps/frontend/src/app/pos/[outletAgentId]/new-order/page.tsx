@@ -31,6 +31,9 @@ interface CartLine {
   name: string;
   price: number;
   qty: number;
+  /** Cashier-entered manual discount for this line, in Rupiah (total, not per-unit).
+   *  The server clamps this to the outlet's configured cap — this is UX only. */
+  manualDiscount?: number;
 }
 
 interface CreatedOrder {
@@ -41,7 +44,15 @@ interface CreatedOrder {
   serviceCharge: number;
   tax: number;
   voucherDiscount: number;
+  /** Set when a member's benefit was withheld (daily/lifetime quota hit) and the
+   *  order was charged at normal price — surfaced so the cashier can explain it. */
+  membershipQuotaWarning?: string;
 }
+
+/** Client-side hint only — the server (order.service.ts) is the source of truth
+ *  and always clamps to the outlet's configured (or default) cap regardless of
+ *  what the POS displays here. */
+const CLIENT_MAX_MANUAL_DISCOUNT_PCT = 0.3;
 
 interface MemberLookupResp {
   customer: { id: string; name: string; phone: string };
@@ -160,6 +171,9 @@ export default function NewOrderPage() {
   const [voucherInput, setVoucherInput] = useState('');
   const [voucherMsg, setVoucherMsg] = useState('');
   const [checkingVoucher, setCheckingVoucher] = useState(false);
+  // Orange badge: code is real but doesn't apply to this cart (wrong outlet/brand/
+  // service, or min-order not met) — carries the server's stated reason.
+  const [voucherWarning, setVoucherWarning] = useState<{ code: string; reason: string } | null>(null);
 
   // Promotions are no longer auto-applied — the cashier previews eligible promos
   // for the current cart and explicitly ticks the ones to apply.
@@ -169,12 +183,14 @@ export default function NewOrderPage() {
 
   // payment state
   const [order, setOrder] = useState<CreatedOrder | null>(null);
-  const [payMethod, setPayMethod] = useState<'cash' | 'qris_dynamic' | 'edc' | 'cc' | 'transfer'>('cash');
+  const [payMethod, setPayMethod] = useState<'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'cc' | 'transfer'>('cash');
   const [amountReceived, setAmountReceived] = useState('');
+  // Trace/slip or transfer reference — required for EDC / Credit Card / Transfer.
+  const [referenceNumber, setReferenceNumber] = useState('');
   const [paying, setPaying] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
-  const [receipt, setReceipt] = useState<{ orderNumber: string; total: number; change: number } | null>(null);
+  const [receipt, setReceipt] = useState<{ orderNumber: string; total: number; change: number; membershipQuotaWarning?: string } | null>(null);
   // The branch this POS is operating. POS follows the HR schedule: it's today's
   // scheduled branch when set, otherwise the operator's home outlet.
   const [operatingOutletId, setOperatingOutletId] = useState<string | null>(null);
@@ -364,11 +380,20 @@ export default function NewOrderPage() {
     );
   };
 
-  const subtotal = cart.reduce((sum, l) => sum + l.price * l.qty, 0);
+  // Manual per-line discount cap hint (UX only — the server clamps regardless).
+  const lineDiscountCap = (l: CartLine) => Math.floor(l.price * l.qty * CLIENT_MAX_MANUAL_DISCOUNT_PCT);
+
+  const changeDiscount = (serviceId: string, value: string) => {
+    const raw = Math.max(0, Number(value) || 0);
+    setCart((prev) => prev.map((l) => (l.serviceId === serviceId ? { ...l, manualDiscount: raw } : l)));
+  };
+
+  const subtotal = cart.reduce((sum, l) => sum + Math.max(0, l.price * l.qty - (l.manualDiscount ?? 0)), 0);
+  const totalManualDiscount = cart.reduce((sum, l) => sum + (l.manualDiscount ?? 0), 0);
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
   const applyVoucher = async () => {
-    const code = voucherInput.trim();
+    const code = voucherInput.trim().toUpperCase();
     if (!code) return;
     if (voucherCodes.includes(code)) {
       setVoucherMsg(t('pos.new.codeAlreadyAdded', 'Code already added'));
@@ -376,8 +401,9 @@ export default function NewOrderPage() {
     }
     setCheckingVoucher(true);
     setVoucherMsg('');
+    setVoucherWarning(null);
     try {
-      const res = await api.post<{ status: string; message: string; discountAmount?: number }>(
+      const res = await api.post<{ status: string; message: string; discountAmount?: number; reason?: string }>(
         '/vouchers/validate',
         { code, serviceIdsInCart: cart.map((l) => l.serviceId), orderSubtotal: subtotal },
       );
@@ -385,6 +411,10 @@ export default function NewOrderPage() {
         setVoucherCodes((prev) => [...prev, code]);
         setVoucherInput('');
         setVoucherMsg(`${t('pos.new.applied', 'Applied:')} −${fmt(res.discountAmount ?? 0)}`);
+      } else if (res.status === 'valid_not_applicable') {
+        // Real code, but not applicable to this cart (wrong outlet/brand/service or
+        // min-order not met) — orange badge with the server's reason, not an error.
+        setVoucherWarning({ code, reason: res.reason || res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied') });
       } else {
         setVoucherMsg(res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied'));
       }
@@ -455,7 +485,7 @@ export default function NewOrderPage() {
     try {
       const created = await api.post<CreatedOrder>('/orders', {
         customer: { name: name.trim(), phone: phone.trim(), licensePlate: plate.trim() || undefined, brand: brand.trim() || undefined, model: model.trim() || undefined },
-        items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty })),
+        items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty, manualDiscount: l.manualDiscount || undefined })),
         businessUnit,
         salespersonName: salesperson.trim() || undefined,
         salespersonEmployeeId: salespersonEmployeeId || undefined,
@@ -477,6 +507,11 @@ export default function NewOrderPage() {
 
   const confirmPayment = async () => {
     if (!order) return;
+    // EDC / Credit Card / Transfer require a reference number before settling.
+    if ((payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') && !referenceNumber.trim()) {
+      setError(t('pos.new.referenceRequired', 'Enter the reference/trace number to settle this payment.'));
+      return;
+    }
     setPaying(true);
     setError('');
     try {
@@ -491,9 +526,10 @@ export default function NewOrderPage() {
         method: payMethod,
         paymentChannel: payMethods.find((m) => m.id === selectedPmId)?.businessUnit ?? businessUnit,
         amountReceived: payMethod === 'cash' ? Number(amountReceived) : undefined,
+        referenceNumber: (payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') ? referenceNumber.trim() : undefined,
       });
       const change = payMethod === 'cash' ? Math.max(0, Number(amountReceived) - order.total) : 0;
-      finishSale(order.orderNumber, order.total, change);
+      finishSale(order.orderNumber, order.total, change, order.membershipQuotaWarning);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.new.paymentFailed', 'Payment failed'));
     } finally {
@@ -501,15 +537,16 @@ export default function NewOrderPage() {
     }
   };
 
-  const finishSale = (orderNumber: string, total: number, change: number) => {
-    setReceipt({ orderNumber, total, change });
+  const finishSale = (orderNumber: string, total: number, change: number, membershipQuotaWarning?: string) => {
+    setReceipt({ orderNumber, total, change, membershipQuotaWarning });
     setCart([]);
     setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
-    setVoucherCodes([]); setVoucherInput(''); setVoucherMsg('');
+    setVoucherCodes([]); setVoucherInput(''); setVoucherMsg(''); setVoucherWarning(null);
     setPromoOptions([]); setSelectedPromoIds([]);
     setOrder(null); setQr(null); setPolling(false); setPaying(false); setSelectedPmId(null);
     setQueueEntryId(null); setMembershipId(null); setSelectedPlate(null); setMemberBanner(null);
     setMemberExpiry(null); setMemberAlert(null); setFindInput('');
+    setReferenceNumber(''); setPayMethod('cash');
   };
 
   // Poll order status while waiting for QRIS gateway confirmation
@@ -520,7 +557,7 @@ export default function NewOrderPage() {
         const o = await api.get<{ status: string; orderNumber: string; total: number }>(`/orders/${order.id}`);
         if (o.status === 'paid') {
           clearInterval(id);
-          finishSale(o.orderNumber, o.total, 0);
+          finishSale(o.orderNumber, o.total, 0, order.membershipQuotaWarning);
         }
       } catch { /* keep polling */ }
     }, 3000);
@@ -678,15 +715,35 @@ export default function NewOrderPage() {
             {cart.length === 0 ? (
               <p className="text-sm text-text-muted italic">{t('pos.new.tapServices', 'Tap services to add them to the order.')}</p>
             ) : cart.map((l) => (
-              <div key={l.serviceId} className="flex items-center justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-text-primary truncate">{l.name}</p>
-                  <p className="text-xs text-text-muted">{fmt(l.price)}</p>
+              <div key={l.serviceId} className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-text-primary truncate">{l.name}</p>
+                    <p className="text-xs text-text-muted">{fmt(l.price)}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => changeQty(l.serviceId, -1)} className="w-6 h-6 rounded bg-surface-sunken text-text-primary">−</button>
+                    <span className="w-6 text-center text-sm">{l.qty}</span>
+                    <button onClick={() => changeQty(l.serviceId, 1)} className="w-6 h-6 rounded bg-surface-sunken text-text-primary">+</button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => changeQty(l.serviceId, -1)} className="w-6 h-6 rounded bg-surface-sunken text-text-primary">−</button>
-                  <span className="w-6 text-center text-sm">{l.qty}</span>
-                  <button onClick={() => changeQty(l.serviceId, 1)} className="w-6 h-6 rounded bg-surface-sunken text-text-primary">+</button>
+                <div className="flex items-center gap-1.5 pl-0.5">
+                  <label htmlFor={`disc-${l.serviceId}`} className="text-[11px] text-text-muted">{t('pos.new.discount', 'Disc')}</label>
+                  <input
+                    id={`disc-${l.serviceId}`}
+                    type="number"
+                    min={0}
+                    className="input-field !py-1 !px-2 text-xs w-24"
+                    placeholder="Rp 0"
+                    value={l.manualDiscount || ''}
+                    onChange={(e) => changeDiscount(l.serviceId, e.target.value)}
+                    aria-label={`${t('pos.new.discount', 'Discount')} — ${l.name}`}
+                  />
+                  {(l.manualDiscount ?? 0) > lineDiscountCap(l) && (
+                    <span className="text-[11px] text-amber-600">
+                      {t('pos.new.discountCapHint', 'Server caps at')} {fmt(lineDiscountCap(l))}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
@@ -696,10 +753,10 @@ export default function NewOrderPage() {
             <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('pos.new.voucherCode', 'Voucher Code')}</label>
             <div className="flex gap-2">
               <input
-                className="input-field flex-1"
+                className="input-field flex-1 uppercase"
                 placeholder={t('pos.new.enterCode', 'Enter code')}
                 value={voucherInput}
-                onChange={(e) => setVoucherInput(e.target.value)}
+                onChange={(e) => { setVoucherInput(e.target.value.toUpperCase()); setVoucherWarning(null); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyVoucher(); } }}
               />
               <button onClick={applyVoucher} disabled={checkingVoucher || !voucherInput.trim()} className="btn-secondary">
@@ -707,12 +764,18 @@ export default function NewOrderPage() {
               </button>
             </div>
             {voucherMsg && <p className="mt-1 text-xs text-text-secondary">{voucherMsg}</p>}
+            {voucherWarning && (
+              <div className="mt-2 flex items-start gap-1.5 text-xs">
+                <span className="badge bg-orange-50 text-orange-700 border border-orange-200 shrink-0">{voucherWarning.code}</span>
+                <span className="text-orange-700">{voucherWarning.reason}</span>
+              </div>
+            )}
             {voucherCodes.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {voucherCodes.map((c) => (
-                  <span key={c} className="badge bg-primary-50 text-primary-700 flex items-center gap-1">
+                  <span key={c} className="badge bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
                     {c}
-                    <button onClick={() => removeVoucher(c)} className="text-primary-400 hover:text-primary-700">✕</button>
+                    <button onClick={() => removeVoucher(c)} className="text-blue-400 hover:text-blue-700">✕</button>
                   </span>
                 ))}
               </div>
@@ -768,6 +831,9 @@ export default function NewOrderPage() {
 
           <div className="border-t border-border pt-3 mt-3">
             <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium">{fmt(subtotal)}</span></div>
+            {totalManualDiscount > 0 && (
+              <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.manualDiscount', 'Manual discount')}</span><span className="font-medium text-green-600">−{fmt(totalManualDiscount)}</span></div>
+            )}
             {promoDiscount > 0 && (
               <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.promoSectionTitle', 'Promo')}</span><span className="font-medium text-green-600">−{fmt(promoDiscount)}</span></div>
             )}
@@ -786,6 +852,11 @@ export default function NewOrderPage() {
           <div className="card w-full max-w-md">
             <h3 className="section-title">{t('pos.new.payment', 'Payment')} — {order.orderNumber}</h3>
             <PaymentSandboxNote className="mt-3" />
+            {order.membershipQuotaWarning && (
+              <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
+                ⚠️ {order.membershipQuotaWarning}
+              </div>
+            )}
             <div className="mt-4 space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span>{fmt(order.subtotal)}</span></div>
               <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.serviceCharge', 'Service charge')}</span><span>{fmt(order.serviceCharge)}</span></div>
@@ -799,6 +870,9 @@ export default function NewOrderPage() {
               {payMethods.length > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
                   {payMethods.map((pm) => {
+                    // A "qris" payment method covers both dynamic (gateway) and static
+                    // (printed/sticker) flows — default to dynamic; the toggle below lets
+                    // the cashier switch to static for this same method.
                     const mapped = pm.kind === 'qris' ? 'qris_dynamic' : pm.kind;
                     const active = selectedPmId === pm.id;
                     return (
@@ -824,10 +898,31 @@ export default function NewOrderPage() {
                 <select aria-label={t('pos.new.paymentMethod', 'Payment method')} className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
                   <option value="cash">{t('pos.new.cash', 'Cash')}</option>
                   <option value="qris_dynamic">{t('pos.new.qrisScan', 'QRIS (scan to pay)')}</option>
+                  <option value="qris_static">{t('pos.new.qrisStatic', 'QRIS (static — sudah ditempel)')}</option>
                   <option value="edc">{t('pos.new.edcDebit', 'EDC / Debit')}</option>
                   <option value="cc">{t('pos.new.creditCard', 'Credit Card')}</option>
                   <option value="transfer">{t('pos.new.bankTransfer', 'Bank Transfer')}</option>
                 </select>
+              )}
+              {(payMethod === 'qris_dynamic' || payMethod === 'qris_static') && payMethods.some((m) => m.id === selectedPmId && m.kind === 'qris') && (
+                <div className="mt-2 inline-flex rounded-md border border-border bg-surface-raised p-0.5" role="group" aria-label={t('pos.new.qrisMode', 'QRIS mode')}>
+                  <button
+                    type="button"
+                    disabled={polling}
+                    onClick={() => setPayMethod('qris_dynamic')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${payMethod === 'qris_dynamic' ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}
+                  >
+                    {t('pos.new.qrisDynamicShort', 'Dynamic (scan)')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={polling}
+                    onClick={() => setPayMethod('qris_static')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${payMethod === 'qris_static' ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}
+                  >
+                    {t('pos.new.qrisStaticShort', 'Static (sudah bayar)')}
+                  </button>
+                </div>
               )}
               {payMethod !== 'cash' && (
                 <p className="mt-1.5 text-xs text-text-muted">{t('pos.new.settlesTo', 'Settles to the')} <span className="font-medium text-text-primary">{payMethods.find((m) => m.id === selectedPmId)?.businessUnit ?? businessUnit}</span> {t('pos.new.account', 'account.')}</p>
@@ -839,6 +934,27 @@ export default function NewOrderPage() {
                 <label className="block text-sm font-medium mb-1.5">{t('pos.new.amountReceived', 'Amount Received')}</label>
                 <input aria-label={t('pos.new.amountReceived', 'Amount received')} type="number" className="input-field" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
                 <p className="mt-1 text-sm text-text-secondary">{t('pos.new.change', 'Change:')} <span className="font-medium text-text-primary">{fmt(Math.max(0, Number(amountReceived || 0) - order.total))}</span></p>
+              </div>
+            )}
+
+            {(payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') && (
+              <div className="mt-3">
+                <label className="block text-sm font-medium mb-1.5">
+                  {payMethod === 'transfer' ? t('pos.new.transferReference', 'Transfer reference (last 4 digits)') : t('pos.new.edcReference', 'Reference / trace number')}
+                </label>
+                <input
+                  aria-label={t('pos.new.referenceNumber', 'Reference number')}
+                  className="input-field"
+                  placeholder={t('pos.new.referencePlaceholder', 'e.g. 123456')}
+                  value={referenceNumber}
+                  onChange={(e) => setReferenceNumber(e.target.value)}
+                />
+              </div>
+            )}
+
+            {payMethod === 'qris_static' && (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-text-secondary mb-2">{t('pos.new.qrisStaticInstruction', 'Ask the customer to scan the outlet\'s printed QRIS sticker, then confirm below once they\'ve paid.')}</p>
               </div>
             )}
 
@@ -860,12 +976,15 @@ export default function NewOrderPage() {
             )}
 
             <div className="flex gap-2 justify-end mt-5">
-              <button className="btn-secondary" onClick={() => { setOrder(null); setQr(null); setPolling(false); }} disabled={paying && !qr}>
+              <button className="btn-secondary" onClick={() => { setOrder(null); setQr(null); setPolling(false); setReferenceNumber(''); }} disabled={paying && !qr}>
                 {qr ? t('pos.new.close', 'Close') : t('pos.new.cancel', 'Cancel')}
               </button>
               {!qr && (
                 <button className="btn-primary" onClick={confirmPayment} disabled={paying}>
-                  {paying ? t('pos.new.processing', 'Processing…') : payMethod === 'qris_dynamic' ? t('pos.new.generateQr', 'Generate QR') : t('pos.new.confirmPayment', 'Confirm Payment')}
+                  {paying ? t('pos.new.processing', 'Processing…')
+                    : payMethod === 'qris_dynamic' ? t('pos.new.generateQr', 'Generate QR')
+                      : payMethod === 'qris_static' ? t('pos.new.markPaid', 'Tandai Sudah Bayar')
+                        : t('pos.new.confirmPayment', 'Confirm Payment')}
                 </button>
               )}
             </div>
@@ -912,6 +1031,11 @@ export default function NewOrderPage() {
               <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.totalPaid', 'Total Paid')}</span><span className="font-medium">{fmt(receipt.total)}</span></div>
               {receipt.change > 0 && <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.changeLabel', 'Change')}</span><span className="font-medium">{fmt(receipt.change)}</span></div>}
             </div>
+            {receipt.membershipQuotaWarning && (
+              <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800 text-left">
+                ⚠️ {receipt.membershipQuotaWarning}
+              </div>
+            )}
             <button className="btn-primary w-full mt-5" onClick={() => setReceipt(null)}>{t('pos.new.newOrder', 'New Order')}</button>
           </div>
         </div>

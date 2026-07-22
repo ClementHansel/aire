@@ -165,6 +165,14 @@ export interface OrderCard {
   operatorName: string;
   status: OrderStatus;
   items: OrderCardItem[];
+  /** Pre-charges/discount sum of line items. */
+  subtotal: number;
+  serviceCharge: number;
+  tax: number;
+  voucherDiscount: number;
+  promoDiscount: number;
+  /** Settlement method once paid (cash/qris_static/qris_dynamic/edc/cc/transfer); null while unpaid. */
+  paymentMethod?: string | null;
   total: number;
   createdAt: string;
 }

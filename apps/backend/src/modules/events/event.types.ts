@@ -23,11 +23,14 @@ export enum DomainEventType {
   MembershipReactivated = 'membership.reactivated',
   MembershipEnteredGrace = 'membership.entered_grace',
   MembershipRevoked = 'membership.revoked',
+  MembershipCancelled = 'membership.cancelled',
   // Vouchers
   VoucherPackSold = 'voucher.pack_sold',
   VoucherPackIssued = 'voucher.pack_issued',
   VoucherBookSold = 'voucher.book_sold',
   VoucherRedeemed = 'voucher.redeemed',
+  // Campaigns (membership-purchase bonus voucher grants)
+  CampaignBonusGranted = 'campaign.bonus_granted',
   // Customers
   CustomerCreated = 'customer.created',
   // Bookings (scheduled appointments)

@@ -23,6 +23,23 @@ export interface VoidDialogProps {
   onConfirm: (data: { reason: string; adminPin?: string }) => void;
   /** Called when void is cancelled */
   onCancel: () => void;
+  /**
+   * Called when the cashier taps "Request Admin PIN" — should call the
+   * backend to generate + email a one-time PIN to the tenant owner. Omit to
+   * hide the button (e.g. when requiresPin is always false for this caller).
+   */
+  onRequestPin?: () => void;
+  /** Status of the last requestPin call, drives the button/status text. */
+  pinRequestStatus?: 'idle' | 'sending' | 'sent' | 'error';
+  /** i18n text overrides — all default to English so existing callers keep working untranslated. */
+  labels?: {
+    requestPin?: string;
+    requestPinSending?: string;
+    requestPinSent?: string;
+    requestPinFailed?: string;
+    pinLabel?: string;
+    pinPlaceholder?: string;
+  };
 }
 
 export function VoidDialog({
@@ -30,7 +47,18 @@ export function VoidDialog({
   isPaidOrder,
   onConfirm,
   onCancel,
+  onRequestPin,
+  pinRequestStatus = 'idle',
+  labels,
 }: VoidDialogProps) {
+  const L = {
+    requestPin: labels?.requestPin ?? 'Request Admin PIN',
+    requestPinSending: labels?.requestPinSending ?? 'Sending…',
+    requestPinSent: labels?.requestPinSent ?? 'PIN sent to owner’s email.',
+    requestPinFailed: labels?.requestPinFailed ?? 'Failed to send PIN',
+    pinLabel: labels?.pinLabel ?? 'Admin PIN',
+    pinPlaceholder: labels?.pinPlaceholder ?? 'Enter the 6-digit PIN from the email',
+  };
   const [reason, setReason] = useState('');
   const [adminPin, setAdminPin] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -119,7 +147,7 @@ export function VoidDialog({
         {requiresPin && (
           <div className="void-dialog__field" data-testid="void-pin-section">
             <label htmlFor="void-pin" className="void-dialog__label">
-              Admin PIN <span aria-label="required">*</span>
+              {L.pinLabel} <span aria-label="required">*</span>
             </label>
             <input
               id="void-pin"
@@ -127,13 +155,36 @@ export function VoidDialog({
               className="void-dialog__pin-input"
               value={adminPin}
               onChange={handlePinChange}
-              placeholder="Enter 6-digit PIN"
+              placeholder={L.pinPlaceholder}
               maxLength={6}
               inputMode="numeric"
               pattern="\d{6}"
               aria-required="true"
               data-testid="void-pin-input"
             />
+            {onRequestPin && (
+              <div className="void-dialog__pin-request">
+                <button
+                  type="button"
+                  className="void-dialog__request-pin-btn"
+                  onClick={onRequestPin}
+                  disabled={pinRequestStatus === 'sending'}
+                  data-testid="void-request-pin-btn"
+                >
+                  {pinRequestStatus === 'sending' ? L.requestPinSending : L.requestPin}
+                </button>
+                {pinRequestStatus === 'sent' && (
+                  <span className="void-dialog__pin-request-status" role="status" data-testid="void-pin-request-sent">
+                    {L.requestPinSent}
+                  </span>
+                )}
+                {pinRequestStatus === 'error' && (
+                  <span className="void-dialog__pin-request-status void-dialog__pin-request-status--error" role="alert" data-testid="void-pin-request-error">
+                    {L.requestPinFailed}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
 

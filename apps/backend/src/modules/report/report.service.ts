@@ -30,7 +30,7 @@ export class ReportService {
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
     const res = await this.pool.query<{ day: string; orders: string; revenue: string; paid: string }>(
-      `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+      `SELECT to_char(created_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
               COUNT(*)::int AS orders,
               COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
               COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS paid
@@ -102,7 +102,7 @@ export class ReportService {
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
     if (businessUnit) { filter += ` AND business_unit = $${qp.length + 1}`; qp.push(businessUnit); }
     const res = await this.pool.query<{ period: string; revenue: string; orders: string }>(
-      `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period,
+      `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'Asia/Jakarta'), 'YYYY-MM-DD') AS period,
               COALESCE(SUM(total) FILTER (WHERE status IN ('paid','confirmed','completed')), 0) AS revenue,
               COUNT(*) FILTER (WHERE status IN ('paid','confirmed','completed'))::int AS orders
        FROM orders
@@ -119,7 +119,7 @@ export class ReportService {
     const gran = params.granularity ?? 'day';
     const trunc = gran === 'month' ? 'month' : gran === 'week' ? 'week' : 'day';
     const res = await this.pool.query<{ period: string; n: string }>(
-      `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS period,
+      `SELECT to_char(date_trunc('${trunc}', created_at AT TIME ZONE 'Asia/Jakarta'), 'YYYY-MM-DD') AS period,
               COUNT(*)::int AS n
        FROM customers
        WHERE tenant_id = $3 AND created_at >= $1::timestamptz AND created_at < ($2::date + INTERVAL '1 day')

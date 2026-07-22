@@ -75,6 +75,17 @@ export interface SendResult {
 }
 
 /**
+ * Email message payload for the generic transactional-email path (e.g. the
+ * emailed one-time void PIN). Plain text only — no template system.
+ */
+export interface EmailMessage {
+  /** Recipient email address */
+  to: string;
+  subject: string;
+  body: string;
+}
+
+/**
  * Retry configuration with exponential backoff.
  * 3 attempts with delays: 30s, 60s, 120s.
  */
@@ -112,6 +123,9 @@ export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
   private readonly whatsappApiUrl: string;
   private readonly whatsappApiToken: string;
+  private readonly emailApiUrl: string;
+  private readonly emailApiToken: string;
+  private readonly emailFrom: string;
 
   /** In-memory queue stub (replaced by BullMQ in production integration) */
   private readonly jobQueue: NotificationJob[] = [];
@@ -127,6 +141,13 @@ export class NotificationService {
     this.whatsappApiUrl =
       this.configService.get<string>('WHATSAPP_API_URL') ?? 'https://api.whatsapp.business/v1';
     this.whatsappApiToken = this.configService.get<string>('WHATSAPP_API_TOKEN') ?? '';
+    // No email vendor is wired anywhere in this codebase yet (auth.service.ts's
+    // forgotPassword returns the reset token directly for the same reason). These
+    // stay empty until ops configures a real provider; sendEmail() degrades to a
+    // logged no-op rather than failing the caller when they're unset.
+    this.emailApiUrl = this.configService.get<string>('EMAIL_API_URL') ?? '';
+    this.emailApiToken = this.configService.get<string>('EMAIL_API_TOKEN') ?? '';
+    this.emailFrom = this.configService.get<string>('EMAIL_FROM_ADDRESS') ?? 'no-reply@useairin.id';
     this.httpClient = globalThis.fetch?.bind(globalThis) ?? (async () => new Response(null, { status: 500 }));
   }
 
@@ -205,6 +226,57 @@ export class NotificationService {
       this.logger.error(
         `Failed to send WhatsApp message ${message.templateName} to ${message.to}: ${errorMessage}`,
       );
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Sends a transactional email via a generic HTTP email provider (configured
+   * with EMAIL_API_URL / EMAIL_API_TOKEN). Used for e.g. the emailed one-time
+   * void PIN (order.service.ts requestVoidPin).
+   *
+   * No email vendor is configured anywhere in this deployment yet — when the
+   * env vars are unset this logs the message and returns success so callers
+   * (and their tests) aren't blocked on an unwired provider, mirroring how
+   * auth.service.ts's forgotPassword handles the same gap. Once EMAIL_API_URL/
+   * EMAIL_API_TOKEN are set in ops this actually delivers the email.
+   */
+  async sendEmail(message: EmailMessage): Promise<SendResult> {
+    if (!this.emailApiUrl || !this.emailApiToken) {
+      this.logger.warn(
+        `No email provider configured (EMAIL_API_URL/EMAIL_API_TOKEN unset) — logging instead of sending: to=${message.to} subject="${message.subject}"`,
+      );
+      return { success: true, messageId: 'logged-only' };
+    }
+
+    try {
+      const response = await this.httpClient(`${this.emailApiUrl}/emails`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.emailApiToken}`,
+        },
+        body: JSON.stringify({
+          from: this.emailFrom,
+          to: message.to,
+          subject: message.subject,
+          text: message.body,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'Unknown error');
+        this.logger.warn(`Email API returned ${response.status} for "${message.subject}" to ${message.to}: ${errorBody}`);
+        return { success: false, error: `HTTP ${response.status}: ${errorBody}` };
+      }
+
+      const result = await response.json().catch(() => ({}));
+      const messageId = (result as any)?.id ?? 'unknown';
+      this.logger.log(`Email sent: "${message.subject}" to ${message.to} (id: ${messageId})`);
+      return { success: true, messageId };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to send email "${message.subject}" to ${message.to}: ${errorMessage}`);
       return { success: false, error: errorMessage };
     }
   }

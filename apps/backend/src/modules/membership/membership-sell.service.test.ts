@@ -245,14 +245,53 @@ describe('MembershipSellService', () => {
       });
       // 6b: membership-number issuance looks up the order's outlet (best-effort).
       mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // 6c: tag the fee order 'new_member'.
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
       const result = await service.activateMembership(membershipId, { plates: [] });
 
       expect(result.status).toBe(MembershipStatus.Active);
-      // No plate INSERT should run: fetch, plan, update, order-outlet lookup = 4.
-      expect(mockPool.query).toHaveBeenCalledTimes(4);
+      // No plate INSERT should run: fetch, plan, update, order-outlet lookup,
+      // order-tag insert, activation audit-log insert = 6.
+      expect(mockPool.query).toHaveBeenCalledTimes(6);
       const sqls = mockPool.query.mock.calls.map((c: unknown[]) => String(c[0]));
       expect(sqls.some((s: string) => s.includes('INSERT INTO membership_plates'))).toBe(false);
+      expect(sqls.some((s: string) => s.includes("INSERT INTO order_tags"))).toBe(true);
+      expect(sqls.some((s: string) => s.includes('INSERT INTO audit_logs'))).toBe(true);
+    });
+
+    it('should throw NotFoundException when tenantId is provided and does not match', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
+
+      await expect(
+        service.activateMembership(membershipId, { plates: [] }, 'some-other-tenant'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should write an audit_logs row for the activation with operator + before/after', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: [{ max_plates: 3, duration_months: 3 }] });
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ ...mockMembershipRow, status: MembershipStatus.Active }],
+      });
+      // audit_logs insert (this is what we're verifying)
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // 6b order-outlet lookup, 6c order-tag insert
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await service.activateMembership(membershipId, { plates: [] }, tenantId, 'operator-999');
+
+      const auditCall = mockPool.query.mock.calls.find((c: unknown[]) =>
+        String(c[0]).includes('INSERT INTO audit_logs'),
+      )!;
+      const params = auditCall[1] as unknown[];
+      expect(params[0]).toBe(tenantId);
+      expect(params[1]).toBe('operator-999');
+      expect(params[2]).toBe('membership_activated');
+      expect(params[3]).toBe('membership');
+      expect(params[4]).toBe(membershipId);
+      expect(JSON.parse(params[5] as string)).toEqual({ status: MembershipStatus.Pending });
     });
   });
 

@@ -382,4 +382,10 @@ export const en: Record<string, string> = {
   'pos.orders.title': 'Orders',
   'pos.orders.void': 'Void',
   'pos.orders.voidFailed': 'Void failed',
+  'pos.orders.requestPin': 'Request Admin PIN',
+  'pos.orders.requestPinSending': 'Sending…',
+  'pos.orders.requestPinSent': 'PIN sent to owner’s email.',
+  'pos.orders.requestPinFailed': 'Failed to send PIN',
+  'pos.orders.pinLabel': 'Admin PIN',
+  'pos.orders.pinPlaceholder': 'Enter the 6-digit PIN from the email',
 };

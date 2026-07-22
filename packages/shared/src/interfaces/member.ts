@@ -46,6 +46,9 @@ export interface MembershipDetail {
   discountedServices: DiscountedServiceInfo[];
   /** Map of plate → uses today */
   dailyUsageToday: Record<string, number>;
+  /** Max registered plates allowed by the plan (default 3). Optional so older
+   *  callers/fixtures that predate this field keep type-checking. */
+  maxPlates?: number;
 }
 
 /**

@@ -11,6 +11,9 @@ export interface OutletSettings {
   service_charge_pct?: number;
   tax_pct?: number;
   free_void_window_minutes?: number;
+  /** Owner-set cap on the cashier's per-line manual discount, e.g. 0.2 = 20%.
+   *  Enforced server-side in OrderService.createOrder — the POS UI cap is cosmetic only. */
+  max_manual_discount_pct?: number;
   [key: string]: unknown;
 }
 
