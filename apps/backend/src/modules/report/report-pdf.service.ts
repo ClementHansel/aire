@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { SummaryResponse } from '@aire/shared';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { TDocumentDefinitions, Content, ContentTable, TFontDictionary } from 'pdfmake/interfaces';
 
 // pdfmake is pinned to the stable 0.2.x line: its CommonJS main IS the Node server
@@ -23,12 +25,14 @@ const PdfPrinter: new (fonts: TFontDictionary) => PdfPrinter = require('pdfmake'
 
 /**
  * Renders the business report as a polished, branded PDF (server-side, no
- * headless browser). Uses pdfmake with the bundled Roboto fonts.
+ * headless browser). Uses pdfmake with the AIRIN brand faces (vendored below)
+ * plus bundled Roboto as a glyph-coverage fallback.
  *
- * Layout: a slim brand masthead + footer (page numbers) on every page, then a
- * title block, KPI band, AIRE/LEAD P&L, two vector bar charts (revenue trend +
- * payment mix), and zebra-striped tables (payment methods, top services, daily
- * sales, shifts).
+ * Layout: a dark, full-bleed AIRIN cover page (wordmark, mono title, tenant/
+ * period/scope info cards), then a slim brand masthead + footer (page numbers)
+ * on every following page, a title block, KPI band, AIRE/LEAD P&L, two vector
+ * bar charts (revenue trend + payment mix), and zebra-striped tables (payment
+ * methods, top services, daily sales, shifts).
  */
 
 export interface DailyRow {
@@ -70,41 +74,81 @@ export interface ReportPdfInput {
   logoDataUrl?: string;
 }
 
-// ── Brand palette (matches the web app) ──────────────────────────────────────
-const BRAND = '#1652f0';
-const BRAND_DARK = '#0e36a3';
+// ── AIRIN brand palette ───────────────────────────────────────────────────────
+// Matches the AIRIN design system (see AIRE Cashier Handbook reference): a deep
+// navy "Surface Dark" cover, Brand Blue as the primary accent, a lighter Accent
+// Purple for secondary highlights, and a warm Floral White for the wordmark.
+const BRAND = '#3d3fa3'; // Brand Blue (primary)
+const BRAND_DARK = '#292b6e'; // Brand Blue, darkened for small text on light bg
+const SURFACE_DARK = '#141433'; // cover background
+const SURFACE_DARK_2 = '#1c1c4a'; // cover gradient stop
+const ACCENT_PURPLE = '#8b7ff5'; // secondary accent (charts, cover kicker/labels)
+const FLORAL_WHITE = '#fffbf0'; // warm white (wordmark, cover footer rule)
 const INK = '#0a0a0a';
 const SLATE = '#1e293b';
 const MUTED = '#6b7280';
 const FAINT = '#9ca3af';
 const HAIRLINE = '#e5e7eb';
-const SUNKEN = '#f8fafc';
+const SUNKEN = '#f1f0fb'; // brand-tinted near-white (KPI band / zebra rows)
 const GREEN = '#0f9d58';
 const RED = '#d93025';
 
 @Injectable()
 export class ReportPdfService {
   private readonly printer: PdfPrinter;
+  private readonly wordmarkSvg: string;
 
   constructor() {
-    // pdfmake ships Roboto as base64 in build/vfs_fonts. The export shape has
-    // varied across versions, so unwrap defensively, then hand Buffers to the
-    // server-side printer (which wants font data, not browser vfs).
+    // Brand faces are vendored under src/assets (nest-cli.json copies them to
+    // dist/assets on build/watch — see "assets" in nest-cli.json), so resolve
+    // relative to this compiled file rather than process.cwd().
+    const assetsDir = path.join(__dirname, '..', '..', 'assets');
+    const fontFile = (rel: string): Buffer => {
+      const p = path.join(assetsDir, 'fonts', rel);
+      if (!fs.existsSync(p)) throw new Error(`Vendored report font missing: ${p}`);
+      return fs.readFileSync(p);
+    };
+
+    // pdfmake ships Roboto as base64 in build/vfs_fonts. Kept registered (but
+    // unused by defaultStyle) purely as a fallback family for any glyph outside
+    // Inter/JetBrains Mono's coverage. The export shape has varied across
+    // versions, so unwrap defensively, then hand Buffers to the server-side
+    // printer (which wants font data, not browser vfs).
     const mod: any = require('pdfmake/build/vfs_fonts');
     const vfs: Record<string, string> = mod?.pdfMake?.vfs ?? mod?.vfs ?? mod?.default?.pdfMake?.vfs ?? mod;
-    const font = (name: string): Buffer => {
+    const robotoFont = (name: string): Buffer => {
       const data = vfs[name];
       if (!data) throw new Error(`pdfmake bundled font missing: ${name}`);
       return Buffer.from(data, 'base64');
     };
+
     this.printer = new PdfPrinter({
+      // Body face. Regression note: pdfmake's bundled Roboto build drops the
+      // "fi" ligature glyph ("Confidential" → "Confdential", "Microfiber" →
+      // "Microfber") — Inter renders it correctly, which this fixes.
+      Inter: {
+        normal: fontFile('inter/Inter-Regular.ttf'),
+        bold: fontFile('inter/Inter-Bold.ttf'),
+        italics: fontFile('inter/Inter-Italic.ttf'),
+        bolditalics: fontFile('inter/Inter-BoldItalic.ttf'),
+      },
+      // Headline face — mono, per the AIRIN brand system (titles/section
+      // headers). --font-mono in the web app.
+      JetBrainsMono: {
+        normal: fontFile('jetbrains-mono/JetBrainsMono-Regular.ttf'),
+        bold: fontFile('jetbrains-mono/JetBrainsMono-Bold.ttf'),
+        italics: fontFile('jetbrains-mono/JetBrainsMono-Italic.ttf'),
+        bolditalics: fontFile('jetbrains-mono/JetBrainsMono-BoldItalic.ttf'),
+      },
       Roboto: {
-        normal: font('Roboto-Regular.ttf'),
-        bold: font('Roboto-Medium.ttf'),
-        italics: font('Roboto-Italic.ttf'),
-        bolditalics: font('Roboto-MediumItalic.ttf'),
+        normal: robotoFont('Roboto-Regular.ttf'),
+        bold: robotoFont('Roboto-Medium.ttf'),
+        italics: robotoFont('Roboto-Italic.ttf'),
+        bolditalics: robotoFont('Roboto-MediumItalic.ttf'),
       },
     } as any);
+
+    this.wordmarkSvg = fs.readFileSync(path.join(assetsDir, 'brand', 'airin-wordmark-white.svg'), 'utf8');
   }
 
   async build(input: ReportPdfInput): Promise<Buffer> {
@@ -131,6 +175,95 @@ export class ReportPdfService {
   private fmtDate(d: string | Date): string {
     const dt = typeof d === 'string' ? new Date(d) : d;
     return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  // ── Cover page (AIRIN brand system) ──────────────────────────────────────────
+  // A dark, full-bleed first page: wordmark, mono kicker + title, tenant/period
+  // subtitle, and a 2x2 grid of labeled info cards, mirroring the cover of the
+  // AIRE Cashier Handbook reference. `background` paints the surface (it draws
+  // ignoring pageMargins, so it bleeds to the page edge); the content below
+  // sits inside the normal margins on top of it.
+  private coverBackground(pageSize: { width: number; height: number }): Content {
+    return {
+      canvas: [
+        { type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, linearGradient: [SURFACE_DARK, SURFACE_DARK_2] },
+        { type: 'ellipse', x: pageSize.width * 0.82, y: pageSize.height * 0.34, r1: 260, r2: 340, color: ACCENT_PURPLE, fillOpacity: 0.14 },
+        { type: 'ellipse', x: pageSize.width * 0.98, y: pageSize.height * 0.6, r1: 200, r2: 270, color: BRAND, fillOpacity: 0.28 },
+      ],
+    };
+  }
+
+  // Returned shape is a table Column (has `width`), which the shared `Content`
+  // type doesn't model — same widening `buCard` already uses below.
+  private coverCard(label: string, value: string): any {
+    const w = 237;
+    const h = 60;
+    return {
+      width: w,
+      stack: [
+        {
+          canvas: [
+            { type: 'rect', x: 0, y: 0, w, h, r: 7, color: FLORAL_WHITE, fillOpacity: 0.07 },
+            { type: 'rect', x: 0, y: 0, w, h, r: 7, lineColor: FLORAL_WHITE, lineWidth: 0.75, fillOpacity: 0 },
+          ],
+        },
+        {
+          text: label.toUpperCase(),
+          font: 'JetBrainsMono',
+          fontSize: 7,
+          color: ACCENT_PURPLE,
+          characterSpacing: 0.6,
+          margin: [14, -h + 13, 14, 0] as [number, number, number, number],
+        },
+        { text: value, font: 'Inter', bold: true, fontSize: 10.5, color: FLORAL_WHITE, margin: [14, 5, 14, 0] as [number, number, number, number] },
+      ],
+    };
+  }
+
+  private coverPage(input: ReportPdfInput, scope: string, unit: string, periodLabel: string): Content[] {
+    return [
+      { svg: this.wordmarkSvg, width: 118, margin: [0, 8, 0, 0] as [number, number, number, number] },
+      {
+        text: 'BUSINESS REPORT / OPERATIONS SUMMARY',
+        font: 'JetBrainsMono',
+        fontSize: 8.5,
+        color: ACCENT_PURPLE,
+        characterSpacing: 1,
+        margin: [0, 130, 0, 16] as [number, number, number, number],
+      },
+      { text: 'Business Report', font: 'JetBrainsMono', bold: true, fontSize: 32, color: FLORAL_WHITE, margin: [0, 0, 0, 12] as [number, number, number, number] },
+      {
+        text: input.tenantName,
+        font: 'Inter',
+        bold: true,
+        fontSize: 13,
+        color: FLORAL_WHITE,
+        margin: [0, 0, 0, 3] as [number, number, number, number],
+      },
+      {
+        text: `${unit} · ${periodLabel}`,
+        font: 'Inter',
+        fontSize: 10.5,
+        color: '#c7c6ec',
+        margin: [0, 0, 0, 46] as [number, number, number, number],
+      },
+      {
+        columns: [this.coverCard('BUSINESS', input.tenantName), { width: 15, text: '' }, this.coverCard('PERIOD', periodLabel)],
+        margin: [0, 0, 0, 15] as [number, number, number, number],
+      },
+      {
+        columns: [this.coverCard('SCOPE', scope), { width: 15, text: '' }, this.coverCard('GENERATED', this.fmtDate(input.generatedAt))],
+        margin: [0, 0, 0, 0] as [number, number, number, number],
+      },
+      {
+        text: 'Powered by AIRIN',
+        font: 'JetBrainsMono',
+        fontSize: 8,
+        color: '#8886c2',
+        absolutePosition: { x: 40, y: 780 },
+      },
+      { text: '', pageBreak: 'after' },
+    ];
   }
 
   // ── Horizontal bar chart as a borderless table (label | bar | value) ────────
@@ -250,8 +383,18 @@ export class ReportPdfService {
     } as ContentTable;
   }
 
+  // Section titles follow the AIRIN brand system: a short Brand-Blue vertical
+  // bar accent to the left of a mono-face heading (e.g. "▎ 1. Getting started"
+  // in the reference handbook).
   private sectionTitle(text: string): Content {
-    return { text, fontSize: 11, bold: true, color: INK, margin: [0, 4, 0, 6] };
+    return {
+      columns: [
+        { width: 3, canvas: [{ type: 'rect', x: 0, y: 1, w: 3, h: 12, r: 1, color: BRAND }] },
+        { width: 'auto', text, font: 'JetBrainsMono', bold: true, fontSize: 11, color: SURFACE_DARK, margin: [7, 0, 0, 0] as [number, number, number, number] },
+      ],
+      columnGap: 0,
+      margin: [0, 4, 0, 6] as [number, number, number, number],
+    };
   }
 
   private docDefinition(input: ReportPdfInput): TDocumentDefinitions {
@@ -278,22 +421,24 @@ export class ReportPdfService {
     titleColumns.push(
       {
         stack: [
-          { text: 'Business Report', fontSize: 20, bold: true, color: INK },
-          { text: input.tenantName, fontSize: 10, color: MUTED, margin: [0, 2, 0, 0] },
+          { text: 'Business Report', font: 'JetBrainsMono', bold: true, fontSize: 19, color: SURFACE_DARK },
+          { text: input.tenantName, fontSize: 10, color: MUTED, margin: [0, 3, 0, 0] as [number, number, number, number] },
         ],
       },
       {
         width: 'auto',
         stack: [
           { text: periodLabel, fontSize: 10, bold: true, color: BRAND_DARK, alignment: 'right' },
-          { text: scope, fontSize: 9, color: SLATE, alignment: 'right', margin: [0, 2, 0, 0] },
+          { text: scope, fontSize: 9, color: SLATE, alignment: 'right', margin: [0, 2, 0, 0] as [number, number, number, number] },
           { text: unit, fontSize: 9, color: MUTED, alignment: 'right' },
         ],
       },
     );
 
     const content: Content[] = [
-      // Title block (always shown)
+      // Cover page (AIRIN brand system) — page-breaks into the report body below.
+      ...this.coverPage(input, scope, unit, periodLabel),
+      // Title block
       { columns: titleColumns, columnGap: 12, margin: [0, 0, 0, 4] },
       { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: BRAND }], margin: [0, 0, 0, 16] },
     ];
@@ -305,9 +450,9 @@ export class ReportPdfService {
         this.sectionTitle('Revenue by business unit'),
         {
           columns: [
-            this.buCard('AIRE · Car Wash', bu('AIRE'), '#0369a1'),
+            this.buCard('AIRE · Car Wash', bu('AIRE'), BRAND),
             { width: 12, text: '' },
-            this.buCard('LEAD · Detailing', bu('LEAD'), '#7c3aed'),
+            this.buCard('LEAD · Detailing', bu('LEAD'), ACCENT_PURPLE),
           ],
           margin: [0, 0, 0, 16],
         },
@@ -324,7 +469,7 @@ export class ReportPdfService {
     if (on('paymentMix')) {
       content.push(
         this.sectionTitle('Payment mix (by revenue)'),
-        this.hBarChart(paymentChart, '#0369a1', 320),
+        this.hBarChart(paymentChart, ACCENT_PURPLE, 320),
         { text: '', margin: [0, 0, 0, 8] },
         this.sectionTitle('Payment methods'),
         this.dataTable(
@@ -393,30 +538,44 @@ export class ReportPdfService {
     return {
       pageSize: 'A4',
       pageMargins: [40, 58, 40, 44],
-      defaultStyle: { font: 'Roboto', fontSize: 9, color: SLATE },
+      defaultStyle: { font: 'Inter', fontSize: 9, color: SLATE },
       info: {
-        title: `AIRE Business Report ${input.dateFrom} to ${input.dateTo}`,
-        author: 'AIRE Operations Platform',
+        title: `AIRIN Business Report ${input.dateFrom} to ${input.dateTo}`,
+        author: 'AIRIN Operations Platform',
       },
-      header: () => ({
-        margin: [40, 18, 40, 0],
-        columns: [
-          { text: [{ text: 'AIRE', bold: true, color: BRAND }, { text: '  ·  Operations Platform', color: FAINT }], fontSize: 9 },
-          { text: 'Business Report', alignment: 'right', fontSize: 8, color: FAINT },
-        ],
-      }),
-      footer: (currentPage: number, pageCount: number) => ({
-        margin: [40, 6, 40, 0],
-        columns: [
-          { text: `Confidential — ${input.tenantName}`, fontSize: 7.5, color: FAINT },
-          {
-            text: `Generated ${this.fmtDate(input.generatedAt)}   ·   Page ${currentPage} of ${pageCount}`,
-            alignment: 'right',
-            fontSize: 7.5,
-            color: FAINT,
-          },
-        ],
-      }),
+      // The cover (page 1) paints its own full-bleed dark background and
+      // footer; every later page gets the standard masthead/footer below.
+      background: (currentPage, pageSize) => (currentPage === 1 ? this.coverBackground(pageSize) : null),
+      header: (currentPage: number) =>
+        currentPage === 1
+          ? undefined
+          : {
+              margin: [40, 18, 40, 0],
+              columns: [
+                { text: [{ text: 'AIRIN', bold: true, font: 'JetBrainsMono', color: BRAND }, { text: '  ·  Operations Platform', color: FAINT }], fontSize: 9 },
+                { text: 'Business Report', alignment: 'right', fontSize: 8, color: FAINT },
+              ],
+            },
+      footer: (currentPage: number, pageCount: number) =>
+        currentPage === 1
+          ? undefined
+          : {
+              margin: [40, 6, 40, 0],
+              columns: [
+                {
+                  text: [
+                    { text: 'AIRIN', bold: true, font: 'JetBrainsMono', color: BRAND, fontSize: 7.5 },
+                    { text: `  ·  Confidential — ${input.tenantName}`, fontSize: 7.5, color: FAINT },
+                  ],
+                },
+                {
+                  text: `Generated ${this.fmtDate(input.generatedAt)}   ·   Page ${currentPage} of ${pageCount}`,
+                  alignment: 'right',
+                  fontSize: 7.5,
+                  color: FAINT,
+                },
+              ],
+            },
       content,
     };
   }
