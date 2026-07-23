@@ -306,7 +306,16 @@ export class PendingBookingService {
     if (!convId || !ack || !this.booking) return null;
 
     const status = accept ? 'confirmed' : 'cancelled';
-    await this.booking.update(tenantId, ack.bookingId, { status });
+    // If the booking row is gone (deleted/voided elsewhere), don't leave the approval
+    // stuck forever with a dead 404 — clear the stale ack, record it as cancelled, and
+    // return a resolved outcome so the dashboard panel self-heals on the next click.
+    try {
+      await this.booking.update(tenantId, ack.bookingId, { status });
+    } catch {
+      await this.writeAckList(convId, remaining);
+      await this.recordApproval(tenantId, ack, 'cancelled', 'dashboard', decidedBy).catch(() => undefined);
+      return { handled: true, reply: `Booking sudah tidak ada — approval dibersihkan (${ack.summary}).` };
+    }
     await this.writeAckList(convId, remaining);
     await this.recordApproval(tenantId, ack, status, 'dashboard', decidedBy);
     return accept

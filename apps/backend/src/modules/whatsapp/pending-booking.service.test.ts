@@ -207,4 +207,17 @@ describe('PendingBookingService.resolveByBookingId (dashboard)', () => {
     expect(out).toBeNull();
     expect(update).not.toHaveBeenCalled();
   });
+
+  it('self-heals a stale approval when the booking row is gone (no dead 404)', async () => {
+    const { pool, updates } = makePool({ pending_staff_ack: staffAck });
+    const update = vi.fn().mockRejectedValue(new Error('Booking not found')); // booking deleted/voided
+    const svc = new PendingBookingService(pool as never, { update } as unknown as BookingService);
+
+    const out = await svc.resolveByBookingId(TENANT, 'bk-9', true, 'user-1');
+    // Resolves (does not throw), and CLEARS the stale ack so the panel updates.
+    expect(out?.handled).toBe(true);
+    expect(out?.notifyCustomer).toBeUndefined(); // don't message the customer about a gone booking
+    const cleared = updates.find((u) => /pending_staff_ack/i.test(u.sql));
+    expect(cleared).toBeTruthy();
+  });
 });
