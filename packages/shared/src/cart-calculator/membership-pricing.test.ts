@@ -132,6 +132,55 @@ describe('applyMembershipPricing', () => {
     });
   });
 
+  describe('fixed-price discounted services', () => {
+    it('applies a fixed member price per unit', () => {
+      const items = [makeItem({ serviceId: 'svc-1', unitPrice: 100000, quantity: 2 })];
+      const benefits = [
+        makeBenefit({ discountedServices: [{ serviceId: 'svc-1', fixedPrice: 60000 }] }),
+      ];
+
+      const result = applyMembershipPricing(items, benefits);
+
+      expect(result.items[0].discount).toBe(80000); // 200000 - (60000 * 2)
+      expect(result.appliedPricing[0]).toEqual({
+        serviceId: 'svc-1',
+        originalPrice: 200000,
+        appliedPrice: 120000,
+        membershipId: 'mem-1',
+        discountType: 'fixed',
+        discountValue: 60000,
+        badgeLabel: 'HARGA MEMBER',
+      });
+    });
+
+    it('ignores a fixed price that would raise the price above list', () => {
+      const items = [makeItem({ serviceId: 'svc-1', unitPrice: 40000, quantity: 1 })];
+      const benefits = [
+        makeBenefit({ discountedServices: [{ serviceId: 'svc-1', fixedPrice: 90000 }] }),
+      ];
+
+      const result = applyMembershipPricing(items, benefits);
+
+      expect(result.items[0].discount).toBe(0);
+      expect(result.appliedPricing).toHaveLength(0);
+    });
+
+    it('picks the cheapest between a percentage and a fixed price across plans', () => {
+      const items = [makeItem({ serviceId: 'svc-1', unitPrice: 100000, quantity: 1 })];
+      const benefits = [
+        makeBenefit({ membershipId: 'mem-1', discountedServices: [{ serviceId: 'svc-1', discountPct: 0.2 }] }),
+        makeBenefit({ membershipId: 'mem-2', discountedServices: [{ serviceId: 'svc-1', fixedPrice: 65000 }] }),
+      ];
+
+      const result = applyMembershipPricing(items, benefits);
+
+      // 20% off → 80000 vs fixed 65000 → fixed wins.
+      expect(result.appliedPricing[0].appliedPrice).toBe(65000);
+      expect(result.appliedPricing[0].discountType).toBe('fixed');
+      expect(result.appliedPricing[0].membershipId).toBe('mem-2');
+    });
+  });
+
   describe('multiple plans - best benefit selection', () => {
     it('picks the free benefit over a percentage discount when both plans cover the same service', () => {
       const items = [makeItem({ serviceId: 'svc-1', unitPrice: 50000 })];

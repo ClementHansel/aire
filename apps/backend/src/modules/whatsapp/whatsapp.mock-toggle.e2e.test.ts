@@ -16,7 +16,7 @@ function createPool(wahaMock: boolean) {
     tenant_id: TENANT_ID, base_prompt: 'b', product_knowledge: 'k',
     escalation_number: '628999', max_messages_per_day: 50,
     wa_provider: 'waha', wa_number: '628000', waha_session: 'sess',
-    kapso_api_key: null, ai_reply_enabled: true,
+    kirim_api_key: null, kirim_phone_id: null, ai_reply_enabled: true,
     routing_mode: 'builtin', n8n_flow_id: null, bridge_token: null,
     per_branch_wa_enabled: false, waha_mock: wahaMock,
   };

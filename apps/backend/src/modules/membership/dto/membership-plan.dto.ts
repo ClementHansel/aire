@@ -2,9 +2,15 @@
  * DTOs for Membership Plan CRUD operations.
  */
 
+/**
+ * A discounted service on a membership plan. Carries EITHER a percentage
+ * discount (1–100, stored as entered) OR a fixed member price in Rp — never
+ * both. `discountPct` is optional for back-compat with fixed-price entries.
+ */
 export interface DiscountedServiceDto {
   serviceId: string;
-  discountPct: number;
+  discountPct?: number;
+  fixedPrice?: number;
 }
 
 export interface CreateMembershipPlanDto {

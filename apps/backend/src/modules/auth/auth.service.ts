@@ -1,4 +1,4 @@
-import { Injectable, Inject, Optional, UnauthorizedException, BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Inject, Optional, UnauthorizedException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -16,6 +16,7 @@ import {
   ACCESS_TOKEN_EXPIRY_SECONDS,
   REFRESH_TOKEN_EXPIRY_SECONDS,
   ERR_AUTH_INVALID_CREDENTIALS,
+  ERR_AUTH_TOO_MANY_ATTEMPTS,
   ERR_AUTH_REFRESH_TOKEN_INVALID,
   ERR_AUTH_REFRESH_TOKEN_EXPIRED,
 } from '@aire/shared';
@@ -49,8 +50,19 @@ export const ERR_TENANT_CANCELLED = 'TENANT_CANCELLED';
 /** How long a resolved tenant status is trusted before re-reading (per request path). */
 const TENANT_STATUS_TTL_MS = 15_000;
 
+/**
+ * Brute-force protection for the credential login. After MAX_LOGIN_ATTEMPTS
+ * failures for the same email inside the rolling window, the account is locked
+ * for LOGIN_LOCK_SECONDS and further attempts are rejected with 429 (not the
+ * usual 401) so the client can show a "try again in N minutes" notice instead of
+ * letting an attacker hammer passwords. Counters live in Redis, keyed by email.
+ */
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCK_SECONDS = 15 * 60;
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private redis: Redis;
   /** Short-lived tenant-status cache so lifecycle enforcement costs ~0 per request. */
   private readonly tenantStatusCache = new Map<string, { status: string; at: number }>();
@@ -75,20 +87,30 @@ export class AuthService {
   }
 
   async login(dto: LoginRequest): Promise<LoginResponse> {
-    const user = await this.findUserByEmail(dto.email);
+    const email = (dto.email ?? '').trim().toLowerCase();
 
-    if (!user) {
-      throw new UnauthorizedException(ERR_AUTH_INVALID_CREDENTIALS);
-    }
+    // Brute-force gate: reject up-front while the account is locked out.
+    await this.assertNotLockedOut(email);
 
-    if (!user.is_active) {
+    const user = await this.findUserByEmail(email);
+
+    // Route every invalid-credential path (no user / disabled / bad password)
+    // through the same failure recorder so repeated tries trip the lockout.
+    // registerLoginFailure always throws; the trailing throw is unreachable but
+    // lets the compiler narrow `user` to non-null past this point.
+    if (!user || !user.is_active) {
+      await this.registerLoginFailure(email);
       throw new UnauthorizedException(ERR_AUTH_INVALID_CREDENTIALS);
     }
 
     const passwordValid = await bcrypt.compare(dto.password, user.password_hash);
     if (!passwordValid) {
+      await this.registerLoginFailure(email);
       throw new UnauthorizedException(ERR_AUTH_INVALID_CREDENTIALS);
     }
+
+    // Success: clear any accumulated failure/lock state for this email.
+    await this.clearLoginFailures(email);
 
     // Lifecycle gate: a suspended/cancelled tenant's users cannot start a session.
     await this.assertTenantOperational(user.role, user.tenant_id);
@@ -426,6 +448,68 @@ export class AuthService {
       { expiresIn: '2h' },
     );
     return { token, customer: { id: c.id, name: c.name } };
+  }
+
+  // ─── Login brute-force protection ─────────────────────────────────────────────
+
+  /** Reject a login attempt outright while the email is inside a lockout window. */
+  private async assertNotLockedOut(email: string): Promise<void> {
+    if (!email) return;
+    try {
+      const ttl = await this.redis.ttl(`loginlock:${email}`);
+      if (ttl > 0) throw this.tooManyAttemptsError(ttl);
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      // Redis unavailable — fail open on the gate (never block a real login on infra).
+      this.logger.warn(`login lockout check failed for ${email}: ${String(e)}`);
+    }
+  }
+
+  /**
+   * Record a failed attempt and throw. Increments the per-email counter; once it
+   * reaches MAX_LOGIN_ATTEMPTS the account is locked for LOGIN_LOCK_SECONDS and a
+   * 429 is raised. Otherwise the usual 401 invalid-credentials is thrown. A Redis
+   * outage degrades gracefully to a plain 401 (no lockout, but login still works).
+   */
+  private async registerLoginFailure(email: string): Promise<never> {
+    try {
+      const key = `loginfail:${email}`;
+      const count = await this.redis.incr(key);
+      if (count === 1) await this.redis.expire(key, LOGIN_LOCK_SECONDS);
+      if (count >= MAX_LOGIN_ATTEMPTS) {
+        await this.redis.set(`loginlock:${email}`, '1', 'EX', LOGIN_LOCK_SECONDS);
+        await this.redis.del(key);
+        throw this.tooManyAttemptsError(LOGIN_LOCK_SECONDS);
+      }
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      this.logger.warn(`login failure bookkeeping failed for ${email}: ${String(e)}`);
+    }
+    throw new UnauthorizedException(ERR_AUTH_INVALID_CREDENTIALS);
+  }
+
+  /** Clear the failure counter + lock after a successful login. Best-effort. */
+  private async clearLoginFailures(email: string): Promise<void> {
+    if (!email) return;
+    try {
+      await this.redis.del(`loginfail:${email}`, `loginlock:${email}`);
+    } catch (e) {
+      this.logger.warn(`clearing login failures failed for ${email}: ${String(e)}`);
+    }
+  }
+
+  /** 429 carrying a machine code + retry hint the login UI shows as a countdown. */
+  private tooManyAttemptsError(retryAfterSeconds: number): HttpException {
+    const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    return new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        error: ERR_AUTH_TOO_MANY_ATTEMPTS,
+        message: `Too many failed login attempts. Please try again in ${minutes} minute${minutes > 1 ? 's' : ''}.`,
+        retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────────

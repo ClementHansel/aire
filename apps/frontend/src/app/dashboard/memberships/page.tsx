@@ -6,6 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import BranchFilter from '@/components/dashboard/BranchFilter';
 import { MembersPanel } from '@/components/dashboard/MembersPanel';
 import { MembershipCardDesigner } from '@/components/dashboard/MembershipCardDesigner';
+import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
 
 interface MembershipPlan {
   id: string;
@@ -18,7 +19,7 @@ interface MembershipPlan {
   price: number;
   outletIds: string[] | null;
   freeServiceIds: string[] | null;
-  discountedServices: Array<{ serviceId: string; discountPct: number }> | null;
+  discountedServices: Array<{ serviceId: string; discountPct?: number; fixedPrice?: number }> | null;
   whatsappWelcomeEnabled: boolean;
   isActive: boolean;
 }
@@ -34,7 +35,7 @@ interface FormState {
   maxPlates: string;
   price: string;
   freeServiceIds: string[];
-  discountedServices: Array<{ serviceId: string; discountPct: number }>;
+  discountedServices: Array<{ serviceId: string; discountPct?: number; fixedPrice?: number }>;
   outletIds: string[];
   whatsappWelcomeEnabled: boolean;
 }
@@ -86,11 +87,15 @@ function PlanModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  // Draft row for adding a discounted service (service + percentage).
-  const [discountDraft, setDiscountDraft] = useState<{ serviceId: string; discountPct: string }>({
+  // Draft row for adding a discounted service. `mode` picks whether `value` is a
+  // percentage (1–100) or a fixed member price (Rp); `discountError` surfaces why
+  // the Add button did nothing instead of failing silently.
+  const [discountDraft, setDiscountDraft] = useState<{ serviceId: string; mode: 'pct' | 'fixed'; value: string }>({
     serviceId: '',
-    discountPct: '',
+    mode: 'pct',
+    value: '',
   });
+  const [discountError, setDiscountError] = useState('');
 
   const toggle = (key: 'freeServiceIds' | 'outletIds', id: string) =>
     setForm((f) => ({
@@ -99,17 +104,37 @@ function PlanModal({
     }));
 
   const addDiscount = () => {
-    const pct = Number(discountDraft.discountPct);
-    if (!discountDraft.serviceId || !Number.isFinite(pct) || pct <= 0 || pct > 100) return;
+    setDiscountError('');
+    if (!discountDraft.serviceId) {
+      setDiscountError(t('dash.memberships.discountPickService', 'Please pick a service first.'));
+      return;
+    }
+    const value = Number(discountDraft.value);
+    if (!Number.isFinite(value) || value <= 0) {
+      setDiscountError(
+        discountDraft.mode === 'pct'
+          ? t('dash.memberships.discountPctInvalid', 'Enter a percentage between 1 and 100.')
+          : t('dash.memberships.discountPriceInvalid', 'Enter a member price greater than 0.'),
+      );
+      return;
+    }
+    if (discountDraft.mode === 'pct' && value > 100) {
+      setDiscountError(t('dash.memberships.discountPctInvalid', 'Enter a percentage between 1 and 100.'));
+      return;
+    }
+    const entry =
+      discountDraft.mode === 'pct'
+        ? { serviceId: discountDraft.serviceId, discountPct: value }
+        : { serviceId: discountDraft.serviceId, fixedPrice: value };
     setForm((f) => ({
       ...f,
       // Replace any existing discount for the same service.
       discountedServices: [
         ...f.discountedServices.filter((d) => d.serviceId !== discountDraft.serviceId),
-        { serviceId: discountDraft.serviceId, discountPct: pct },
+        entry,
       ],
     }));
-    setDiscountDraft({ serviceId: '', discountPct: '' });
+    setDiscountDraft({ serviceId: '', mode: discountDraft.mode, value: '' });
   };
 
   const removeDiscount = (serviceId: string) =>
@@ -196,13 +221,22 @@ function PlanModal({
             <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-lg p-2">
               {washServices.length === 0 ? (
                 <p className="text-xs text-text-muted">{t('dash.memberships.noWashServices', 'No car wash services found.')}</p>
-              ) : washServices.map((s) => (
-                <label key={s.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
-                  <input type="checkbox" checked={form.freeServiceIds.includes(s.id)} onChange={() => toggle('freeServiceIds', s.id)} />
-                  <span className="flex-1">{s.name}</span>
-                  <span className="text-xs text-text-muted">{fmt(s.price)}</span>
-                </label>
-              ))}
+              ) : (
+                <>
+                  <SelectAllCheckbox
+                    allIds={washServices.map((s) => s.id)}
+                    selectedIds={form.freeServiceIds}
+                    onChange={(next) => setForm((f) => ({ ...f, freeServiceIds: next }))}
+                  />
+                  {washServices.map((s) => (
+                    <label key={s.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                      <input type="checkbox" checked={form.freeServiceIds.includes(s.id)} onChange={() => toggle('freeServiceIds', s.id)} />
+                      <span className="flex-1">{s.name}</span>
+                      <span className="text-xs text-text-muted">{fmt(s.price)}</span>
+                    </label>
+                  ))}
+                </>
+              )}
             </div>
           </div>
 
@@ -214,7 +248,9 @@ function PlanModal({
                 {form.discountedServices.map((d) => (
                   <div key={d.serviceId} className="flex items-center gap-2 text-sm rounded-lg border border-border px-2 py-1">
                     <span className="flex-1">{serviceName(d.serviceId)}</span>
-                    <span className="badge bg-amber-50 text-amber-700 text-xs">{d.discountPct}%</span>
+                    <span className="badge bg-amber-50 text-amber-700 text-xs">
+                      {d.fixedPrice != null ? fmt(d.fixedPrice) : `${d.discountPct}%`}
+                    </span>
                     <button type="button" className="btn-ghost text-xs text-error" onClick={() => removeDiscount(d.serviceId)}>{t('dash.memberships.remove', 'Remove')}</button>
                   </div>
                 ))}
@@ -236,26 +272,43 @@ function PlanModal({
                     ))}
                 </select>
               </div>
-              <div className="w-20">
-                <input
-                  aria-label={t('dash.memberships.discountPct', 'Discount %')}
-                  type="number"
-                  min="1"
-                  max="100"
-                  placeholder="%"
+              <div className="w-28">
+                <select
+                  aria-label={t('dash.memberships.discountMode', 'Discount type')}
                   className="input-field"
-                  value={discountDraft.discountPct}
-                  onChange={(e) => setDiscountDraft((d) => ({ ...d, discountPct: e.target.value }))}
+                  value={discountDraft.mode}
+                  onChange={(e) => setDiscountDraft((d) => ({ ...d, mode: e.target.value as 'pct' | 'fixed', value: '' }))}
+                >
+                  <option value="pct">{t('dash.memberships.discountModePct', '% off')}</option>
+                  <option value="fixed">{t('dash.memberships.discountModeFixed', 'Fixed Rp')}</option>
+                </select>
+              </div>
+              <div className="w-24">
+                <input
+                  aria-label={discountDraft.mode === 'pct' ? t('dash.memberships.discountPct', 'Discount %') : t('dash.memberships.discountPrice', 'Member price')}
+                  type="number"
+                  min={discountDraft.mode === 'pct' ? '1' : '0'}
+                  max={discountDraft.mode === 'pct' ? '100' : undefined}
+                  placeholder={discountDraft.mode === 'pct' ? '%' : 'Rp'}
+                  className="input-field"
+                  value={discountDraft.value}
+                  onChange={(e) => setDiscountDraft((d) => ({ ...d, value: e.target.value }))}
                 />
               </div>
               <button type="button" className="btn-secondary text-xs" onClick={addDiscount}>{t('dash.memberships.add', 'Add')}</button>
             </div>
+            {discountError && <p className="text-xs text-error mt-1.5">{discountError}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.memberships.availableBranches', 'Available at branches')}</label>
             <p className="text-xs text-text-muted mb-2">{t('dash.memberships.availableBranchesHint', 'Leave all unchecked = available at every branch.')}</p>
             <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-lg p-2">
+              <SelectAllCheckbox
+                allIds={outlets.map((o) => o.id)}
+                selectedIds={form.outletIds}
+                onChange={(next) => setForm((f) => ({ ...f, outletIds: next }))}
+              />
               {outlets.map((o) => (
                 <label key={o.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
                   <input type="checkbox" checked={form.outletIds.includes(o.id)} onChange={() => toggle('outletIds', o.id)} />
@@ -382,7 +435,7 @@ function PlansTab() {
                   <p className="text-xs font-medium text-text-secondary mb-1.5">{t('dash.memberships.discounted', 'Discounted')}</p>
                   <div className="flex flex-wrap gap-1">
                     {plan.discountedServices.map((d) => (
-                      <span key={d.serviceId} className="badge bg-amber-50 text-amber-700 text-xs">{serviceName(d.serviceId)} −{d.discountPct}%</span>
+                      <span key={d.serviceId} className="badge bg-amber-50 text-amber-700 text-xs">{serviceName(d.serviceId)} {d.fixedPrice != null ? fmt(d.fixedPrice) : `−${d.discountPct}%`}</span>
                     ))}
                   </div>
                 </div>

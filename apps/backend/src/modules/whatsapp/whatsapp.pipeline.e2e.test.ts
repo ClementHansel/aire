@@ -8,7 +8,7 @@ import type { AgentRuntimeService } from './agent-runtime.service';
  * Purpose: prove that everything BETWEEN the third-party seams works without a
  * real WhatsApp number — webhook parse → tenant resolve → daily cap → built-in
  * AI runtime → conversation log → outbound. In mock mode the only thing stubbed
- * is the raw HTTP call to WAHA/Kapso (captured in wa_mock_outbox instead).
+ * is the raw HTTP call to WAHA/kirimdev (captured in wa_mock_outbox instead).
  *
  * If this passes but production doesn't deliver messages with WAHA_MOCK off, the
  * fault is isolated to the WAHA↔WhatsApp segment (the third party).
@@ -30,7 +30,7 @@ function createPool(overrides?: Partial<{ aiReplyEnabled: boolean; maxPerDay: nu
     tenant_id: TENANT_ID, base_prompt: 'You are the AIRE assistant.', product_knowledge: 'Hours 08-20.',
     escalation_number: '628999', max_messages_per_day: overrides?.maxPerDay ?? 50,
     wa_provider: 'waha', wa_number: '628000', waha_session: SESSION,
-    kapso_api_key: null, ai_reply_enabled: overrides?.aiReplyEnabled ?? true,
+    kirim_api_key: null, kirim_phone_id: null, ai_reply_enabled: overrides?.aiReplyEnabled ?? true,
     routing_mode: 'builtin', n8n_flow_id: null, bridge_token: null,
   };
   const convs = new Map<string, Conv>();

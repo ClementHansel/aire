@@ -6,20 +6,20 @@ import { useI18n } from '@/lib/i18n';
 
 interface AgentConfig {
   escalationNumber: string | null;
-  waProvider: 'waha' | 'kapso'; waNumber: string | null; wahaSession: string | null;
-  kapsoConfigured: boolean; aiReplyEnabled: boolean; perBranchWaEnabled: boolean; wahaMockEnabled: boolean;
+  waProvider: 'waha' | 'kirim'; waNumber: string | null; wahaSession: string | null;
+  kirimConfigured: boolean; kirimPhoneId: string | null; aiReplyEnabled: boolean; perBranchWaEnabled: boolean; wahaMockEnabled: boolean;
 }
 
 interface BranchWaConfig {
   outletId: string; name: string;
-  waProvider: 'waha' | 'kapso'; waNumber: string | null; wahaSession: string | null;
-  kapsoConfigured: boolean; configured: boolean;
+  waProvider: 'waha' | 'kirim'; waNumber: string | null; wahaSession: string | null;
+  kirimConfigured: boolean; kirimPhoneId: string | null; configured: boolean;
 }
 
 export default function AiAgentPage() {
   const { t } = useI18n();
   const [cfg, setCfg] = useState<AgentConfig | null>(null);
-  const [kapsoApiKey, setKapsoApiKey] = useState('');
+  const [kirimApiKey, setKirimApiKey] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -39,10 +39,10 @@ export default function AiAgentPage() {
     try {
       const updated = await api.put<AgentConfig>('/agent-config', {
         escalationNumber: cfg.escalationNumber,
-        waProvider: cfg.waProvider, waNumber: cfg.waNumber, wahaSession: cfg.wahaSession,
-        aiReplyEnabled: cfg.aiReplyEnabled, perBranchWaEnabled: cfg.perBranchWaEnabled, wahaMockEnabled: cfg.wahaMockEnabled, ...(kapsoApiKey ? { kapsoApiKey } : {}),
+        waProvider: cfg.waProvider, waNumber: cfg.waNumber, wahaSession: cfg.wahaSession, kirimPhoneId: cfg.kirimPhoneId,
+        aiReplyEnabled: cfg.aiReplyEnabled, perBranchWaEnabled: cfg.perBranchWaEnabled, wahaMockEnabled: cfg.wahaMockEnabled, ...(kirimApiKey ? { kirimApiKey } : {}),
       });
-      setCfg(updated); setKapsoApiKey(''); setSaved(true);
+      setCfg(updated); setKirimApiKey(''); setSaved(true);
     } catch (err) { setError(err instanceof Error ? err.message : t('dash.aiAgent.saveFailed', 'Save failed')); }
     finally { setSaving(false); }
   };
@@ -89,9 +89,9 @@ export default function AiAgentPage() {
           </div>
 
           <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-4">
-            {(['waha', 'kapso'] as const).map((p) => (
+            {(['waha', 'kirim'] as const).map((p) => (
               <button key={p} onClick={() => set('waProvider', p)} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${cfg.waProvider === p ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
-                {p === 'waha' ? t('dash.aiAgent.wahaOption', 'WAHA (QR scan)') : 'Kapso.com'}
+                {p === 'waha' ? t('dash.aiAgent.wahaOption', 'WAHA (QR scan)') : 'kirimdev'}
               </button>
             ))}
           </div>
@@ -106,7 +106,8 @@ export default function AiAgentPage() {
           ) : (
             <div className="space-y-3">
               <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.waNumber', 'WhatsApp number')}</label><input className="input-field" value={cfg.waNumber ?? ''} onChange={(e) => set('waNumber', e.target.value)} placeholder="628xxxx" /></div>
-              <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kapsoApiKey', 'Kapso API key')} {cfg.kapsoConfigured && <span className="text-xs text-green-600">({t('dash.aiAgent.configured', 'configured')})</span>}</label><input className="input-field" type="password" value={kapsoApiKey} onChange={(e) => setKapsoApiKey(e.target.value)} placeholder={cfg.kapsoConfigured ? t('dash.aiAgent.kapsoKeep', '•••••••• (leave blank to keep)') : t('dash.aiAgent.kapsoEnter', 'Enter Kapso API key')} /></div>
+              <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kirimPhoneId', 'kirim phone number ID')}</label><input className="input-field" value={cfg.kirimPhoneId ?? ''} onChange={(e) => set('kirimPhoneId', e.target.value)} placeholder="123456789012345" /></div>
+              <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kirimApiKey', 'kirim API key')} {cfg.kirimConfigured && <span className="text-xs text-green-600">({t('dash.aiAgent.configured', 'configured')})</span>}</label><input className="input-field" type="password" value={kirimApiKey} onChange={(e) => setKirimApiKey(e.target.value)} placeholder={cfg.kirimConfigured ? t('dash.aiAgent.kirimKeep', '•••••••• (leave blank to keep)') : t('dash.aiAgent.kirimEnter', 'Enter kirim API key')} /></div>
             </div>
           )}
         </div>
@@ -212,7 +213,7 @@ function PerBranchWhatsApp() {
 function BranchWaCard({ branch, onSaved }: { branch: BranchWaConfig; onSaved: () => void }) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<BranchWaConfig>(branch);
-  const [kapsoApiKey, setKapsoApiKey] = useState('');
+  const [kirimApiKey, setKirimApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -222,10 +223,10 @@ function BranchWaCard({ branch, onSaved }: { branch: BranchWaConfig; onSaved: ()
     setSaving(true); setMsg(null);
     try {
       const updated = await api.put<BranchWaConfig>(`/agent-config/branches/${branch.outletId}`, {
-        waProvider: draft.waProvider, waNumber: draft.waNumber, wahaSession: draft.wahaSession,
-        ...(kapsoApiKey ? { kapsoApiKey } : {}),
+        waProvider: draft.waProvider, waNumber: draft.waNumber, wahaSession: draft.wahaSession, kirimPhoneId: draft.kirimPhoneId,
+        ...(kirimApiKey ? { kirimApiKey } : {}),
       });
-      setDraft(updated); setKapsoApiKey(''); setMsg({ ok: true, text: t('dash.aiAgent.savedMsg', 'Saved.') });
+      setDraft(updated); setKirimApiKey(''); setMsg({ ok: true, text: t('dash.aiAgent.savedMsg', 'Saved.') });
       onSaved();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : t('dash.aiAgent.saveFailed', 'Save failed') });
@@ -236,8 +237,8 @@ function BranchWaCard({ branch, onSaved }: { branch: BranchWaConfig; onSaved: ()
     setSaving(true); setMsg(null);
     try {
       await api.delete(`/agent-config/branches/${branch.outletId}`);
-      setDraft({ ...branch, waProvider: 'waha', waNumber: null, wahaSession: null, kapsoConfigured: false, configured: false });
-      setKapsoApiKey(''); onSaved();
+      setDraft({ ...branch, waProvider: 'waha', waNumber: null, wahaSession: null, kirimConfigured: false, kirimPhoneId: null, configured: false });
+      setKirimApiKey(''); onSaved();
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : t('dash.aiAgent.saveFailed', 'Save failed') });
     } finally { setSaving(false); }
@@ -259,9 +260,9 @@ function BranchWaCard({ branch, onSaved }: { branch: BranchWaConfig; onSaved: ()
       </div>
 
       <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 mb-3">
-        {(['waha', 'kapso'] as const).map((p) => (
+        {(['waha', 'kirim'] as const).map((p) => (
           <button key={p} onClick={() => set('waProvider', p)} className={`px-3 py-1 text-xs font-semibold rounded-md ${draft.waProvider === p ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
-            {p === 'waha' ? t('dash.aiAgent.wahaOption', 'WAHA (QR scan)') : 'Kapso.com'}
+            {p === 'waha' ? t('dash.aiAgent.wahaOption', 'WAHA (QR scan)') : 'kirimdev'}
           </button>
         ))}
       </div>
@@ -277,7 +278,8 @@ function BranchWaCard({ branch, onSaved }: { branch: BranchWaConfig; onSaved: ()
       ) : (
         <div className="space-y-3">
           <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.waNumber', 'WhatsApp number')}</label><input className="input-field" value={draft.waNumber ?? ''} onChange={(e) => set('waNumber', e.target.value)} placeholder="628xxxx" /></div>
-          <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kapsoApiKey', 'Kapso API key')} {draft.kapsoConfigured && <span className="text-xs text-green-600">({t('dash.aiAgent.configured', 'configured')})</span>}</label><input className="input-field" type="password" value={kapsoApiKey} onChange={(e) => setKapsoApiKey(e.target.value)} placeholder={draft.kapsoConfigured ? t('dash.aiAgent.kapsoKeep', '•••••••• (leave blank to keep)') : t('dash.aiAgent.kapsoEnter', 'Enter Kapso API key')} /></div>
+          <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kirimPhoneId', 'kirim phone number ID')}</label><input className="input-field" value={draft.kirimPhoneId ?? ''} onChange={(e) => set('kirimPhoneId', e.target.value)} placeholder="123456789012345" /></div>
+          <div><label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.kirimApiKey', 'kirim API key')} {draft.kirimConfigured && <span className="text-xs text-green-600">({t('dash.aiAgent.configured', 'configured')})</span>}</label><input className="input-field" type="password" value={kirimApiKey} onChange={(e) => setKirimApiKey(e.target.value)} placeholder={draft.kirimConfigured ? t('dash.aiAgent.kirimKeep', '•••••••• (leave blank to keep)') : t('dash.aiAgent.kirimEnter', 'Enter kirim API key')} /></div>
         </div>
       )}
       {msg && <p className={`text-xs mt-2 ${msg.ok ? 'text-green-600' : 'text-red-600'}`}>{msg.text}</p>}

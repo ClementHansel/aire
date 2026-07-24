@@ -6,6 +6,7 @@
 // ─── Authentication Errors ────────────────────────────────────────────────────
 
 export const ERR_AUTH_INVALID_CREDENTIALS = 'AUTH_INVALID_CREDENTIALS';
+export const ERR_AUTH_TOO_MANY_ATTEMPTS = 'AUTH_TOO_MANY_ATTEMPTS';
 export const ERR_AUTH_TOKEN_EXPIRED = 'AUTH_TOKEN_EXPIRED';
 export const ERR_AUTH_TOKEN_INVALID = 'AUTH_TOKEN_INVALID';
 export const ERR_AUTH_REFRESH_TOKEN_INVALID = 'AUTH_REFRESH_TOKEN_INVALID';

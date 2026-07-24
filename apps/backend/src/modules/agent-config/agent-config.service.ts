@@ -9,10 +9,11 @@ export interface AgentConfigResponse {
   skills: string | null;
   escalationNumber: string | null;
   maxMessagesPerDay: number;
-  waProvider: 'waha' | 'kapso';
+  waProvider: 'waha' | 'kirim';
   waNumber: string | null;
   wahaSession: string | null;
-  kapsoConfigured: boolean;
+  kirimConfigured: boolean;
+  kirimPhoneId: string | null;
   aiReplyEnabled: boolean;
   /** When true, each branch runs its own WhatsApp line (see BranchWaConfig). */
   perBranchWaEnabled: boolean;
@@ -34,10 +35,11 @@ export interface AgentConfigResponse {
  */
 export interface UpdateAgentConfigDto {
   escalationNumber?: string | null;
-  waProvider?: 'waha' | 'kapso';
+  waProvider?: 'waha' | 'kirim';
   waNumber?: string | null;
   wahaSession?: string | null;
-  kapsoApiKey?: string | null; // plaintext; stored and masked on read
+  kirimApiKey?: string | null; // plaintext; stored and masked on read
+  kirimPhoneId?: string | null;
   aiReplyEnabled?: boolean;
   perBranchWaEnabled?: boolean;
   wahaMockEnabled?: boolean;
@@ -145,30 +147,32 @@ const DEFAULT_PRODUCT_KNOWLEDGE =
 const DEFAULTS: Omit<AgentConfigResponse, 'aiEnabled' | 'llmProvider' | 'llmKeyConfigured'> = {
   basePrompt: DEFAULT_BASE_PROMPT, productKnowledge: DEFAULT_PRODUCT_KNOWLEDGE, skills: DEFAULT_SKILLS, escalationNumber: null,
   maxMessagesPerDay: 50, waProvider: 'waha', waNumber: null, wahaSession: null,
-  kapsoConfigured: false, aiReplyEnabled: true, perBranchWaEnabled: false, wahaMockEnabled: false,
+  kirimConfigured: false, kirimPhoneId: null, aiReplyEnabled: true, perBranchWaEnabled: false, wahaMockEnabled: false,
 };
 
-/** A branch's own WhatsApp connection (never returns the raw Kapso key). */
+/** A branch's own WhatsApp connection (never returns the raw kirim key). */
 export interface BranchWaConfig {
   outletId: string;
   name: string;
-  waProvider: 'waha' | 'kapso';
+  waProvider: 'waha' | 'kirim';
   waNumber: string | null;
   wahaSession: string | null;
-  kapsoConfigured: boolean;
+  kirimConfigured: boolean;
+  kirimPhoneId: string | null;
   configured: boolean; // true once this branch has any connection set
 }
 
 export interface UpdateBranchWaConfigDto {
-  waProvider?: 'waha' | 'kapso';
+  waProvider?: 'waha' | 'kirim';
   waNumber?: string | null;
   wahaSession?: string | null;
-  kapsoApiKey?: string | null; // '' or omitted = keep existing
+  kirimApiKey?: string | null; // '' or omitted = keep existing
+  kirimPhoneId?: string | null;
 }
 
 /**
- * Per-tenant Agentic AI configuration. The Kapso API key is stored but never
- * returned (only a `kapsoConfigured` flag is exposed). LLM model settings live
+ * Per-tenant Agentic AI configuration. The kirim API key is stored but never
+ * returned (only a `kirimConfigured` flag is exposed). LLM model settings live
  * in tenants.settings and are surfaced/updated here so the whole agent setup —
  * WhatsApp connection, persona, AND the model key — sits on one page.
  */
@@ -213,7 +217,8 @@ export class AgentConfigService {
       waProvider: r.wa_provider ?? 'waha',
       waNumber: r.wa_number ?? null,
       wahaSession: r.waha_session ?? null,
-      kapsoConfigured: !!r.kapso_api_key,
+      kirimConfigured: !!r.kirim_api_key,
+      kirimPhoneId: r.kirim_phone_id ?? null,
       aiReplyEnabled: r.ai_reply_enabled ?? true,
       perBranchWaEnabled: r.per_branch_wa_enabled ?? false,
       wahaMockEnabled: r.waha_mock ?? false,
@@ -233,7 +238,8 @@ export class AgentConfigService {
       waProvider: dto.waProvider,
       waNumber: dto.waNumber,
       wahaSession: dto.wahaSession,
-      kapsoApiKey: dto.kapsoApiKey,
+      kirimApiKey: dto.kirimApiKey,
+      kirimPhoneId: dto.kirimPhoneId,
       aiReplyEnabled: dto.aiReplyEnabled,
       perBranchWaEnabled: dto.perBranchWaEnabled,
       wahaMockEnabled: dto.wahaMockEnabled,
@@ -338,19 +344,20 @@ export class AgentConfigService {
     skills?: string | null;
     escalationNumber?: string | null;
     maxMessagesPerDay?: number;
-    waProvider?: 'waha' | 'kapso';
+    waProvider?: 'waha' | 'kirim';
     waNumber?: string | null;
     wahaSession?: string | null;
-    kapsoApiKey?: string | null;
+    kirimApiKey?: string | null;
+    kirimPhoneId?: string | null;
     aiReplyEnabled?: boolean;
     perBranchWaEnabled?: boolean;
     wahaMockEnabled?: boolean;
   }): Promise<void> {
-    // Upsert. Kapso key only overwritten when a non-empty value is supplied.
+    // Upsert. kirim key only overwritten when a non-empty value is supplied.
     await this.pool.query(
       `INSERT INTO agent_configs (tenant_id, base_prompt, product_knowledge, skills, escalation_number,
-         max_messages_per_day, wa_provider, wa_number, waha_session, kapso_api_key, ai_reply_enabled, per_branch_wa_enabled, waha_mock, updated_at)
-       VALUES ($1,$2,$3,$4,$5,COALESCE($6,50),COALESCE($7,'waha'),$8,$9,$10,COALESCE($11,true),COALESCE($12,false),COALESCE($13,false),NOW())
+         max_messages_per_day, wa_provider, wa_number, waha_session, kirim_api_key, kirim_phone_id, ai_reply_enabled, per_branch_wa_enabled, waha_mock, updated_at)
+       VALUES ($1,$2,$3,$4,$5,COALESCE($6,50),COALESCE($7,'waha'),$8,$9,$10,$11,COALESCE($12,true),COALESCE($13,false),COALESCE($14,false),NOW())
        ON CONFLICT (tenant_id) DO UPDATE SET
          base_prompt = COALESCE($2, agent_configs.base_prompt),
          product_knowledge = COALESCE($3, agent_configs.product_knowledge),
@@ -360,15 +367,16 @@ export class AgentConfigService {
          wa_provider = COALESCE($7, agent_configs.wa_provider),
          wa_number = COALESCE($8, agent_configs.wa_number),
          waha_session = COALESCE($9, agent_configs.waha_session),
-         kapso_api_key = COALESCE(NULLIF($10, ''), agent_configs.kapso_api_key),
-         ai_reply_enabled = COALESCE($11, agent_configs.ai_reply_enabled),
-         per_branch_wa_enabled = COALESCE($12, agent_configs.per_branch_wa_enabled),
-         waha_mock = COALESCE($13, agent_configs.waha_mock),
+         kirim_api_key = COALESCE(NULLIF($10, ''), agent_configs.kirim_api_key),
+         kirim_phone_id = COALESCE($11, agent_configs.kirim_phone_id),
+         ai_reply_enabled = COALESCE($12, agent_configs.ai_reply_enabled),
+         per_branch_wa_enabled = COALESCE($13, agent_configs.per_branch_wa_enabled),
+         waha_mock = COALESCE($14, agent_configs.waha_mock),
          updated_at = NOW()`,
       [
         tenantId, fields.basePrompt ?? null, fields.productKnowledge ?? null, fields.skills ?? null, fields.escalationNumber ?? null,
         fields.maxMessagesPerDay ?? null, fields.waProvider ?? null, fields.waNumber ?? null, fields.wahaSession ?? null,
-        fields.kapsoApiKey ?? null, fields.aiReplyEnabled ?? null, fields.perBranchWaEnabled ?? null, fields.wahaMockEnabled ?? null,
+        fields.kirimApiKey ?? null, fields.kirimPhoneId ?? null, fields.aiReplyEnabled ?? null, fields.perBranchWaEnabled ?? null, fields.wahaMockEnabled ?? null,
       ],
     );
   }
@@ -379,7 +387,7 @@ export class AgentConfigService {
   async listBranchConfigs(tenantId: string): Promise<BranchWaConfig[]> {
     const r = await this.pool.query(
       `SELECT o.id AS outlet_id, o.name,
-              b.wa_provider, b.wa_number, b.waha_session, b.kapso_api_key
+              b.wa_provider, b.wa_number, b.waha_session, b.kirim_api_key, b.kirim_phone_id
        FROM outlets o
        LEFT JOIN outlet_agent_configs b ON b.outlet_id = o.id
        WHERE o.tenant_id = $1 AND o.is_active = true
@@ -389,11 +397,12 @@ export class AgentConfigService {
     return r.rows.map((row) => ({
       outletId: row.outlet_id,
       name: row.name,
-      waProvider: (row.wa_provider ?? 'waha') as 'waha' | 'kapso',
+      waProvider: (row.wa_provider ?? 'waha') as 'waha' | 'kirim',
       waNumber: row.wa_number ?? null,
       wahaSession: row.waha_session ?? null,
-      kapsoConfigured: !!row.kapso_api_key,
-      configured: !!(row.wa_number || row.waha_session || row.kapso_api_key),
+      kirimConfigured: !!row.kirim_api_key,
+      kirimPhoneId: row.kirim_phone_id ?? null,
+      configured: !!(row.wa_number || row.waha_session || row.kirim_api_key),
     }));
   }
 
@@ -401,7 +410,7 @@ export class AgentConfigService {
    * Upsert a branch's WhatsApp connection. Validates the outlet belongs to the
    * tenant and that the WAHA session isn't already claimed by the tenant line or
    * another branch (sessions are the inbound discriminator, so they must be
-   * globally unique). Kapso key is only overwritten when a non-empty value is given.
+   * globally unique). kirim key is only overwritten when a non-empty value is given.
    */
   async updateBranchConfig(tenantId: string, outletId: string, dto: UpdateBranchWaConfigDto): Promise<BranchWaConfig> {
     const own = await this.pool.query('SELECT id FROM outlets WHERE id = $1 AND tenant_id = $2', [outletId, tenantId]);
@@ -420,15 +429,16 @@ export class AgentConfigService {
     }
 
     await this.pool.query(
-      `INSERT INTO outlet_agent_configs (outlet_id, tenant_id, wa_provider, wa_number, waha_session, kapso_api_key, updated_at)
-       VALUES ($1,$2,COALESCE($3,'waha'),$4,$5,$6,NOW())
+      `INSERT INTO outlet_agent_configs (outlet_id, tenant_id, wa_provider, wa_number, waha_session, kirim_api_key, kirim_phone_id, updated_at)
+       VALUES ($1,$2,COALESCE($3,'waha'),$4,$5,$6,$7,NOW())
        ON CONFLICT (outlet_id) DO UPDATE SET
          wa_provider = COALESCE($3, outlet_agent_configs.wa_provider),
          wa_number = $4,
          waha_session = $5,
-         kapso_api_key = COALESCE(NULLIF($6, ''), outlet_agent_configs.kapso_api_key),
+         kirim_api_key = COALESCE(NULLIF($6, ''), outlet_agent_configs.kirim_api_key),
+         kirim_phone_id = COALESCE($7, outlet_agent_configs.kirim_phone_id),
          updated_at = NOW()`,
-      [outletId, tenantId, dto.waProvider ?? null, dto.waNumber ?? null, session, dto.kapsoApiKey ?? null],
+      [outletId, tenantId, dto.waProvider ?? null, dto.waNumber ?? null, session, dto.kirimApiKey ?? null, dto.kirimPhoneId ?? null],
     );
     const list = await this.listBranchConfigs(tenantId);
     const found = list.find((b) => b.outletId === outletId);

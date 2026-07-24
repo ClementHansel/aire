@@ -1,5 +1,6 @@
 import { Injectable, Inject, Logger, Optional, OnModuleInit } from '@nestjs/common';
 import { Pool } from 'pg';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { NotificationService } from '../notification';
 import { AgentRuntimeService } from './agent-runtime.service';
@@ -19,8 +20,8 @@ interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
   skills: string | null;
   escalation_number: string | null; max_messages_per_day: number;
-  wa_provider: 'waha' | 'kapso'; wa_number: string | null; waha_session: string | null;
-  kapso_api_key: string | null; ai_reply_enabled: boolean;
+  wa_provider: 'waha' | 'kirim'; wa_number: string | null; waha_session: string | null;
+  kirim_api_key: string | null; kirim_phone_id: string | null; ai_reply_enabled: boolean;
   // Per-tenant simulation toggle (migration 068). Effective mock = env global OR this.
   waha_mock?: boolean;
   // n8n agent-builder routing (migration 038). Present because config() does SELECT *.
@@ -36,7 +37,7 @@ interface AgentCfgRow {
 
 /**
  * WhatsApp integration. Connection + behavior are driven entirely by the
- * tenant's Agentic-AI config (UI): provider (WAHA self-host or Kapso cloud),
+ * tenant's Agentic-AI config (UI): provider (WAHA self-host or kirimdev cloud),
  * session/number, daily cap, product knowledge, and escalation number.
  */
 /** How often to sweep for bookings whose staff approval has gone stale. */
@@ -48,14 +49,17 @@ export class WhatsappService implements OnModuleInit {
   private slaRunning = false;
   private readonly wahaUrl = process.env.WAHA_URL || 'http://waha:3000';
   private readonly wahaApiKey = process.env.WAHA_API_KEY || '';
-  private readonly kapsoUrl = process.env.KAPSO_URL || 'https://app.kapso.ai/api/v1';
+  private readonly kirimUrl = process.env.KIRIM_URL || 'https://api.kirimdev.com/v1';
+  /** HMAC secret for verifying kirimdev inbound webhook signatures (X-Kirim-Signature). */
+  private readonly kirimWebhookSecret = process.env.KIRIM_WEBHOOK_SECRET || '';
+  private kirimWebhookSecretWarned = false;
   /** Base URL n8n uses to call back into aire's bridge (internal docker network). */
   private readonly bridgeCallbackBase = process.env.BRIDGE_CALLBACK_BASE || 'http://backend:4000';
 
   /**
    * Simulation bypass. When active, the three seams that touch the third-party
    * gateway — outbound send, session status, and QR — are stubbed: outbound is
-   * recorded to wa_mock_outbox instead of hitting WAHA/Kapso, and status/QR
+   * recorded to wa_mock_outbox instead of hitting WAHA/kirimdev, and status/QR
    * report "connected". This exercises the ENTIRE pipeline (webhook parse →
    * tenant resolve → cap → n8n/built-in AI → conversation log → send) without a
    * real WhatsApp number.
@@ -152,7 +156,7 @@ export class WhatsappService implements OnModuleInit {
    * The tenant's WhatsApp + AI config, optionally with a branch's connection
    * overlaid. Behaviour fields (escalation, daily cap, AI flags, prompt,
    * knowledge, n8n routing) always come from the tenant row. The CONNECTION
-   * fields (provider, number, session, Kapso key) are overlaid from
+   * fields (provider, number, session, kirim key/phone id) are overlaid from
    * outlet_agent_configs when per-branch WhatsApp is on and an outletId is given:
    *  - branch has its own row → use the branch connection.
    *  - branch has no row ("require own number") → connection is nulled so sends
@@ -166,16 +170,16 @@ export class WhatsappService implements OnModuleInit {
     if (!cfg) return null;
     if (!outletId || !cfg.per_branch_wa_enabled) return cfg;
     const b = await this.pool.query(
-      'SELECT wa_provider, wa_number, waha_session, kapso_api_key FROM outlet_agent_configs WHERE outlet_id = $1 AND tenant_id = $2',
+      'SELECT wa_provider, wa_number, waha_session, kirim_api_key, kirim_phone_id FROM outlet_agent_configs WHERE outlet_id = $1 AND tenant_id = $2',
       [outletId, tenantId],
     );
     const branch = b.rows[0];
     if (branch) {
-      const hasConnection = !!(branch.waha_session || branch.kapso_api_key);
-      return { ...cfg, wa_provider: branch.wa_provider, wa_number: branch.wa_number, waha_session: branch.waha_session, kapso_api_key: branch.kapso_api_key, wa_connection_missing: !hasConnection };
+      const hasConnection = !!(branch.waha_session || branch.kirim_api_key);
+      return { ...cfg, wa_provider: branch.wa_provider, wa_number: branch.wa_number, waha_session: branch.waha_session, kirim_api_key: branch.kirim_api_key, kirim_phone_id: branch.kirim_phone_id, wa_connection_missing: !hasConnection };
     }
     // per-branch on but this branch isn't wired: no fallback to the tenant line.
-    return { ...cfg, wa_number: null, waha_session: null, kapso_api_key: null, wa_connection_missing: true };
+    return { ...cfg, wa_number: null, waha_session: null, kirim_api_key: null, kirim_phone_id: null, wa_connection_missing: true };
   }
 
   /**
@@ -190,6 +194,21 @@ export class WhatsappService implements OnModuleInit {
     );
     if (b.rows[0]) return { tenantId: b.rows[0].tenant_id, outletId: b.rows[0].outlet_id };
     const r = await this.pool.query('SELECT tenant_id FROM agent_configs WHERE waha_session = $1 LIMIT 1', [session]);
+    return r.rows[0] ? { tenantId: r.rows[0].tenant_id, outletId: null } : null;
+  }
+
+  /**
+   * Resolve which tenant + branch owns a given kirimdev phone_number_id. Branch
+   * numbers (outlet_agent_configs) win over the tenant number (agent_configs),
+   * mirroring {@link resolveBySession} for the WAHA session discriminator.
+   */
+  private async resolveByPhoneId(phoneId: string): Promise<{ tenantId: string; outletId: string | null } | null> {
+    const b = await this.pool.query(
+      'SELECT tenant_id, outlet_id FROM outlet_agent_configs WHERE kirim_phone_id = $1 LIMIT 1',
+      [phoneId],
+    );
+    if (b.rows[0]) return { tenantId: b.rows[0].tenant_id, outletId: b.rows[0].outlet_id };
+    const r = await this.pool.query('SELECT tenant_id FROM agent_configs WHERE kirim_phone_id = $1 LIMIT 1', [phoneId]);
     return r.rows[0] ? { tenantId: r.rows[0].tenant_id, outletId: null } : null;
   }
 
@@ -215,7 +234,7 @@ export class WhatsappService implements OnModuleInit {
     const cfg = await this.config(tenantId, outletId);
     if (this.isMockActive(cfg)) return { status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { status: 'not_configured' };
-    if (cfg?.wa_provider === 'kapso') return { status: cfg.kapso_api_key ? 'configured' : 'not_configured' };
+    if (cfg?.wa_provider === 'kirim') return { status: cfg.kirim_api_key ? 'configured' : 'not_configured' };
     const session = cfg?.waha_session || 'default';
     try {
       const res = await fetch(`${this.wahaUrl}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders() });
@@ -230,7 +249,7 @@ export class WhatsappService implements OnModuleInit {
     const cfg = await this.config(tenantId, outletId);
     if (this.isMockActive(cfg)) return { qr: null, status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { qr: null, status: 'not_configured' };
-    if (cfg?.wa_provider === 'kapso') return { qr: null, status: 'kapso' };
+    if (cfg?.wa_provider === 'kirim') return { qr: null, status: 'kirim' };
     const session = cfg?.waha_session || 'default';
     await this.ensureSession(tenantId, outletId);
     try {
@@ -255,6 +274,18 @@ export class WhatsappService implements OnModuleInit {
     return `${digits}@c.us`;
   }
 
+  /**
+   * Build the E.164 recipient kirimdev's Cloud-API-compatible `to` field
+   * requires (leading '+'). Normalises Indonesian local format (leading 0)
+   * the same way {@link toChatId} does for WAHA; falls back to bare digits.
+   */
+  private toE164(to: string): string {
+    const bare = to.includes('@') ? to.replace(/@.*/, '') : to;
+    const { normalized, valid } = normalizePhone(bare);
+    const digits = valid && normalized ? normalized : bare.replace(/[^0-9]/g, '');
+    return `+${digits}`;
+  }
+
   async sendText(tenantId: string, to: string, rawText: string, outletId?: string | null): Promise<boolean> {
     // WhatsApp doesn't render Markdown — normalise **bold**/links/headings the LLM
     // emits into WhatsApp markup (single-* bold) at this single outbound chokepoint.
@@ -266,13 +297,14 @@ export class WhatsappService implements OnModuleInit {
     // Simulation bypass: record what WOULD be sent, skip the gateway entirely.
     if (this.isMockActive(cfg)) return this.recordMockOutbox(tenantId, cfg, to, text);
     try {
-      if (cfg.wa_provider === 'kapso') {
-        if (!cfg.kapso_api_key) return false;
-        const res = await fetch(`${this.kapsoUrl}/messages`, {
+      if (cfg.wa_provider === 'kirim') {
+        if (!cfg.kirim_api_key || !cfg.kirim_phone_id) return false;
+        const res = await fetch(`${this.kirimUrl}/${encodeURIComponent(cfg.kirim_phone_id)}/messages`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': cfg.kapso_api_key },
-          body: JSON.stringify({ to, text, from: cfg.wa_number }),
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.kirim_api_key}` },
+          body: JSON.stringify({ messaging_product: 'whatsapp', to: this.toE164(to), type: 'text', text: { body: text } }),
         });
+        if (!res.ok) this.logger.warn(`kirim send to ${to} failed: HTTP ${res.status}`);
         return res.ok;
       }
       const session = cfg.waha_session || 'default';
@@ -291,10 +323,11 @@ export class WhatsappService implements OnModuleInit {
   /**
    * Send a message with reply buttons where the provider supports them, else a
    * plain-text prompt listing the options. Interactive reply buttons are only
-   * reliable on the official WhatsApp Business API (Kapso); WAHA (WhatsApp Web)
-   * restricts them, so it gets the text fallback. Either way, tapping a button
-   * returns its title as a normal inbound message — so downstream keyword gates
-   * (booking confirm YA/BATAL, staff TERIMA/TOLAK) resolve it identically.
+   * reliable on the official WhatsApp Business API (kirimdev, Meta-compatible);
+   * WAHA (WhatsApp Web) restricts them, so it gets the text fallback. Either
+   * way, tapping a button returns its title as a normal inbound message — so
+   * downstream keyword gates (booking confirm YA/BATAL, staff TERIMA/TOLAK)
+   * resolve it identically.
    */
   async sendButtons(tenantId: string, to: string, body: string, buttons: { id: string; title: string }[], outletId?: string | null): Promise<boolean> {
     const cfg = await this.config(tenantId, outletId);
@@ -303,13 +336,13 @@ export class WhatsappService implements OnModuleInit {
     const textFallback = `${body}\n\n${buttons.map((b) => `• ${b.title}`).join('\n')}`;
     if (this.isMockActive(cfg)) return this.recordMockOutbox(tenantId, cfg, to, textFallback);
     try {
-      if (cfg.wa_provider === 'kapso') {
-        if (!cfg.kapso_api_key) return false;
-        const res = await fetch(`${this.kapsoUrl}/messages`, {
+      if (cfg.wa_provider === 'kirim') {
+        if (!cfg.kirim_api_key || !cfg.kirim_phone_id) return false;
+        const res = await fetch(`${this.kirimUrl}/${encodeURIComponent(cfg.kirim_phone_id)}/messages`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': cfg.kapso_api_key },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.kirim_api_key}` },
           body: JSON.stringify({
-            to, from: cfg.wa_number, type: 'interactive',
+            messaging_product: 'whatsapp', to: this.toE164(to), type: 'interactive',
             interactive: {
               type: 'button',
               body: { text: body },
@@ -318,7 +351,7 @@ export class WhatsappService implements OnModuleInit {
           }),
         });
         if (res.ok) return true;
-        this.logger.warn(`Kapso interactive send failed (HTTP ${res.status}); text fallback`);
+        this.logger.warn(`kirim interactive send failed (HTTP ${res.status}); text fallback`);
         return this.sendText(tenantId, to, textFallback, outletId);
       }
       // WAHA / WhatsApp Web: buttons unreliable — send the text prompt.
@@ -335,7 +368,7 @@ export class WhatsappService implements OnModuleInit {
    * reports success — so the rest of the pipeline behaves as if delivered.
    */
   private async recordMockOutbox(tenantId: string, cfg: AgentCfgRow, to: string, text: string): Promise<boolean> {
-    const provider = cfg.wa_provider === 'kapso' ? 'kapso' : 'waha';
+    const provider = cfg.wa_provider === 'kirim' ? 'kirim' : 'waha';
     const session = provider === 'waha' ? (cfg.waha_session || 'default') : null;
     const chatId = this.toChatId(to);
     try {
@@ -364,7 +397,80 @@ export class WhatsappService implements OnModuleInit {
     }));
   }
 
-  // ── Inbound (from WAHA/Kapso webhook) ────────────────────────────────────────
+  /**
+   * Verify a kirimdev webhook request. Header shape: `X-Kirim-Signature:
+   * t=<unixSeconds>,v1=<hexHmac>[,v1=...]`. The HMAC is SHA-256 over the exact
+   * string `${t}.${rawBody}` using the webhook signing secret, taken over the
+   * RAW body bytes (must be verified BEFORE JSON parsing). Also enforces a
+   * 300s timestamp tolerance to reject replays. When no secret is configured
+   * (sandbox/unconfigured), verification is skipped — logged once — so local
+   * dev/testing isn't blocked on a secret that doesn't exist yet.
+   */
+  verifyKirimSignature(rawBody: string, header: string | undefined): boolean {
+    if (!this.kirimWebhookSecret) {
+      if (!this.kirimWebhookSecretWarned) {
+        this.kirimWebhookSecretWarned = true;
+        this.logger.warn('KIRIM_WEBHOOK_SECRET is not set; skipping kirim webhook signature verification (sandbox mode)');
+      }
+      return true;
+    }
+    if (!header) return false;
+    const t = header.match(/(?:^|,)\s*t=([^,]+)/)?.[1];
+    if (!t || !/^\d+$/.test(t)) return false;
+    const skewSec = Math.abs(Date.now() / 1000 - Number(t));
+    if (skewSec > 300) return false;
+    const v1s = [...header.matchAll(/v1=([0-9a-f]+)/g)].map((m) => m[1]!);
+    if (v1s.length === 0) return false;
+    const expected = createHmac('sha256', this.kirimWebhookSecret).update(`${t}.${rawBody}`).digest('hex');
+    const expectedBuf = Buffer.from(expected, 'hex');
+    return v1s.some((sig) => {
+      const sigBuf = Buffer.from(sig, 'hex');
+      return sigBuf.length === expectedBuf.length && timingSafeEqual(sigBuf, expectedBuf);
+    });
+  }
+
+  /**
+   * Process a verified kirimdev webhook payload (Meta's exact envelope):
+   * entry[].changes[].value with either `messages[]` (inbound text) or
+   * `statuses[]` (delivery receipts — ignored, no reply needed). Resolves the
+   * owning tenant/branch by the `phone_number_id` in `value.metadata` and hands
+   * each text message to the same {@link handleInbound} pipeline WAHA uses.
+   * Per-message errors are caught and logged so one bad message in a batch
+   * doesn't drop the rest.
+   */
+  async handleKirimWebhook(body: any): Promise<void> {
+    const entries: any[] = Array.isArray(body?.entry) ? body.entry : [];
+    for (const entry of entries) {
+      const changes: any[] = Array.isArray(entry?.changes) ? entry.changes : [];
+      for (const change of changes) {
+        const value = change?.value;
+        if (!value) continue;
+        const messages: any[] = Array.isArray(value.messages) ? value.messages : [];
+        if (messages.length === 0) continue; // statuses-only change: delivery receipt, no reply
+        const phoneId: string | undefined = value.metadata?.phone_number_id;
+        if (!phoneId) continue;
+        const resolved = await this.resolveByPhoneId(phoneId).catch(() => null);
+        if (!resolved) {
+          this.logger.warn(`kirim webhook: no tenant configured for phone_number_id ${phoneId}`);
+          continue;
+        }
+        const name: string | undefined = value.contacts?.[0]?.profile?.name;
+        for (const msg of messages) {
+          if (msg?.type !== 'text' || !msg?.text?.body) continue;
+          try {
+            await this.handleInbound({
+              tenantId: resolved.tenantId, outletId: resolved.outletId,
+              from: msg.from, name, text: msg.text.body,
+            });
+          } catch (e) {
+            this.logger.error(`kirim handleInbound failed: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
+    }
+  }
+
+  // ── Inbound (from WAHA/kirimdev webhook) ─────────────────────────────────────
   async handleInbound(params: { tenantId?: string; outletId?: string | null; session?: string; from: string; name?: string; text: string; isGroup?: boolean; author?: string | null; mentions?: string[] }): Promise<void> {
     // Resolve tenant + branch. A session on a branch line scopes to that outlet;
     // simulate-inbound may pass tenantId (+optional outletId) directly.

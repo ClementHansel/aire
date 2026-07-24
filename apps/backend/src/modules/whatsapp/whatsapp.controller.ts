@@ -1,13 +1,15 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, Query, UseGuards, HttpCode, HttpStatus, Logger,
+  Controller, Get, Post, Patch, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request } from 'express';
 import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
 import { WhatsappService } from './whatsapp.service';
 
-/** Public webhook for WAHA/Kapso to deliver inbound messages. */
+/** Public webhook for WAHA/kirimdev to deliver inbound messages. */
 @Controller('api/whatsapp')
 export class WhatsappWebhookController {
   private readonly logger = new Logger(WhatsappWebhookController.name);
@@ -39,6 +41,37 @@ export class WhatsappWebhookController {
         .handleInbound({ session, from, name, text, isGroup, author, mentions })
         .catch((err) => this.logger.error(`handleInbound failed: ${err instanceof Error ? err.message : String(err)}`));
     }
+    return { ok: true };
+  }
+
+  /**
+   * kirimdev inbound webhook: forwards Meta's exact WhatsApp Cloud API
+   * envelope (entry[].changes[].value.messages[]). Signature verification
+   * needs the RAW request bytes (main.ts enables `rawBody: true` app-wide),
+   * so this reads req.rawBody rather than the parsed @Body().
+   *
+   * On a bad/missing signature we still ACK 200 and drop the payload —
+   * returning 4xx here would make a legitimate-looking sender (or an
+   * attacker) retry-storm the endpoint; silently dropping is safer for a
+   * public webhook than surfacing the failure to the caller.
+   *
+   * On success we ACK immediately and process in the background (same
+   * fire-and-forget rationale as the WAHA handler above): the agent's LLM
+   * tool-loop can take many seconds, and holding the webhook connection open
+   * risks a gateway timeout + retry, which would duplicate replies.
+   */
+  @Post('kirim-webhook')
+  @HttpCode(HttpStatus.OK)
+  kirimWebhook(@Req() req: RawBodyRequest<Request>, @Body() body: Record<string, any>): { ok: true } {
+    const raw = req.rawBody?.toString('utf8') ?? '';
+    const sig = req.headers['x-kirim-signature'] as string | undefined;
+    if (!this.service.verifyKirimSignature(raw, sig)) {
+      this.logger.warn('kirim webhook: signature verification failed; dropping payload');
+      return { ok: true };
+    }
+    void this.service
+      .handleKirimWebhook(body)
+      .catch((err) => this.logger.error(`handleKirimWebhook failed: ${err instanceof Error ? err.message : String(err)}`));
     return { ok: true };
   }
 }

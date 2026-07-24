@@ -3,7 +3,10 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: true keeps the raw request Buffer (req.rawBody) alongside the
+  // parsed body — needed to verify the kirimdev webhook HMAC signature over
+  // the exact bytes Nest received, before/independent of JSON parsing.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   // The app always runs behind nginx (1 hop), which forwards X-Forwarded-For.
   // Trust that first proxy so req.ip / @Ip() resolve to the real client IP

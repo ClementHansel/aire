@@ -127,7 +127,10 @@ export function MemberBanner({ memberships, serviceNames = {} }: MemberBannerPro
                     className="member-banner__service-chip member-banner__service-chip--discount"
                     data-testid={`discount-service-${ds.serviceId}`}
                   >
-                    {serviceNames[ds.serviceId] || ds.serviceId} (-{ds.discountPct}%)
+                    {serviceNames[ds.serviceId] || ds.serviceId}{' '}
+                    {ds.fixedPrice != null
+                      ? `(Rp ${ds.fixedPrice.toLocaleString('id-ID')})`
+                      : `(-${ds.discountPct}%)`}
                   </span>
                 ))}
               </div>

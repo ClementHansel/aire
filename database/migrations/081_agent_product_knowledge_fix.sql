@@ -72,18 +72,22 @@ UPDATE agent_configs SET base_prompt = (
 --    1x/hari; shareable 10x voucher; purchases at the outlet).
 ALTER TABLE agent_configs
   ALTER COLUMN product_knowledge SET DEFAULT
-    E'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. '
-    E'Harga layanan, paket membership, dan promo yang PERSIS selalu diambil dari sistem lewat tools (get_service_prices, get_membership_plans, get_promotions) — jangan mengarang angka atau nama paket.\n'
-    E'MEMBERSHIP: satu-satunya jenis membership adalah "Unlimited Wash" (cuci sepuasnya). Berlaku untuk maksimal 3 plat nomor mobil, dan maksimal 1x cuci per hari per mobil. Durasinya (mis. 1 bulan / 3 bulan) dan harganya beda per area — ambil dari get_membership_plans. TIDAK ADA membership bernama "Silver", "Gold", atau tier lain; jangan sebutkan atau mengarang tingkatan.\n'
-    E'VOUCHER: ada paket voucher cuci (mis. voucher 10x). Voucher TIDAK terikat ke satu pelanggan — siapa saja bisa memakainya, jadi boleh dibeli lalu dibagikan/dishare ke orang lain.\n'
-    E'PEMBELIAN: pembelian membership maupun voucher dilakukan di outlet, bukan lewat chat. Kamu boleh menjelaskan detail & cara kerjanya, tapi untuk membeli arahkan pelanggan ke outlet AIRE terdekat (pakai get_branch_info).';
+    'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. Harga layanan, paket membership, dan promo yang PERSIS selalu diambil dari sistem lewat tools (get_service_prices, get_membership_plans, get_promotions) — jangan mengarang angka atau nama paket.'
+    || E'\n' ||
+    'MEMBERSHIP: satu-satunya jenis membership adalah "Unlimited Wash" (cuci sepuasnya). Berlaku untuk maksimal 3 plat nomor mobil, dan maksimal 1x cuci per hari per mobil. Durasinya (mis. 1 bulan / 3 bulan) dan harganya beda per area — ambil dari get_membership_plans. TIDAK ADA membership bernama "Silver", "Gold", atau tier lain; jangan sebutkan atau mengarang tingkatan.'
+    || E'\n' ||
+    'VOUCHER: ada paket voucher cuci (mis. voucher 10x). Voucher TIDAK terikat ke satu pelanggan — siapa saja bisa memakainya, jadi boleh dibeli lalu dibagikan/dishare ke orang lain.'
+    || E'\n' ||
+    'PEMBELIAN: pembelian membership maupun voucher dilakukan di outlet, bukan lewat chat. Kamu boleh menjelaskan detail & cara kerjanya, tapi untuk membeli arahkan pelanggan ke outlet AIRE terdekat (pakai get_branch_info).';
 
 UPDATE agent_configs SET product_knowledge = (
-    E'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. '
-    E'Harga layanan, paket membership, dan promo yang PERSIS selalu diambil dari sistem lewat tools (get_service_prices, get_membership_plans, get_promotions) — jangan mengarang angka atau nama paket.\n'
-    E'MEMBERSHIP: satu-satunya jenis membership adalah "Unlimited Wash" (cuci sepuasnya). Berlaku untuk maksimal 3 plat nomor mobil, dan maksimal 1x cuci per hari per mobil. Durasinya (mis. 1 bulan / 3 bulan) dan harganya beda per area — ambil dari get_membership_plans. TIDAK ADA membership bernama "Silver", "Gold", atau tier lain; jangan sebutkan atau mengarang tingkatan.\n'
-    E'VOUCHER: ada paket voucher cuci (mis. voucher 10x). Voucher TIDAK terikat ke satu pelanggan — siapa saja bisa memakainya, jadi boleh dibeli lalu dibagikan/dishare ke orang lain.\n'
-    E'PEMBELIAN: pembelian membership maupun voucher dilakukan di outlet, bukan lewat chat. Kamu boleh menjelaskan detail & cara kerjanya, tapi untuk membeli arahkan pelanggan ke outlet AIRE terdekat (pakai get_branch_info).'
+    'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. Harga layanan, paket membership, dan promo yang PERSIS selalu diambil dari sistem lewat tools (get_service_prices, get_membership_plans, get_promotions) — jangan mengarang angka atau nama paket.'
+    || E'\n' ||
+    'MEMBERSHIP: satu-satunya jenis membership adalah "Unlimited Wash" (cuci sepuasnya). Berlaku untuk maksimal 3 plat nomor mobil, dan maksimal 1x cuci per hari per mobil. Durasinya (mis. 1 bulan / 3 bulan) dan harganya beda per area — ambil dari get_membership_plans. TIDAK ADA membership bernama "Silver", "Gold", atau tier lain; jangan sebutkan atau mengarang tingkatan.'
+    || E'\n' ||
+    'VOUCHER: ada paket voucher cuci (mis. voucher 10x). Voucher TIDAK terikat ke satu pelanggan — siapa saja bisa memakainya, jadi boleh dibeli lalu dibagikan/dishare ke orang lain.'
+    || E'\n' ||
+    'PEMBELIAN: pembelian membership maupun voucher dilakukan di outlet, bukan lewat chat. Kamu boleh menjelaskan detail & cara kerjanya, tapi untuk membeli arahkan pelanggan ke outlet AIRE terdekat (pakai get_branch_info).'
   )
   WHERE product_knowledge IS NULL
      OR product_knowledge = ''

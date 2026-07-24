@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import BranchFilter from '@/components/dashboard/BranchFilter';
+import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
 import { Gift, Ticket, Megaphone, Pencil, Trash2, Check } from 'lucide-react';
 
 interface Branch { id: string; name: string }
@@ -187,6 +188,7 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
             <div>
               <label className="block text-sm font-medium mb-1.5">{t('dash.vouchers.freeServicesGranted', 'Free services granted')}</label>
               <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-lg p-2">
+                <SelectAllCheckbox allIds={services.map((s) => s.id)} selectedIds={serviceIds} onChange={setServiceIds} />
                 {services.map((s) => (
                   <label key={s.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
                     <input type="checkbox" checked={serviceIds.includes(s.id)} onChange={() => toggle(serviceIds, setServiceIds, s.id)} />
@@ -201,6 +203,7 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
             <label className="block text-sm font-medium mb-1.5">{t('dash.vouchers.availableAtBranches', 'Available at branches')}</label>
             <p className="text-xs text-text-muted mb-2">{t('dash.vouchers.leaveUncheckedAll', 'Leave all unchecked = every branch.')}</p>
             <div className="space-y-1 max-h-32 overflow-y-auto border border-border rounded-lg p-2">
+              <SelectAllCheckbox allIds={branches.map((b) => b.id)} selectedIds={outletIds} onChange={setOutletIds} />
               {branches.map((b) => (
                 <label key={b.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
                   <input type="checkbox" checked={outletIds.includes(b.id)} onChange={() => toggle(outletIds, setOutletIds, b.id)} />
@@ -302,12 +305,14 @@ function PromoModal({ initial, branches, services, onClose, onSaved }: { initial
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.promotions.appliesToBranches', 'Applies to branches (none = all)')}</label>
+            <SelectAllCheckbox allIds={branches.map((b) => b.id)} selectedIds={outletIds} onChange={setOutletIds} />
             <div className="grid grid-cols-2 gap-1.5 max-h-28 overflow-auto border border-border rounded-lg p-2">
               {branches.map((b) => <label key={b.id} className="flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={outletIds.includes(b.id)} onChange={() => toggle(outletIds, setOutletIds, b.id)} /> {b.name}</label>)}
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.promotions.triggerProducts', 'Trigger products (none = any purchase)')}</label>
+            <SelectAllCheckbox allIds={services.map((s) => s.id)} selectedIds={triggerServiceIds} onChange={setTriggerServiceIds} />
             <div className="grid grid-cols-2 gap-1.5 max-h-28 overflow-auto border border-border rounded-lg p-2">
               {services.map((s) => <label key={s.id} className="flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={triggerServiceIds.includes(s.id)} onChange={() => toggle(triggerServiceIds, setTriggerServiceIds, s.id)} /> {s.name}</label>)}
             </div>
@@ -384,6 +389,7 @@ export default function VouchersPage() {
   };
 
   const serviceName = (id: string) => services.find((s) => s.id === id)?.name ?? id;
+  const outletName = (id: string) => branches.find((b) => b.id === id)?.name ?? id;
 
   // Config filter: templates are scoped by outletIds (null/empty = all branches);
   // issued packs are matched by the branch name they were sold under.
@@ -463,10 +469,32 @@ export default function VouchersPage() {
                   </div>
                 </div>
                 <p className="text-2xl font-bold text-primary-600 mt-2">{tpl.salePrice > 0 ? fmt(tpl.salePrice) : t('dash.vouchers.free', 'Free')}</p>
-                <p className="text-xs text-text-muted mt-1">{tpl.maxUses}× {t('dash.vouchers.usesLabel', 'uses')}{tpl.validityDays ? ` · ${tpl.validityDays}d` : ''}{tpl.type !== 'service_pack' ? ` · ${tpl.type === 'percentage' ? `${tpl.value}%` : fmt(tpl.value)} ${t('dash.vouchers.off', 'off')}` : ''}</p>
+
+                <div className="mt-4 pt-4 border-t border-border space-y-2">
+                  <div className="flex justify-between text-sm"><span className="text-text-secondary">{t('dash.vouchers.maxUsesLabel', 'Max uses')}</span><span className="font-medium text-text-primary">{tpl.maxUses}×</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-text-secondary">{t('dash.vouchers.validDays', 'Valid (days)')}</span><span className="font-medium text-text-primary">{tpl.validityDays ? `${tpl.validityDays} ${t('dash.vouchers.daysUnit', 'days')}` : t('dash.vouchers.noExpiry', 'No expiry')}</span></div>
+                  {tpl.type !== 'service_pack' && (
+                    <div className="flex justify-between text-sm"><span className="text-text-secondary">{t('dash.vouchers.discount', 'Discount')}</span><span className="font-medium text-text-primary">{tpl.type === 'percentage' ? `${tpl.value}%` : fmt(tpl.value)} {t('dash.vouchers.off', 'off')}</span></div>
+                  )}
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-border">
+                  <p className="text-xs font-medium text-text-secondary mb-1.5">{t('dash.vouchers.availableAt', 'Available at')}</p>
+                  {tpl.outletIds && tpl.outletIds.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {tpl.outletIds.map((id) => <span key={id} className="badge bg-sky-50 text-sky-700 text-xs">{outletName(id)}</span>)}
+                    </div>
+                  ) : (
+                    <span className="badge bg-gray-100 text-gray-600 text-xs">{t('dash.vouchers.allBranches', 'All branches')}</span>
+                  )}
+                </div>
+
                 {tpl.serviceIds && tpl.serviceIds.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {tpl.serviceIds.map((id) => <span key={id} className="badge bg-amber-50 text-amber-700 text-xs">{serviceName(id)}</span>)}
+                  <div className="mt-3 pt-3 border-t border-border">
+                    <p className="text-xs font-medium text-text-secondary mb-1.5">{t('dash.vouchers.freeServicesLabel', 'Free services')}</p>
+                    <div className="flex flex-wrap gap-1">
+                      {tpl.serviceIds.map((id) => <span key={id} className="badge bg-amber-50 text-amber-700 text-xs">{serviceName(id)}</span>)}
+                    </div>
                   </div>
                 )}
               </div>

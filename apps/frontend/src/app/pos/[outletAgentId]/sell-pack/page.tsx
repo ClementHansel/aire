@@ -40,7 +40,7 @@ interface MembershipPlan {
   maxUses: number;
   dailyLimit: number;
   maxPlates: number;
-  discountedServices: { serviceId: string; discountPct: number }[];
+  discountedServices: { serviceId: string; discountPct?: number; fixedPrice?: number }[];
 }
 
 interface VoucherTemplate {

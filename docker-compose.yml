@@ -145,7 +145,8 @@ services:
       WAHA_URL: ${WAHA_URL:-http://waha:3000}
       # Must match WHATSAPP_API_KEY on the waha service below; WAHA rejects /api calls without it.
       WAHA_API_KEY: ${WAHA_API_KEY:-aire_waha_local_key}
-      KAPSO_URL: ${KAPSO_URL:-https://app.kapso.ai/api/v1}
+      KIRIM_URL: ${KIRIM_URL:-https://api.kirimdev.com/v1}
+      KIRIM_WEBHOOK_SECRET: ${KIRIM_WEBHOOK_SECRET:-}
       # Path (inside the container) to the branch-bridge installer zip served by
       # GET /api/bridges/:id/installer. Mount the built package here; unset/missing
       # → the endpoint returns 503 and the UI shows the copy-paste command instead.
@@ -241,7 +242,7 @@ services:
 
   # =============================================================================
   # WHATSAPP GATEWAY (WAHA — unofficial, QR-scan). Optional: only needed when a
-  # tenant chooses the WAHA provider. Kapso (cloud) needs no container.
+  # tenant chooses the WAHA provider. kirimdev (cloud) needs no container.
   # =============================================================================
 
   waha:

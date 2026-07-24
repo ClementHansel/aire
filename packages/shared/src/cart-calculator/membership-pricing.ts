@@ -15,9 +15,11 @@ export interface MembershipBenefit {
   planName: string;
   freeServiceIds: string[]; // services fully covered (price = 0)
   discountedServices: Array<{
-    // services with percentage discount
+    // A discounted service carries EITHER a percentage discount OR a fixed
+    // member price (never both). The caller passes discountPct as a 0-1 fraction.
     serviceId: string;
-    discountPct: number; // 0-1, e.g., 0.2 = 20% off
+    discountPct?: number; // 0-1, e.g. 0.2 = 20% off
+    fixedPrice?: number; // per-unit member price in Rp (overrides the list price)
   }>;
 }
 
@@ -26,15 +28,17 @@ export interface AppliedMemberPricing {
   originalPrice: number;
   appliedPrice: number;
   membershipId: string;
-  discountType: 'free' | 'percentage';
-  discountValue: number; // 1.0 for free, or the actual percentage
-  badgeLabel: string; // "GRATIS" or "MEMBER -20%"
+  discountType: 'free' | 'percentage' | 'fixed';
+  discountValue: number; // 1.0 for free, the fraction for percentage, or the fixed unit price
+  badgeLabel: string; // "GRATIS", "MEMBER -20%", or "HARGA MEMBER"
 }
 
-interface BenefitCandidate {
+/** A candidate member price for one cart item, resolved against its actual price. */
+interface PricingCandidate {
   membershipId: string;
-  discountType: 'free' | 'percentage';
-  discountPct: number; // 1.0 for free, or actual pct for discounted
+  discountType: 'free' | 'percentage' | 'fixed';
+  appliedPrice: number; // total (unit × qty) the member would pay
+  discountValue: number;
 }
 
 /**
@@ -58,91 +62,102 @@ export function applyMembershipPricing(
   const appliedPricing: AppliedMemberPricing[] = [];
 
   const updatedItems = items.map((item) => {
-    const bestBenefit = findBestBenefit(item.serviceId, benefits);
+    const originalPrice = item.unitPrice * item.quantity;
+    const best = findBestPricing(item.serviceId, originalPrice, item.quantity, benefits);
 
-    if (!bestBenefit) {
+    if (!best) {
       return { ...item };
     }
 
-    const originalPrice = item.unitPrice * item.quantity;
-
-    if (bestBenefit.discountType === 'free') {
-      // Free service: set discount to cover the full item value
-      const discount = item.unitPrice * item.quantity;
-
-      appliedPricing.push({
-        serviceId: item.serviceId,
-        originalPrice,
-        appliedPrice: 0,
-        membershipId: bestBenefit.membershipId,
-        discountType: 'free',
-        discountValue: 1.0,
-        badgeLabel: 'GRATIS',
-      });
-
-      return { ...item, discount };
-    }
-
-    // Percentage discount
-    const discountAmount = item.unitPrice * item.quantity * bestBenefit.discountPct;
-    const appliedPrice = originalPrice - discountAmount;
-    const pctLabel = Math.round(bestBenefit.discountPct * 100);
+    const badgeLabel =
+      best.discountType === 'free'
+        ? 'GRATIS'
+        : best.discountType === 'fixed'
+          ? 'HARGA MEMBER'
+          : `MEMBER -${Math.round(best.discountValue * 100)}%`;
 
     appliedPricing.push({
       serviceId: item.serviceId,
       originalPrice,
-      appliedPrice,
-      membershipId: bestBenefit.membershipId,
-      discountType: 'percentage',
-      discountValue: bestBenefit.discountPct,
-      badgeLabel: `MEMBER -${pctLabel}%`,
+      appliedPrice: best.appliedPrice,
+      membershipId: best.membershipId,
+      discountType: best.discountType,
+      discountValue: best.discountValue,
+      badgeLabel,
     });
 
-    return { ...item, discount: discountAmount };
+    return { ...item, discount: originalPrice - best.appliedPrice };
   });
 
   return { items: updatedItems, appliedPricing };
 }
 
 /**
- * Finds the best (most beneficial) membership benefit for a given service across all plans.
+ * Resolves the most beneficial member price for one service across all plans.
  *
  * Priority:
- * 1. Free service (discountPct = 1.0) always wins
- * 2. Among percentage discounts, the highest percentage wins
+ * 1. A free service (in any plan's freeServiceIds) always wins → price 0.
+ * 2. Otherwise every percentage and fixed-price benefit is turned into a
+ *    concrete applied price for THIS item, and the lowest one wins — but only
+ *    if it actually beats the list price (a fixed price above list is ignored).
  */
-function findBestBenefit(
+function findBestPricing(
   serviceId: string,
+  originalPrice: number,
+  quantity: number,
   benefits: MembershipBenefit[],
-): BenefitCandidate | null {
-  let best: BenefitCandidate | null = null;
+): PricingCandidate | null {
+  let freeMembership: string | null = null;
+  let bestPct: { membershipId: string; pct: number } | null = null;
+  let bestFixed: { membershipId: string; fixedPrice: number } | null = null;
 
   for (const benefit of benefits) {
-    // Check if the service is in freeServiceIds
     if (benefit.freeServiceIds.includes(serviceId)) {
-      // Free always wins — return immediately
-      return {
-        membershipId: benefit.membershipId,
-        discountType: 'free',
-        discountPct: 1.0,
-      };
+      freeMembership = benefit.membershipId;
+      continue;
     }
+    const entry = benefit.discountedServices.find((ds) => ds.serviceId === serviceId);
+    if (!entry) continue;
 
-    // Check if the service is in discountedServices
-    const discountEntry = benefit.discountedServices.find(
-      (ds) => ds.serviceId === serviceId,
-    );
-
-    if (discountEntry) {
-      if (!best || discountEntry.discountPct > best.discountPct) {
-        best = {
-          membershipId: benefit.membershipId,
-          discountType: 'percentage',
-          discountPct: discountEntry.discountPct,
-        };
+    if (typeof entry.discountPct === 'number' && entry.discountPct > 0) {
+      // Highest percentage wins among percentage benefits.
+      if (!bestPct || entry.discountPct > bestPct.pct) {
+        bestPct = { membershipId: benefit.membershipId, pct: entry.discountPct };
+      }
+    } else if (typeof entry.fixedPrice === 'number' && entry.fixedPrice >= 0) {
+      // Lowest fixed price wins among fixed-price benefits.
+      if (!bestFixed || entry.fixedPrice < bestFixed.fixedPrice) {
+        bestFixed = { membershipId: benefit.membershipId, fixedPrice: entry.fixedPrice };
       }
     }
   }
 
-  return best;
+  // Free always wins — nothing beats a price of 0.
+  if (freeMembership) {
+    return { membershipId: freeMembership, discountType: 'free', appliedPrice: 0, discountValue: 1.0 };
+  }
+
+  const candidates: PricingCandidate[] = [];
+  if (bestPct) {
+    // A percentage always applies (it can only lower or keep the price).
+    candidates.push({
+      membershipId: bestPct.membershipId,
+      discountType: 'percentage',
+      appliedPrice: originalPrice * (1 - bestPct.pct),
+      discountValue: bestPct.pct,
+    });
+  }
+  if (bestFixed && bestFixed.fixedPrice * quantity < originalPrice) {
+    // A fixed price applies only when it genuinely undercuts the list price —
+    // a "discount" must never raise what the member pays.
+    candidates.push({
+      membershipId: bestFixed.membershipId,
+      discountType: 'fixed',
+      appliedPrice: bestFixed.fixedPrice * quantity,
+      discountValue: bestFixed.fixedPrice,
+    });
+  }
+  if (candidates.length === 0) return null;
+  // Cheapest applied price wins when a member has both kinds across plans.
+  return candidates.reduce((a, b) => (b.appliedPrice < a.appliedPrice ? b : a));
 }

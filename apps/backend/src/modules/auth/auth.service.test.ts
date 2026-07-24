@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, HttpException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import {
   ERR_AUTH_INVALID_CREDENTIALS,
+  ERR_AUTH_TOO_MANY_ATTEMPTS,
   ERR_AUTH_REFRESH_TOKEN_INVALID,
   ERR_AUTH_REFRESH_TOKEN_EXPIRED,
   ACCESS_TOKEN_EXPIRY_SECONDS,
@@ -27,6 +28,9 @@ const mockRedis = {
   get: vi.fn(),
   set: vi.fn(),
   del: vi.fn(),
+  incr: vi.fn(),
+  expire: vi.fn(),
+  ttl: vi.fn(),
 };
 // A regular function (not an arrow) so `new Redis()` is constructable under
 // vitest 4; returning an object from the constructor yields the mock.
@@ -68,6 +72,12 @@ describe('AuthService', () => {
     // Fallback for queries past the per-test Once mocks — chiefly the tenant-lifecycle
     // status lookup added to login()/validateJwtPayload(); 'active' lets auth proceed.
     mockPool.query.mockResolvedValue({ rows: [{ status: 'active' }] });
+
+    // Login brute-force gate defaults: not locked, and a fresh failure counter.
+    mockRedis.ttl.mockResolvedValue(0);
+    mockRedis.incr.mockResolvedValue(1);
+    mockRedis.expire.mockResolvedValue(1);
+    mockRedis.del.mockResolvedValue(1);
 
     authService = new AuthService(jwtService, configService, mockPool as any);
   });
@@ -178,6 +188,63 @@ describe('AuthService', () => {
         '1',
         'EX',
         REFRESH_TOKEN_EXPIRY_SECONDS,
+      );
+    });
+  });
+
+  describe('login brute-force lockout', () => {
+    it('rejects with 429 while the email is inside a lockout window', async () => {
+      mockRedis.ttl.mockResolvedValueOnce(300); // locked for 5 more minutes
+
+      const err = await authService
+        .login({ email: 'victim@test.com', password: 'whatever' })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(HttpException);
+      expect(err.getStatus()).toBe(429);
+      expect(err.getResponse()).toMatchObject({ error: ERR_AUTH_TOO_MANY_ATTEMPTS });
+      // Never even looked the user up — the gate short-circuits first.
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('locks the account once failures reach the cap', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // unknown email
+      mockRedis.incr.mockResolvedValueOnce(5); // this failure hits MAX_LOGIN_ATTEMPTS
+
+      const err = await authService
+        .login({ email: 'attacker@test.com', password: 'guess' })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(HttpException);
+      expect(err.getStatus()).toBe(429);
+      expect(mockRedis.set).toHaveBeenCalledWith(
+        'loginlock:attacker@test.com',
+        '1',
+        'EX',
+        expect.any(Number),
+      );
+    });
+
+    it('still throws plain invalid-credentials below the cap', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockRedis.incr.mockResolvedValueOnce(2);
+
+      await expect(
+        authService.login({ email: 'typo@test.com', password: 'oops' }),
+      ).rejects.toThrow(ERR_AUTH_INVALID_CREDENTIALS);
+    });
+
+    it('clears the failure counter + lock on a successful login', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockUser] });
+      const bcrypt = await import('bcrypt');
+      (bcrypt.compare as any).mockResolvedValueOnce(true);
+      mockRedis.set.mockResolvedValue('OK');
+
+      await authService.login({ email: 'cashier@test.com', password: 'valid' });
+
+      expect(mockRedis.del).toHaveBeenCalledWith(
+        'loginfail:cashier@test.com',
+        'loginlock:cashier@test.com',
       );
     });
   });

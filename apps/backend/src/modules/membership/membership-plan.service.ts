@@ -210,20 +210,26 @@ export class MembershipPlanService {
 
   /**
    * Validates the discounted-services benefit list: each entry must reference a
-   * service and carry a discount percentage in the 0–100 range.
+   * service and carry EXACTLY ONE of a discount percentage (0–100) or a fixed
+   * member price (>= 0). Rejects entries that carry both or neither.
    */
   private validateDiscountedServices(
-    discounts: { serviceId: string; discountPct: number }[],
+    discounts: { serviceId: string; discountPct?: number; fixedPrice?: number }[],
   ): void {
     for (const d of discounts) {
       if (!d.serviceId || d.serviceId.trim().length === 0) {
         throw new BadRequestException(ERR_VALIDATION_FAILED);
       }
-      if (
-        typeof d.discountPct !== 'number' ||
-        d.discountPct < 0 ||
-        d.discountPct > 100
-      ) {
+      const hasPct = typeof d.discountPct === 'number';
+      const hasFixed = typeof d.fixedPrice === 'number';
+      // Exactly one benefit kind per entry.
+      if (hasPct === hasFixed) {
+        throw new BadRequestException(ERR_VALIDATION_FAILED);
+      }
+      if (hasPct && (d.discountPct! < 0 || d.discountPct! > 100)) {
+        throw new BadRequestException(ERR_VALIDATION_FAILED);
+      }
+      if (hasFixed && d.fixedPrice! < 0) {
         throw new BadRequestException(ERR_VALIDATION_FAILED);
       }
     }

@@ -26,7 +26,8 @@ export interface VoucherInfo {
  */
 export interface DiscountedServiceInfo {
   serviceId: string;
-  discountPct: number;
+  discountPct?: number;
+  fixedPrice?: number;
 }
 
 /**

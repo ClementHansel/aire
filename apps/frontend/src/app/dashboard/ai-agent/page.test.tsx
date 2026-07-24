@@ -22,7 +22,7 @@ function baseConfig(perBranchWaEnabled: boolean) {
   return {
     basePrompt: null, productKnowledge: null, skills: null, escalationNumber: null,
     maxMessagesPerDay: 50, waProvider: 'waha', waNumber: null, wahaSession: null,
-    kapsoConfigured: false, aiReplyEnabled: true, perBranchWaEnabled, wahaMockEnabled: false,
+    kirimConfigured: false, kirimPhoneId: null, aiReplyEnabled: true, perBranchWaEnabled, wahaMockEnabled: false,
     aiEnabled: false, llmProvider: 'openrouter', llmKeyConfigured: false,
   };
 }
@@ -30,7 +30,7 @@ function baseConfig(perBranchWaEnabled: boolean) {
 function routeGet(perBranch: boolean) {
   mockApi.get.mockImplementation((path: string) => {
     if (path === '/agent-config') return Promise.resolve(baseConfig(perBranch));
-    if (path === '/agent-config/branches') return Promise.resolve([{ outletId: 'o1', name: 'Bintaro', waProvider: 'waha', waNumber: null, wahaSession: null, kapsoConfigured: false, configured: false }]);
+    if (path === '/agent-config/branches') return Promise.resolve([{ outletId: 'o1', name: 'Bintaro', waProvider: 'waha', waNumber: null, wahaSession: null, kirimConfigured: false, kirimPhoneId: null, configured: false }]);
     if (path.startsWith('/whatsapp/status')) return Promise.resolve({ status: 'WORKING' });
     return Promise.resolve({});
   });

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
 
 interface Branch { id: string; name: string }
 interface UserRow { id: string; name: string; email: string; role: string; isActive: boolean; outletIds: string[]; customRoleId: string | null }
@@ -69,6 +70,7 @@ function UserModal({ initial, branches, roles, onClose, onSaved }: { initial: Us
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.users.branchPlacement', 'Branch placement (multi-select)')}</label>
+            <SelectAllCheckbox allIds={branches.map((b) => b.id)} selectedIds={outletIds} onChange={setOutletIds} />
             <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-auto border border-border rounded-lg p-2">
               {branches.map((b) => (
                 <label key={b.id} className="flex items-center gap-2 text-sm text-text-secondary">
@@ -125,6 +127,11 @@ function RoleModal({ initial, perms, onClose, onSaved }: { initial: RoleRow | nu
           <div>
             <label className="block text-sm font-medium mb-2">{t('dash.users.permissions', 'Permissions')}</label>
             <div className="space-y-3 max-h-72 overflow-auto border border-border rounded-lg p-3">
+              <SelectAllCheckbox
+                allIds={perms.flatMap((g) => g.permissions.map((p) => p.key))}
+                selectedIds={selected}
+                onChange={setSelected}
+              />
               {perms.map((g) => (
                 <div key={g.group}>
                   <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1">{g.group}</p>

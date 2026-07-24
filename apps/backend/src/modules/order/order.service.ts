@@ -110,7 +110,7 @@ interface MembershipRow {
 interface MembershipPlanRow {
   id: string;
   free_service_ids: string[] | null;
-  discounted_services: Array<{ serviceId: string; discountPct: number }>;
+  discounted_services: Array<{ serviceId: string; discountPct?: number; fixedPrice?: number }>;
   name: string;
   settlement_amount: string | null;
 }
@@ -1628,7 +1628,14 @@ export class OrderService {
           membershipId: membership.id,
           planName: plan.name,
           freeServiceIds: plan.free_service_ids ?? [],
-          discountedServices: plan.discounted_services ?? [],
+          // Plans store the percentage as entered (1–100); the cart-calculator
+          // expects a 0–1 fraction, so convert here. Fixed prices pass through
+          // as-is (per-unit Rp). One benefit kind per entry.
+          discountedServices: (plan.discounted_services ?? []).map((d) =>
+            typeof d.fixedPrice === 'number'
+              ? { serviceId: d.serviceId, fixedPrice: Number(d.fixedPrice) }
+              : { serviceId: d.serviceId, discountPct: Number(d.discountPct ?? 0) / 100 },
+          ),
         },
       ],
       homeOutletId: membership.home_outlet_id ?? null,

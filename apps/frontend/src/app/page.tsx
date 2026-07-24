@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Eye, EyeOff, Sun, Moon } from 'lucide-react';
-import { api } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { setSession, type AuthSession } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
@@ -51,12 +51,30 @@ function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Seconds until the submit button re-enables. A brief cooldown after any failed
+  // attempt stops password hammering; a lockout (HTTP 429) sets it to the server's
+  // retry-after so the button stays disabled for the full window.
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setInterval(() => setCooldown((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
 
   const doLogin = async (loginEmail: string, loginPassword: string) => {
     setLoading(true);
     setError('');
     try {
-      const session = await api.post<AuthSession>('/auth/login', { email: loginEmail, password: loginPassword });
+      // retry=false: a wrong password returns 401, and the shared client's 401
+      // handler would otherwise clear the session and redirect to "/", reloading
+      // this page and wiping the error before the user can read it. Disabling the
+      // retry path keeps the invalid-credentials message on screen.
+      const session = await apiFetch<AuthSession>(
+        '/auth/login',
+        { method: 'POST', body: JSON.stringify({ email: loginEmail, password: loginPassword }) },
+        false,
+      );
       setSession(session);
       // A cashier signs in and goes straight to POS, pinned to their own branch
       // (outletId comes back on the session). The URL branch segment is only a
@@ -74,8 +92,17 @@ function LoginScreen() {
         : '/hub');
       window.location.href = dest;
     } catch (err) {
+      // Lockout: the server rejects with 429 + a retry-after. Honour it fully.
+      if (err instanceof ApiError && err.status === 429) {
+        const retry = Number((err.details as { retryAfterSeconds?: number } | undefined)?.retryAfterSeconds) || 60;
+        setCooldown(retry);
+        setError(err.message || t('auth.login.tooManyAttempts', 'Terlalu banyak percobaan gagal. Silakan coba lagi nanti.'));
+        return;
+      }
       const message = err instanceof Error ? err.message : t('auth.login.failed', 'Login failed');
       setError(message.includes('credentials') || message.includes('401') ? t('auth.login.invalidCreds', 'Invalid email or password') : message);
+      // Brief cooldown so a failed attempt can't be re-submitted instantly.
+      setCooldown(3);
     } finally {
       setLoading(false);
     }
@@ -183,10 +210,14 @@ function LoginScreen() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || cooldown > 0}
               className="w-full rounded-md bg-[#3d3fa3] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#33347f] focus:outline-none focus:ring-2 focus:ring-[#3d3fa3]/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? t('auth.login.signingIn', 'Signing in...') : t('auth.login.signIn', 'Masuk')}
+              {loading
+                ? t('auth.login.signingIn', 'Signing in...')
+                : cooldown > 0
+                  ? `${t('auth.login.tryAgainIn', 'Coba lagi dalam')} ${cooldown}s`
+                  : t('auth.login.signIn', 'Masuk')}
             </button>
           </form>
 

@@ -27,14 +27,14 @@ function createPool(opts: { perBranch: boolean; branchSession?: string | null })
     tenant_id: TENANT_ID, base_prompt: 'You are the AIRE assistant.', product_knowledge: 'Hours 08-20.',
     escalation_number: '628999', max_messages_per_day: 50,
     wa_provider: 'waha', wa_number: '628000', waha_session: TENANT_SESSION,
-    kapso_api_key: null, ai_reply_enabled: true,
+    kirim_api_key: null, kirim_phone_id: null, ai_reply_enabled: true,
     routing_mode: 'builtin', n8n_flow_id: null, bridge_token: null,
     per_branch_wa_enabled: opts.perBranch,
   };
   // outlet_agent_configs rows keyed by outlet_id.
-  const branchRows = new Map<string, { outlet_id: string; tenant_id: string; wa_provider: string; wa_number: string | null; waha_session: string | null; kapso_api_key: string | null }>();
+  const branchRows = new Map<string, { outlet_id: string; tenant_id: string; wa_provider: string; wa_number: string | null; waha_session: string | null; kirim_api_key: string | null; kirim_phone_id: string | null }>();
   if (opts.branchSession !== undefined) {
-    branchRows.set(BRANCH_ID, { outlet_id: BRANCH_ID, tenant_id: TENANT_ID, wa_provider: 'waha', wa_number: '628111', waha_session: opts.branchSession, kapso_api_key: null });
+    branchRows.set(BRANCH_ID, { outlet_id: BRANCH_ID, tenant_id: TENANT_ID, wa_provider: 'waha', wa_number: '628111', waha_session: opts.branchSession, kirim_api_key: null, kirim_phone_id: null });
   }
 
   const convs = new Map<string, Conv>();
