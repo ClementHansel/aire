@@ -66,6 +66,7 @@ import { BroadcastModule } from './modules/broadcast/broadcast.module';
 import { TaxInvoiceModule } from './modules/tax-invoice/tax-invoice.module';
 import { BarcodeModule } from './modules/barcode/barcode.module';
 import { CampaignModule } from './modules/campaign';
+import { LprModule } from './modules/lpr';
 
 @Module({
   imports: [
@@ -136,6 +137,7 @@ import { CampaignModule } from './modules/campaign';
     TaxInvoiceModule,
     BarcodeModule,
     CampaignModule,
+    LprModule,
   ],
   controllers: [AppController],
   providers: [AppService],

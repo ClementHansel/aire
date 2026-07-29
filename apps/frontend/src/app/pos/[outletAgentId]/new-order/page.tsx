@@ -1,14 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
+import { io, type Socket } from 'socket.io-client';
 import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
 import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
 import { PlateInput } from '@/components/shared/PlateInput';
+import { LprSuggestions } from '@/components/pos/LprSuggestions';
 import { useI18n } from '@/lib/i18n';
-import { normalizePlate, maxLineDiscount, type DynamicDiscountRule } from '@aire/shared';
+import { filterOfferableDetections, upsertDetection } from '@/lib/lprSuggestions';
+import { normalizePlate, maxLineDiscount, LPR_DETECTED_EVENT, type DynamicDiscountRule, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
 import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
 
 interface ServiceDTO {
@@ -155,6 +158,14 @@ export default function NewOrderPage() {
   const [memberPlateOptions, setMemberPlateOptions] = useState<PlateInfo[]>([]);
   // Soft-pop shown when a detected member needs attention (expiring/grace/revoked/suspended/cancelled).
   const [memberAlert, setMemberAlert] = useState<{ level: 'info' | 'warn' | 'urgent'; title: string; body: string; canRenew: boolean } | null>(null);
+  // LPR (license-plate recognition) suggestions for the operating outlet — a
+  // tappable chip only. Nothing here writes the plate/customer fields on its
+  // own; only picking a chip does (AIRIN-25, POS half).
+  const [lprDetections, setLprDetections] = useState<PlateDetection[]>([]);
+  // Bumped on a timer purely to force the TTL filter to re-run and drop chips
+  // that aged out, even when no new detection arrives to trigger a re-render.
+  const [lprTick, setLprTick] = useState(0);
+  const [lprBusyId, setLprBusyId] = useState<string | null>(null);
   const [showQueuePicker, setShowQueuePicker] = useState(false);
   const [findInput, setFindInput] = useState('');
   const [finding, setFinding] = useState(false);
@@ -251,6 +262,48 @@ export default function NewOrderPage() {
     });
   }, [loadCatalog]);
 
+  // Fetch recent LPR detections for the operating outlet and subscribe to the
+  // live feed. Both are best-effort: a branch with no ANPR camera, or a
+  // backend that doesn't have this endpoint/gateway wired yet, must not
+  // surface as an error — the feature stays invisible unless a real detection
+  // exists (AIRIN-25).
+  useEffect(() => {
+    if (!operatingOutletId) return;
+    let cancelled = false;
+    api.get<PlateDetection[]>(`/lpr/detections?outletId=${operatingOutletId}`)
+      .then((rows) => { if (!cancelled) setLprDetections(rows); })
+      .catch(() => { /* no camera at this branch, or endpoint not live yet */ });
+
+    // Same socket.io server the realtime gateway already exposes — the
+    // `join:outlet` room convention is shared with the order/queue/payment
+    // pushes it already does. Connecting with no URL keeps this same-origin,
+    // so it rides the existing `/socket.io` rewrite (next.config.mjs in dev,
+    // nginx in front of it in prod) instead of opening a second connection to
+    // a hardcoded backend host.
+    const socket: Socket = io({ transports: ['websocket', 'polling'] });
+    socket.emit('join:outlet', { outletId: operatingOutletId });
+    const onDetected = (payload: PlateDetectedPayload) => {
+      setLprDetections((prev) => upsertDetection(prev, payload.detection));
+    };
+    socket.on(LPR_DETECTED_EVENT, onDetected);
+
+    return () => {
+      cancelled = true;
+      socket.off(LPR_DETECTED_EVENT, onDetected);
+      socket.disconnect();
+    };
+  }, [operatingOutletId]);
+
+  // Re-filter periodically so a chip disappears once it ages past the TTL
+  // even without a new detection arriving to trigger a re-render.
+  useEffect(() => {
+    const id = setInterval(() => setLprTick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- lprTick exists solely to force this to re-run on a timer
+  const offerableLprDetections = useMemo(() => filterOfferableDetections(lprDetections), [lprDetections, lprTick]);
+
   // Membership status → cashier soft-pop. Covers expiring-soon, grace, revoked,
   // suspended and cancelled; returns null for a healthy active membership.
   const computeMemberAlert = (
@@ -322,6 +375,31 @@ export default function NewOrderPage() {
       setMemberAlert(alert);
       setMemberExpiry(alert ? alert.body : null);
     }
+  };
+
+  // Tapping an LPR chip is the cashier's explicit confirmation — the only
+  // thing that ever writes the plate field from a detection. It reuses the
+  // exact same plate-lookup + applyMember path as the manual "Find member"
+  // box (rather than trusting PlateDetectionMatch's summary fields directly),
+  // so membership pricing/eligibility logic isn't duplicated and stays
+  // correct even if the membership changed since the camera matched it
+  // (AIRIN-25).
+  const pickDetection = async (d: PlateDetection) => {
+    const norm = normalizePlate(d.plateNormalized).normalized;
+    setPlate(norm);
+    setLprBusyId(d.id);
+    if (d.match) {
+      try {
+        const m = await api.get<MemberLookupResponse>(`/members/lookup?plate=${encodeURIComponent(norm)}`);
+        applyMember(m, norm);
+      } catch { /* matched at capture time but the lookup fails now — plate stays filled, order proceeds as non-member */ }
+    }
+    // Drop it from the offered list immediately (used, not to be offered
+    // again) and best-effort tell the server so no other till on this branch
+    // keeps offering the same detection.
+    setLprDetections((prev) => prev.filter((x) => x.id !== d.id));
+    api.post(`/lpr/detections/${d.id}/confirm`, { plate: norm }).catch(() => { /* best-effort */ });
+    setLprBusyId(null);
   };
 
   // Hydrate the panel from a queued car; resolve its plate to a member if any.
@@ -742,6 +820,9 @@ export default function NewOrderPage() {
           <h2 className="section-title mb-3">{t('pos.new.order', 'Order')}</h2>
 
           <div className="space-y-2 mb-4">
+            {/* Camera-detected plates for this branch — tappable suggestion
+                only; renders nothing when there's nothing to offer (AIRIN-25). */}
+            <LprSuggestions detections={offerableLprDetections} onPick={pickDetection} busyId={lprBusyId} />
             {/* Find member by plate or phone (member pricing + expiry note). */}
             <div className="flex gap-2">
               <input

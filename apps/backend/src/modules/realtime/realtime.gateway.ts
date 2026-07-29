@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
+import { LPR_DETECTED_EVENT, PlateDetectedPayload } from '@aire/shared';
 
 export interface OrderStatusChangedPayload {
   orderId: string;
@@ -154,5 +155,14 @@ export class RealtimeGateway
     this.server
       .to(`outlet:${outletId}`)
       .emit('notification:alert', payload);
+  }
+
+  /**
+   * Emit a new LPR/ANPR plate detection to the outlet room (AIRIN-59). Callers
+   * only invoke this when confidence >= LPR_MIN_CONFIDENCE — low-confidence
+   * reads are stored but not offered as a one-tap POS suggestion.
+   */
+  emitPlateDetected(outletId: string, payload: PlateDetectedPayload): void {
+    this.server.to(`outlet:${outletId}`).emit(LPR_DETECTED_EVENT, payload);
   }
 }

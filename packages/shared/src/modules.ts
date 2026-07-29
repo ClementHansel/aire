@@ -31,6 +31,7 @@ export const TENANT_MODULES: TenantModuleDef[] = [
   { key: 'hr', label: 'HR & Payroll', description: 'Employee management and payroll.' },
   { key: 'ai_assistant', label: 'AI Assistant', description: 'In-app AI assistant and agent workflows.' },
   { key: 'whatsapp', label: 'WhatsApp AI Agent', description: 'WhatsApp agent, conversations, and AI monitoring.' },
+  { key: 'cctv', label: 'CCTV & LPR', description: 'Branch cameras, live/recorded video, and license-plate detection.' },
 ];
 
 export const TENANT_MODULE_KEYS: string[] = TENANT_MODULES.map((m) => m.key);

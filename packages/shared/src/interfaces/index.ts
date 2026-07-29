@@ -7,3 +7,4 @@ export * from './bay';
 export * from './payment';
 export * from './error';
 export * from './report';
+export * from './lpr';

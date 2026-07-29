@@ -5,6 +5,7 @@ import { runScan, injectRtspCreds, detectNvrVendor } from './scanner';
 import { resolveNvrChannels } from './nvr-provision';
 import { Streamer } from './streamer';
 import { MqttBridge } from './mqtt-bridge';
+import { handleLprRequest, startSimulatedLpr } from './lpr';
 import type {
   CommandRequest,
   ConfigureRequest,
@@ -250,6 +251,13 @@ async function main(): Promise<void> {
           active_cameras: streamer.activeCameras(),
         }),
       );
+    } else if (handleLprRequest(reqHttp, res, {
+      cloudUrl: config.cloudUrl,
+      token: config.bridgeToken,
+      outletId: config.outletId,
+    })) {
+      // Handled by the LPR webhook — ANPR cameras on the LAN POST plate events
+      // to :<healthPort>/lpr. Nothing inbound from the internet is exposed.
     } else {
       res.writeHead(404);
       res.end();
@@ -257,7 +265,19 @@ async function main(): Promise<void> {
   });
   healthServer.listen(config.healthPort, () => {
     console.log(`[branch-bridge] health on :${config.healthPort}/health`);
+    console.log(`[branch-bridge] LPR webhook on :${config.healthPort}/lpr (POST)`);
   });
+
+  // Without hardware there is no plate source, so simulate one — this is what
+  // lets the full LPR pipeline be demonstrated and tested before any ANPR camera
+  // has been chosen (AIRIN-59).
+  const stopSimulatedLpr = config.simulate
+    ? startSimulatedLpr({
+        cloudUrl: config.cloudUrl,
+        token: config.bridgeToken,
+        outletId: config.outletId,
+      })
+    : null;
 
   // --- Graceful shutdown ------------------------------------------------
   let shuttingDown = false;
@@ -265,6 +285,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('[branch-bridge] shutting down...');
+    stopSimulatedLpr?.();
     healthServer.close();
     await streamer.stopAll();
     await mqttBridge.disconnect();

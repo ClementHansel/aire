@@ -2731,4 +2731,10 @@ export const id: Record<string, string> = {
 
   // Reports — branch scope note for outlet-bound roles (AIRIN-130)
   'dash.reports.branchScopedNote': 'Hanya cabang Anda',
+
+  // LPR (license-plate recognition) tappable suggestion chips on the New Order
+  // cart — the cashier confirms; nothing here auto-fills (AIRIN-25).
+  'pos.new.lprDetectedHint': 'Plat terdeteksi kamera — ketuk untuk konfirmasi:',
+  'pos.new.lprJustNow': 'baru saja',
+  'pos.new.lprMinAgoSuffix': 'mnt lalu',
 };
