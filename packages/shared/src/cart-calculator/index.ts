@@ -117,9 +117,50 @@ export function updateQuantity(
 }
 
 /**
+ * A sellable item's own manual-discount permission, set per product/service in
+ * the dashboard (AIRIN-122/123). Shape mirrors the `dynamic_discount_*` /
+ * `max_discount` columns on `services`.
+ */
+export interface DynamicDiscountRule {
+  enabled?: boolean;
+  kind?: 'fixed' | 'percentage' | null;
+  /** Rupiah when kind='fixed'; percent 0-100 when kind='percentage'. */
+  maxDiscount?: number | null;
+}
+
+/**
+ * Largest manual discount (in Rupiah) allowed on one cart line.
+ *
+ * Returns 0 when the item has not opted in — a cashier may only discount items
+ * the dashboard has explicitly enabled, rather than anything on the menu up to a
+ * single tenant-wide percentage (AIRIN-121). Callers must treat 0 as "no
+ * discount field at all", not "unlimited".
+ *
+ * The per-item rule is authoritative and deliberately ignores the outlet's
+ * maxManualDiscountPct: the whole point of the flag is a per-item ceiling.
+ */
+export function maxLineDiscount(
+  rule: DynamicDiscountRule | undefined | null,
+  unitPrice: number,
+  quantity: number,
+): number {
+  if (!rule?.enabled || rule.maxDiscount == null || rule.maxDiscount <= 0) return 0;
+  const lineTotal = Math.max(0, unitPrice) * Math.max(0, quantity);
+  if (rule.kind === 'percentage') {
+    // Guard against a stored percentage above 100 producing more than the line.
+    return Math.min(lineTotal, (Math.min(rule.maxDiscount, 100) / 100) * lineTotal);
+  }
+  // 'fixed' (and any unexpected kind) is a Rupiah amount, never above the line.
+  return Math.min(lineTotal, rule.maxDiscount);
+}
+
+/**
  * Applies a manual discount to an item in the cart by serviceId.
  * The discount is capped by maxManualDiscountPct * item.unitPrice * item.quantity.
  * If maxManualDiscountPct is not configured, no cap is applied.
+ *
+ * Prefer maxLineDiscount() for items carrying their own dynamic-discount rule;
+ * this remains for the tenant-wide cap on paths that have no per-item rule.
  */
 export function applyManualDiscount(
   items: CartItem[],

@@ -159,6 +159,9 @@ export class OrderController {
       dateFrom,
       dateTo,
       outletIds,
+      // A cashier must always find the orders they rang up, even if the shift
+      // booked them to a branch outside their assigned set (AIRIN-110).
+      alwaysVisibleOperatorId: user.sub,
       page,
       pageSize,
     };

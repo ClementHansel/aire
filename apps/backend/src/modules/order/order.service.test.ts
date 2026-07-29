@@ -166,6 +166,189 @@ describe('OrderService', () => {
       expect(result.note).toBe('Test order');
     });
 
+    /**
+     * AIRIN-112: POS checkout never created a customer row, so walk-ins never
+     * reached CRM and every visit/spend metric (which joins orders on
+     * customer_id) read zero. AIRIN-117: the plate was stored exactly as typed,
+     * so "B 8882 CST" and "B8882CST" were two different cars.
+     */
+    describe('customer linkage + plate normalization', () => {
+      /** The arguments the order INSERT was called with. */
+      const orderInsert = () => {
+        const call = mockClient.query.mock.calls.find(
+          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO orders'),
+        );
+        expect(call, 'order INSERT was never issued').toBeDefined();
+        return { sql: call![0] as string, params: call![1] as unknown[] };
+      };
+
+      const customerUpserts = () =>
+        mockClient.query.mock.calls.filter(
+          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO customers'),
+        );
+
+      it('upserts a customer and links it on the order', async () => {
+        setupSuccessfulOrderCreation();
+
+        await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
+
+        const upserts = customerUpserts();
+        expect(upserts).toHaveLength(1);
+        // Keyed on normalized phone so repeat visits reuse one customer.
+        expect(upserts[0]![0]).toContain('ON CONFLICT (tenant_id, phone_normalized)');
+
+        const { sql, params } = orderInsert();
+        expect(sql).toContain('customer_id');
+        // upsertCustomerRow returns the mock router's generated id.
+        expect(params).toContain('gen-id');
+      });
+
+      it('does NOT upsert a customer for a blank or sentinel phone', async () => {
+        // Phone is the upsert key. Walk-in sentinels ('', '0000', short junk from
+        // older flows and e2e fixtures) all normalize to the same value, so
+        // upserting them would merge every anonymous customer into ONE CRM record
+        // with a fabricated visit history. Verified against the real dataset: the
+        // migration's matching guard leaves such rows unlinked rather than
+        // minting a bogus "Walk-in" customer.
+        for (const phone of ['   ', '0000', '0812']) {
+          vi.clearAllMocks();
+          setupSuccessfulOrderCreation();
+
+          await orderService
+            .createOrder(
+              { ...validRequest, customer: { ...validRequest.customer, phone } },
+              mockUser,
+              { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+            )
+            .catch(() => { /* validation may reject it earlier; the assertion is the point */ });
+
+          expect(customerUpserts(), `phone ${JSON.stringify(phone)} must not upsert`).toHaveLength(0);
+        }
+      });
+
+      it('stores both the as-typed plate and a normalized form', async () => {
+        setupSuccessfulOrderCreation();
+
+        await orderService.createOrder(
+          { ...validRequest, customer: { ...validRequest.customer, licensePlate: 'b 8882 cst' } },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+
+        const { sql, params } = orderInsert();
+        expect(sql).toContain('plate_normalized');
+        // As typed — the receipt shows what the cashier entered.
+        expect(params).toContain('b 8882 cst');
+        // Canonical — what search and matching use.
+        expect(params).toContain('B8882CST');
+      });
+
+      it('leaves plate_normalized null when no plate was given', async () => {
+        setupSuccessfulOrderCreation();
+
+        await orderService.createOrder(
+          { ...validRequest, customer: { ...validRequest.customer, licensePlate: undefined }, selectedPlate: undefined },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+
+        const { sql } = orderInsert();
+        expect(sql).toContain('plate_normalized');
+        // Both plate columns null rather than '' — '' would be a distinct,
+        // meaningless plate value that an ILIKE search could match.
+        const { params } = orderInsert();
+        const plateIdx = 7; // license_plate is the 8th bound parameter
+        expect(params[plateIdx]).toBeNull();
+        expect(params[plateIdx + 1]).toBeNull();
+      });
+    });
+
+    /**
+     * AIRIN-121: a manual discount is a per-item permission from the dashboard.
+     * The POS hides the field for items that never opted in, but the server is
+     * the authority — a hand-rolled request must not be able to discount an
+     * item the tenant never enabled.
+     */
+    describe('per-item manual discount gate', () => {
+      const orderItemInserts = () =>
+        mockClient.query.mock.calls
+          .filter(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO order_items'))
+          .map(([, params]) => params as unknown[]);
+
+      /** order_items params: (order_id, service_id, quantity, unit_price, discount, …) */
+      const discountFor = (serviceId: string) => {
+        const row = orderItemInserts().find((p) => p[1] === serviceId);
+        expect(row, `no order_items row for ${serviceId}`).toBeDefined();
+        return row![4];
+      };
+
+      it('ignores a discount on an item that has not opted in', async () => {
+        setupSuccessfulOrderCreation(); // mockServices leave the flag unset
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 1, manualDiscount: 20000 }] },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+        expect(discountFor('svc-1')).toBe(0);
+      });
+
+      it('honours a discount up to the item’s own fixed cap', async () => {
+        mockPool.query.mockReset();
+        mockPool.query.mockResolvedValueOnce({
+          rows: [{ ...mockServices[0], dynamic_discount_enabled: true, dynamic_discount_kind: 'fixed', max_discount: '5000.00' }],
+        });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }] });
+        mockPool.query.mockResolvedValueOnce({ rows: [] });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
+        currentOrderRow = { id: 'order-1', status: 'ordered', total: '45000.00', created_at: new Date(), updated_at: new Date() };
+
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 1, manualDiscount: 4000 }] },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+        expect(discountFor('svc-1')).toBe(4000);
+      });
+
+      it('clamps a discount that exceeds the item’s own cap', async () => {
+        mockPool.query.mockReset();
+        mockPool.query.mockResolvedValueOnce({
+          rows: [{ ...mockServices[0], dynamic_discount_enabled: true, dynamic_discount_kind: 'fixed', max_discount: '5000.00' }],
+        });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }] });
+        mockPool.query.mockResolvedValueOnce({ rows: [] });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
+        currentOrderRow = { id: 'order-1', status: 'ordered', total: '45000.00', created_at: new Date(), updated_at: new Date() };
+
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 1, manualDiscount: 40000 }] },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+        // Capped at the item's 5 000, not the requested 40 000.
+        expect(discountFor('svc-1')).toBe(5000);
+      });
+
+      it('applies a percentage cap against the whole line', async () => {
+        mockPool.query.mockReset();
+        mockPool.query.mockResolvedValueOnce({
+          rows: [{ ...mockServices[0], dynamic_discount_enabled: true, dynamic_discount_kind: 'percentage', max_discount: '10.00' }],
+        });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }] });
+        mockPool.query.mockResolvedValueOnce({ rows: [] });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
+        currentOrderRow = { id: 'order-1', status: 'ordered', total: '85000.00', created_at: new Date(), updated_at: new Date() };
+
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 2, manualDiscount: 99999 }] },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+        // 10% of 2 × 50 000 = 10 000.
+        expect(discountFor('svc-1')).toBe(10000);
+      });
+    });
+
     it('should calculate correct subtotal from service prices', async () => {
       setupSuccessfulOrderCreation();
 

@@ -261,6 +261,24 @@ export default function OrdersPage() {
                     </li>
                   ))}
                 </ul>
+                {/* Order highlights — how it was paid and who rang it up. Both
+                    already come back from /orders; the card just never showed
+                    them, so cashiers had to open the receipt to tell two
+                    same-total orders apart (AIRIN-115). */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-3">
+                  {o.paymentMethod ? (
+                    <span className="badge bg-sky-50 text-sky-700 text-xs" data-testid={`order-payment-${o.id}`}>
+                      {PAYMENT_METHOD_LABELS[o.paymentMethod] ?? o.paymentMethod}
+                    </span>
+                  ) : (
+                    <span className="badge bg-amber-50 text-amber-700 text-xs">{t('pos.orders.unpaid', 'Unpaid')}</span>
+                  )}
+                  {o.operatorName && (
+                    <span className="badge bg-surface-sunken text-text-secondary text-xs" data-testid={`order-cashier-${o.id}`}>
+                      {t('pos.orders.cashierLabel', 'Cashier')}: {o.operatorName}
+                    </span>
+                  )}
+                </div>
                 <div className="flex justify-between items-center mt-3 pt-2 border-t border-border">
                   <span className="text-xs text-text-muted">{new Date(o.createdAt).toLocaleString('id-ID')}</span>
                   <span className="font-semibold text-primary-600">{fmt(o.total)}</span>

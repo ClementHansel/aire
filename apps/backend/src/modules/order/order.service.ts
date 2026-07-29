@@ -20,6 +20,7 @@ import {
   OrderValidationInput,
   calculateCartSummary,
   applyManualDiscount,
+  maxLineDiscount,
   CartItem,
   CartConfig,
   applyMembershipPricing,
@@ -37,7 +38,10 @@ import {
   Role,
   checkVoidAuthorization,
   VOID_PAID_WARNING_MESSAGE,
+  normalizePlate,
+  normalizePhone,
 } from '@aire/shared';
+import { upsertCustomerRow } from './pos-checkout.service';
 import * as bcrypt from 'bcrypt';
 import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
 
@@ -92,6 +96,10 @@ interface ServiceRow {
   is_main_service: boolean;
   is_active: boolean;
   business_unit: string;
+  /** Per-item manual-discount permission (AIRIN-121/122/123). */
+  dynamic_discount_enabled: boolean | null;
+  dynamic_discount_kind: 'fixed' | 'percentage' | null;
+  max_discount: string | null;
 }
 
 /**
@@ -240,7 +248,11 @@ export class OrderService {
         serviceName: service.name,
         quantity: item.quantity,
         unitPrice: parseFloat(service.price),
-        discount: item.manualDiscount ?? 0,
+        // Deliberately 0, NOT item.manualDiscount: the requested discount is
+        // untrusted until the per-item eligibility gate in Step 5b has vetted it.
+        // Seeding it here previously meant a request could carry a discount that
+        // survived whenever the clamp pass declined to run (AIRIN-121).
+        discount: 0,
         isMainService: service.is_main_service,
       };
     });
@@ -284,19 +296,47 @@ export class OrderService {
     const operatingOutletId = shift.outletId;
     const shiftId = shift.id;
 
-    // Step 5b: Get outlet config for charges + the manual-discount cap (moved
-    // ahead of its original position so the cap can be enforced below, before
-    // voucher/promo math reads item.discount). Then clamp every line's manual
-    // discount to that cap via the shared cart-calculator helper — the server,
-    // never the POS UI, is the source of truth on the max discount %. Items a
-    // membership benefit already priced (their discount is the benefit amount,
-    // not a manual discount) are left untouched by this pass.
+    // Step 5b: Get outlet config for charges (moved ahead of its original
+    // position so discounts can be enforced below, before voucher/promo math
+    // reads item.discount).
+    //
+    // Manual discounts are now a PER-ITEM permission set in the dashboard, not a
+    // single tenant-wide percentage (AIRIN-121/122/123): an item that hasn't
+    // opted in cannot be discounted at all, and one that has is capped by its own
+    // max_discount. The server is the source of truth — the POS hides the field,
+    // but a hand-rolled request must not be able to discount a non-eligible item.
+    // Items a membership benefit already priced (their discount is the benefit
+    // amount, not a manual discount) are left untouched by this pass.
     const outletConfig = await this.getOutletConfig(operatingOutletId!);
     for (const item of request.items) {
       const requestedDiscount = item.manualDiscount ?? 0;
-      if (requestedDiscount > 0 && !memberPricedServiceIds.has(item.serviceId)) {
-        cartItems = applyManualDiscount(cartItems, item.serviceId, requestedDiscount, outletConfig);
+      if (requestedDiscount <= 0 || memberPricedServiceIds.has(item.serviceId)) continue;
+
+      const svc = services.get(item.serviceId);
+      const cap = maxLineDiscount(
+        {
+          enabled: svc?.dynamic_discount_enabled ?? false,
+          kind: svc?.dynamic_discount_kind ?? null,
+          maxDiscount: svc?.max_discount != null ? parseFloat(svc.max_discount) : null,
+        },
+        svc ? parseFloat(svc.price) : 0,
+        item.quantity,
+      );
+      if (cap <= 0) {
+        // Not discountable — drop the discount rather than reject the whole sale,
+        // so a stale POS tab can't block a customer at the counter. The receipt
+        // shows the undiscounted price, which is the correct amount to charge.
+        this.logger.warn(
+          `Manual discount of ${requestedDiscount} ignored for service ${item.serviceId}: dynamic discount not enabled`,
+        );
+        continue;
       }
+      cartItems = applyManualDiscount(
+        cartItems,
+        item.serviceId,
+        Math.min(requestedDiscount, cap),
+        outletConfig,
+      );
     }
 
     // Step 6: Apply voucher discounts — resolve codes (read-only) and compute
@@ -366,20 +406,56 @@ export class OrderService {
     // Step 9: Generate order number
     const orderNumber = await this.generateOrderNumber(operatingOutletId!);
 
+    // Plate as typed (for the receipt) plus a canonical form for matching.
+    // "B 8882 CST" and "B8882CST" are the same car; storing only the raw string
+    // meant a later search by either spelling missed the order (AIRIN-117).
+    const rawPlate = request.customer.licensePlate ?? request.selectedPlate ?? null;
+    const plateNormalized = rawPlate ? (normalizePlate(rawPlate).normalized || null) : null;
+
     // Step 10: Create order and items in a transaction
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
 
+      // Every identifiable walk-in becomes a real customer record. Without this,
+      // POS orders carried only the name/phone text columns and customer_id
+      // stayed NULL, so buyers never appeared in CRM (AIRIN-112) and the visit /
+      // spend metrics that join on customer_id had nothing to count. Inside the
+      // transaction so a failed order leaves no orphan customer.
+      //
+      // Gate on normalizePhone().valid, not merely "non-empty": phone is the
+      // upsert key, so any value that isn't a real number — '', '0000' and other
+      // walk-in sentinels the POS and older flows emit — would collide on one
+      // phone_normalized and silently merge every anonymous customer into a
+      // single CRM record with a fabricated visit history.
+      let customerId: string | null = null;
+      if (normalizePhone(request.customer.phone ?? '').valid) {
+        const cust = await upsertCustomerRow(
+          client,
+          user.tenant_id,
+          request.customer.name,
+          request.customer.phone,
+        );
+        customerId = cust.id;
+        if (cust.inserted) {
+          void this.eventBus?.emit({
+            type: DomainEventType.CustomerCreated,
+            tenantId: user.tenant_id,
+            actor: 'pos',
+            payload: { customerId: cust.id, name: request.customer.name, phone: cust.phoneNormalized },
+          });
+        }
+      }
+
       // Insert order
       const orderResult = await client.query<OrderRow>(
         `INSERT INTO orders
           (tenant_id, outlet_id, operator_id, order_number, status,
-           customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
+           customer_name, customer_phone, license_plate, plate_normalized, vehicle_brand, vehicle_model,
            subtotal, service_charge, tax, voucher_discount, promo_discount, total,
            note, membership_id, business_unit, salesperson_name, channel, shift_id,
-           salesperson_employee_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+           salesperson_employee_id, customer_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
          RETURNING *`,
         [
           user.tenant_id,
@@ -389,7 +465,8 @@ export class OrderService {
           OrderStatus.Ordered,
           request.customer.name,
           request.customer.phone,
-          request.customer.licensePlate ?? request.selectedPlate ?? null,
+          rawPlate,
+          plateNormalized,
           request.customer.brand ?? null,
           request.customer.model ?? null,
           cartSummary.subtotal,
@@ -405,6 +482,7 @@ export class OrderService {
           request.channel ?? 'pos',
           shiftId,
           request.salespersonEmployeeId ?? null,
+          customerId,
         ],
       );
 
@@ -1452,7 +1530,8 @@ export class OrderService {
 
     const placeholders = serviceIds.map((_, i) => `$${i + 1}`).join(', ');
     const result = await this.pool.query<ServiceRow>(
-      `SELECT id, name, category, price, is_main_service, is_active, business_unit
+      `SELECT id, name, category, price, is_main_service, is_active, business_unit,
+              dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE id IN (${placeholders})`,
       serviceIds,

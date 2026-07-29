@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import BranchFilter from '@/components/dashboard/BranchFilter';
+import { fmtDate, toDateInput } from '@/lib/dates';
+import { memberBadge } from '@/lib/memberStatus';
 import { Bot } from 'lucide-react';
 
 interface SeriesPoint { period: string; revenue: number; orders: number }
@@ -17,6 +19,20 @@ interface Summary {
 interface OrderCard {
   id: string; orderNumber: string; customerName: string; customerPhone: string;
   status: string; total: number; createdAt: string; operatorName: string;
+}
+// Membership row from GET /memberships/manage — plan sales (AIRIN-133). This
+// list has no createdAt/price of its own, so startDate stands in as the
+// purchase date and price is joined in from GET /membership-plans by name.
+interface MembershipSaleRow {
+  id: string; customerName: string; planName: string; startDate: string;
+  status: string; displayStatus: string;
+}
+interface PlanPrice { id: string; name: string; price: number }
+// Voucher book row from GET /voucher-tickets/books — a "pack" sale of N
+// shareable ticket codes at one unit price.
+interface VoucherBookRow {
+  id: string; buyerName: string; buyerPhone: string; quantity: number;
+  benefitType: string; unitPrice: number; outletName: string; redeemed: number; createdAt: string;
 }
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
@@ -60,11 +76,24 @@ export default function TransactionsPage() {
   const [insights, setInsights] = useState<string[]>([]);
   const [detail, setDetail] = useState<OrderCard | null>(null);
   const [editing, setEditing] = useState<OrderCard | null>(null);
+  const [membershipSales, setMembershipSales] = useState<MembershipSaleRow[]>([]);
+  const [plans, setPlans] = useState<PlanPrice[]>([]);
+  const [voucherBooks, setVoucherBooks] = useState<VoucherBookRow[]>([]);
+  const [purchasesLoading, setPurchasesLoading] = useState(false);
 
   const buQs = businessUnit ? `&businessUnit=${businessUnit}` : '';
   const branchQs = branch ? `&outletId=${branch}` : '';
 
+  // An inverted range yields an empty result set that looks identical to "no
+  // transactions in this period", so guard it instead of querying (AIRIN-132).
+  // ISO YYYY-MM-DD compares correctly as a string.
+  const rangeInvalid = Boolean(dateFrom && dateTo && dateFrom > dateTo);
+  const rangeError = rangeInvalid
+    ? t('dash.transactions.invalidRange', 'Start date is after end date — adjust the range to see results.')
+    : '';
+
   const loadAnalytics = useCallback(async () => {
+    if (rangeInvalid) { setSeries([]); setSummary(null); setInsights([]); setLoading(false); return; }
     setLoading(true); setError('');
     try {
       const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${buQs}${branchQs}`;
@@ -76,19 +105,50 @@ export default function TransactionsPage() {
       computeInsights(s, sum);
     } catch (err) { setError(err instanceof Error ? err.message : t('dash.transactions.failLoadAnalytics', 'Failed to load analytics')); }
     finally { setLoading(false); }
-  }, [dateFrom, dateTo, granularity, buQs, branchQs]);
+  }, [dateFrom, dateTo, granularity, buQs, branchQs, rangeInvalid]);
 
   const loadOrders = useCallback(async () => {
+    if (rangeInvalid) { setOrders([]); setTotal(0); return; }
     try {
       const df = todayOnly ? today() : dateFrom;
       const dt = todayOnly ? today() : dateTo;
       const res = await api.get<{ orders: OrderCard[]; total: number }>(`/orders?dateFrom=${df}&dateTo=${dt}&page=${page}&pageSize=${pageSize}${branchQs}`);
       setOrders(res.orders); setTotal(res.total);
     } catch (err) { setError(err instanceof Error ? err.message : t('dash.transactions.failLoadOrders', 'Failed to load orders')); }
-  }, [dateFrom, dateTo, page, pageSize, todayOnly, branchQs]);
+  }, [dateFrom, dateTo, page, pageSize, todayOnly, branchQs, rangeInvalid]);
+
+  // Membership-plan and voucher-pack sales have no dedicated dashboard section
+  // (AIRIN-133). Neither /memberships/manage nor /voucher-tickets/books accept
+  // date/branch query params, so filtering by range happens client-side here;
+  // branch can't be applied to these two (memberships carries no outlet, and
+  // voucher books expose only an outlet *name*, not an id to match BranchFilter's
+  // value against) — tenant-wide for now.
+  const loadPurchases = useCallback(async () => {
+    if (rangeInvalid) { setMembershipSales([]); setVoucherBooks([]); return; }
+    setPurchasesLoading(true);
+    try {
+      const [memberships, planList, books] = await Promise.all([
+        api.get<MembershipSaleRow[]>('/memberships/manage'),
+        api.get<PlanPrice[]>('/membership-plans'),
+        api.get<VoucherBookRow[]>('/voucher-tickets/books'),
+      ]);
+      setPlans(planList);
+      setMembershipSales(memberships.filter((m) => m.startDate >= dateFrom && m.startDate <= dateTo));
+      setVoucherBooks(books.filter((b) => { const d = toDateInput(b.createdAt); return d >= dateFrom && d <= dateTo; }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('dash.transactions.failLoadPurchases', 'Failed to load purchase data'));
+    } finally {
+      setPurchasesLoading(false);
+    }
+  }, [dateFrom, dateTo, rangeInvalid, t]);
 
   useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
   useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => { loadPurchases(); }, [loadPurchases]);
+
+  const planPrice = (planName: string) => plans.find((p) => p.name === planName)?.price ?? 0;
+  const membershipRevenue = membershipSales.reduce((a, m) => a + planPrice(m.planName), 0);
+  const voucherRevenue = voucherBooks.reduce((a, b) => a + b.quantity * b.unitPrice, 0);
 
   const computeInsights = (s: SeriesPoint[], sum: Summary) => {
     const out: string[] = [];
@@ -169,12 +229,15 @@ export default function TransactionsPage() {
         </div>
       </div>
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
+      {rangeError && <div role="alert" data-testid="transactions-range-error" className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{rangeError}</div>}
 
       {/* Filters */}
       <div className="card mb-6">
         <div className="flex flex-wrap items-end gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1">{t('dash.transactions.from', 'From')}</label><input aria-label={t('dash.transactions.dateFrom', 'Date From')} type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1">{t('dash.transactions.to', 'To')}</label><input aria-label={t('dash.transactions.dateTo', 'Date To')} type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" /></div>
+          {/* max/min keep the native pickers from offering an inverted range at
+              all; rangeInvalid still guards typed/pasted values. */}
+          <div><label className="block text-xs font-medium text-text-secondary mb-1">{t('dash.transactions.from', 'From')}</label><input aria-label={t('dash.transactions.dateFrom', 'Date From')} type="date" value={dateFrom} max={dateTo || undefined} aria-invalid={rangeInvalid} onChange={(e) => setDateFrom(e.target.value)} className={`input-field ${rangeInvalid ? 'border-red-400' : ''}`} /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1">{t('dash.transactions.to', 'To')}</label><input aria-label={t('dash.transactions.dateTo', 'Date To')} type="date" value={dateTo} min={dateFrom || undefined} aria-invalid={rangeInvalid} onChange={(e) => setDateTo(e.target.value)} className={`input-field ${rangeInvalid ? 'border-red-400' : ''}`} /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1">{t('dash.transactions.groupBy', 'Group by')}</label>
             <select aria-label={t('dash.transactions.granularity', 'Granularity')} value={granularity} onChange={(e) => setGranularity(e.target.value as 'day' | 'week' | 'month')} className="input-field">
               <option value="day">{t('dash.transactions.daily', 'Daily')}</option><option value="week">{t('dash.transactions.weekly', 'Weekly')}</option><option value="month">{t('dash.transactions.monthly', 'Monthly')}</option>
@@ -210,6 +273,74 @@ export default function TransactionsPage() {
         <ul className="list-disc pl-5 space-y-1 text-sm text-text-secondary">
           {insights.map((i, idx) => <li key={idx}>{i}</li>)}
         </ul>
+      </div>
+
+      {/* Membership & voucher-pack purchases — AIRIN-133 */}
+      <div className="grid lg:grid-cols-2 gap-6 mb-6">
+        <div className="card p-0 overflow-hidden" data-testid="membership-purchases-section">
+          <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text-primary">{t('dash.transactions.membershipPurchases', 'Membership purchases')} ({membershipSales.length})</h2>
+            <span className="text-sm font-mono text-text-secondary">{fmt(membershipRevenue)}</span>
+          </div>
+          <table className="w-full">
+            <thead><tr className="border-b border-border bg-surface-sunken/50">
+              <th className="text-left px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.customer', 'Customer')}</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.plan', 'Plan')}</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.date', 'Date')}</th>
+              <th className="text-center px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.status', 'Status')}</th>
+              <th className="text-right px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.total', 'Total')}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-border">
+              {purchasesLoading ? (
+                <tr><td colSpan={5} className="px-4 py-5 text-sm text-text-muted text-center">{t('dash.transactions.loading', 'Loading…')}</td></tr>
+              ) : membershipSales.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-5 text-sm text-text-muted text-center">{t('dash.transactions.noMembershipPurchases', 'No membership purchases in this range.')}</td></tr>
+              ) : membershipSales.map((m) => {
+                const badge = memberBadge(m.displayStatus);
+                return (
+                  <tr key={m.id}>
+                    <td className="px-4 py-2.5 text-sm">{m.customerName}</td>
+                    <td className="px-4 py-2.5 text-sm text-text-secondary">{m.planName}</td>
+                    <td className="px-4 py-2.5 text-xs text-text-muted">{fmtDate(m.startDate)}</td>
+                    <td className="px-4 py-2.5 text-center"><span className={`badge capitalize ${badge.cls}`}>{t(badge.key, badge.label)}</span></td>
+                    <td className="px-4 py-2.5 text-sm text-right font-mono">{fmt(planPrice(m.planName))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="card p-0 overflow-hidden" data-testid="voucher-pack-purchases-section">
+          <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text-primary">{t('dash.transactions.voucherPackPurchases', 'Voucher-pack purchases')} ({voucherBooks.length})</h2>
+            <span className="text-sm font-mono text-text-secondary">{fmt(voucherRevenue)}</span>
+          </div>
+          <table className="w-full">
+            <thead><tr className="border-b border-border bg-surface-sunken/50">
+              <th className="text-left px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.buyer', 'Buyer')}</th>
+              <th className="text-left px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.date', 'Date')}</th>
+              <th className="text-right px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.qty', 'Qty')}</th>
+              <th className="text-right px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.unitPrice', 'Unit price')}</th>
+              <th className="text-right px-4 py-2 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.total', 'Total')}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-border">
+              {purchasesLoading ? (
+                <tr><td colSpan={5} className="px-4 py-5 text-sm text-text-muted text-center">{t('dash.transactions.loading', 'Loading…')}</td></tr>
+              ) : voucherBooks.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-5 text-sm text-text-muted text-center">{t('dash.transactions.noVoucherPackPurchases', 'No voucher-pack purchases in this range.')}</td></tr>
+              ) : voucherBooks.map((b) => (
+                <tr key={b.id}>
+                  <td className="px-4 py-2.5 text-sm">{b.buyerName}<div className="text-xs text-text-muted">{b.buyerPhone}</div></td>
+                  <td className="px-4 py-2.5 text-xs text-text-muted">{fmtDate(b.createdAt)}</td>
+                  <td className="px-4 py-2.5 text-sm text-right">{b.quantity}</td>
+                  <td className="px-4 py-2.5 text-sm text-right font-mono">{fmt(b.unitPrice)}</td>
+                  <td className="px-4 py-2.5 text-sm text-right font-mono">{fmt(b.quantity * b.unitPrice)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Transactions table */}

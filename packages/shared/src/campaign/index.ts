@@ -17,7 +17,12 @@ export type CampaignStatus = 'active' | 'paused' | 'completed' | 'expired';
  */
 export interface CampaignData {
   id: string;
-  planId: string;
+  /**
+   * Present when the campaign triggers on a membership plan purchase; null
+   * when it triggers on a voucher-pack purchase instead (AIRIN-102). Unused
+   * by the eligibility checks below — kept only for caller bookkeeping.
+   */
+  planId: string | null;
   startDate: string; // ISO date string (YYYY-MM-DD)
   endDate: string; // ISO date string (YYYY-MM-DD)
   cap: number | null; // total grants cap (null = unlimited)

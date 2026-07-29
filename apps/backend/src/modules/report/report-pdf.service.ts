@@ -446,16 +446,21 @@ export class ReportPdfService {
     if (on('kpis')) content.push(this.kpiBand(s));
 
     if (on('businessUnit')) {
+      // Mirror the dashboard (AIRIN-130): when the report is filtered to one unit
+      // the summary only carries that unit, so printing both would show a
+      // zero-revenue card for the excluded one and read as a data error.
+      // Untyped so the spacer column literal keeps pdfmake's contextual inference.
+      const buCards =
+        input.businessUnit === 'AIRE' ? [this.buCard('AIRE · Car Wash', bu('AIRE'), BRAND)]
+          : input.businessUnit === 'LEAD' ? [this.buCard('LEAD · Detailing', bu('LEAD'), ACCENT_PURPLE)]
+            : [
+                this.buCard('AIRE · Car Wash', bu('AIRE'), BRAND),
+                { width: 12, text: '' },
+                this.buCard('LEAD · Detailing', bu('LEAD'), ACCENT_PURPLE),
+              ];
       content.push(
         this.sectionTitle('Revenue by business unit'),
-        {
-          columns: [
-            this.buCard('AIRE · Car Wash', bu('AIRE'), BRAND),
-            { width: 12, text: '' },
-            this.buCard('LEAD · Detailing', bu('LEAD'), ACCENT_PURPLE),
-          ],
-          margin: [0, 0, 0, 16],
-        },
+        { columns: buCards, margin: [0, 0, 0, 16] },
       );
     }
 

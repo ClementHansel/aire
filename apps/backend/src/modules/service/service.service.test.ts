@@ -22,6 +22,9 @@ describe('ServiceService', () => {
     brand_id: null,
     outlet_ids: null,
     barcode: null,
+    dynamic_discount_enabled: false,
+    dynamic_discount_kind: null,
+    max_discount: null,
     created_at: new Date('2024-06-15T10:00:00.000Z'),
   };
 
@@ -59,6 +62,9 @@ describe('ServiceService', () => {
         brandId: null,
         outletIds: null,
         barcode: null,
+        dynamicDiscountEnabled: false,
+        dynamicDiscountKind: null,
+        maxDiscount: null,
       });
 
       expect(mockPool.query).toHaveBeenCalledTimes(1);
@@ -73,6 +79,9 @@ describe('ServiceService', () => {
       expect(params[6]).toBe(true); // is_active
       expect(params[7]).toBe(true); // is_main_service (car_wash default)
       expect(params[8]).toBe(0); // sort_order
+      expect(params[13]).toBe(false); // dynamic_discount_enabled defaults false
+      expect(params[14]).toBeNull(); // dynamic_discount_kind
+      expect(params[15]).toBeNull(); // max_discount
     });
 
     it('should default is_main_service to true for car_wash category', async () => {
@@ -158,6 +167,149 @@ describe('ServiceService', () => {
           price: 10000,
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should create with dynamic discount fields when coherent', async () => {
+      const row = {
+        ...mockServiceRow,
+        dynamic_discount_enabled: true,
+        dynamic_discount_kind: 'percentage',
+        max_discount: '15',
+      };
+      mockPool.query.mockResolvedValueOnce({ rows: [row] });
+
+      const result = await service.create('tenant-001', {
+        name: 'Discountable Wash',
+        category: ServiceCategory.CarWash,
+        price: 50000,
+        dynamicDiscountEnabled: true,
+        dynamicDiscountKind: 'percentage',
+        maxDiscount: 15,
+      });
+
+      expect(result.dynamicDiscountEnabled).toBe(true);
+      expect(result.dynamicDiscountKind).toBe('percentage');
+      expect(result.maxDiscount).toBe(15);
+
+      const [, params] = mockPool.query.mock.calls[0];
+      expect(params[13]).toBe(true);
+      expect(params[14]).toBe('percentage');
+      expect(params[15]).toBe(15);
+    });
+  });
+
+  describe('dynamic discount validation', () => {
+    it('should reject dynamicDiscountEnabled=true without a kind', async () => {
+      await expect(
+        service.create('tenant-001', {
+          name: 'Bad Wash',
+          category: ServiceCategory.CarWash,
+          price: 50000,
+          dynamicDiscountEnabled: true,
+          maxDiscount: 10,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('should reject dynamicDiscountEnabled=true without a maxDiscount', async () => {
+      await expect(
+        service.create('tenant-001', {
+          name: 'Bad Wash',
+          category: ServiceCategory.CarWash,
+          price: 50000,
+          dynamicDiscountEnabled: true,
+          dynamicDiscountKind: 'fixed',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject a non-positive maxDiscount', async () => {
+      await expect(
+        service.create('tenant-001', {
+          name: 'Bad Wash',
+          category: ServiceCategory.CarWash,
+          price: 50000,
+          dynamicDiscountEnabled: true,
+          dynamicDiscountKind: 'fixed',
+          maxDiscount: 0,
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.create('tenant-001', {
+          name: 'Bad Wash',
+          category: ServiceCategory.CarWash,
+          price: 50000,
+          dynamicDiscountEnabled: true,
+          dynamicDiscountKind: 'fixed',
+          maxDiscount: -5,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject maxDiscount > 100 when kind is percentage', async () => {
+      await expect(
+        service.create('tenant-001', {
+          name: 'Bad Wash',
+          category: ServiceCategory.CarWash,
+          price: 50000,
+          dynamicDiscountEnabled: true,
+          dynamicDiscountKind: 'percentage',
+          maxDiscount: 150,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should allow maxDiscount > 100 when kind is fixed (Rupiah)', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ ...mockServiceRow, dynamic_discount_enabled: true, dynamic_discount_kind: 'fixed', max_discount: '25000' }],
+      });
+
+      await expect(
+        service.create('tenant-001', {
+          name: 'Fixed Discount Wash',
+          category: ServiceCategory.CarWash,
+          price: 50000,
+          dynamicDiscountEnabled: true,
+          dynamicDiscountKind: 'fixed',
+          maxDiscount: 25000,
+        }),
+      ).resolves.toBeTruthy();
+    });
+
+    it('should reject the same violations on update', async () => {
+      await expect(
+        service.update('tenant-001', 'svc-001', {
+          dynamicDiscountEnabled: true,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      // Validation runs before findOne, so no query should have fired.
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('should allow update with a coherent dynamic discount payload', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ ...mockServiceRow, dynamic_discount_enabled: true, dynamic_discount_kind: 'fixed', max_discount: '10000' }],
+      });
+
+      const result = await service.update('tenant-001', 'svc-001', {
+        dynamicDiscountEnabled: true,
+        dynamicDiscountKind: 'fixed',
+        maxDiscount: 10000,
+      });
+
+      expect(result.dynamicDiscountEnabled).toBe(true);
+      expect(result.maxDiscount).toBe(10000);
+
+      const [sql, params] = mockPool.query.mock.calls[1];
+      expect(sql).toContain('dynamic_discount_enabled = $1');
+      expect(sql).toContain('dynamic_discount_kind = $2');
+      expect(sql).toContain('max_discount = $3');
+      expect(params[0]).toBe(true);
+      expect(params[1]).toBe('fixed');
+      expect(params[2]).toBe(10000);
     });
   });
 

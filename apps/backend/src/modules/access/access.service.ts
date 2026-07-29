@@ -65,6 +65,15 @@ export interface UserRecord {
 
 const BASE_ROLES = ['platform_super_admin', 'tenant_owner', 'outlet_admin', 'cashier'];
 
+/**
+ * Roles a tenant may assign to its own users. `platform_super_admin` is AIRIN
+ * platform staff and is deliberately absent: the /api/users endpoints are
+ * reachable by any tenant_owner, so accepting it there let a client mint
+ * themselves a platform super-admin. Custom-role definitions still validate
+ * against BASE_ROLES, which is inheritance metadata rather than a grant.
+ */
+const TENANT_ASSIGNABLE_ROLES = ['tenant_owner', 'outlet_admin', 'cashier'];
+
 @Injectable()
 export class AccessService {
   constructor(
@@ -118,16 +127,29 @@ export class AccessService {
   }
 
   // ── Users ─────────────────────────────────────────────────────────────────
-  async listUsers(tenantId: string): Promise<UserRecord[]> {
+  /**
+   * Users belonging to a tenant, for that tenant's own Users & Roles screen.
+   *
+   * AIRIN platform staff are deliberately excluded: a platform_super_admin row
+   * carrying a tenant_id (created when AIRIN staff are provisioned against a
+   * tenant) is our operator, not the client's employee. Leaking it into the
+   * client's user list exposed AIRIN's internal accounts to the tenant owner and
+   * offered Edit/Delete on them (AIRIN-105).
+   *
+   * @param includePlatformAdmins internal use only — never true on a request
+   *   path. Set by post-write re-reads so a just-written row can still be found.
+   */
+  async listUsers(tenantId: string, includePlatformAdmins = false): Promise<UserRecord[]> {
     const res = await this.pool.query(
       `SELECT u.id, u.tenant_id, u.name, u.email, u.role, u.custom_role_id, u.is_active,
               COALESCE(array_agg(uo.outlet_id) FILTER (WHERE uo.outlet_id IS NOT NULL), '{}') AS outlet_ids
        FROM users u
        LEFT JOIN user_outlets uo ON uo.user_id = u.id
        WHERE u.tenant_id = $1
+         AND ($2::boolean OR u.role <> 'platform_super_admin')
        GROUP BY u.id
        ORDER BY u.created_at DESC`,
-      [tenantId],
+      [tenantId, includePlatformAdmins],
     );
     return res.rows.map(this.mapUser);
   }
@@ -135,7 +157,7 @@ export class AccessService {
   async createUser(tenantId: string, dto: { name: string; email: string; password: string; role?: string; customRoleId?: string | null; outletIds?: string[] }): Promise<UserRecord> {
     if (!dto.name?.trim() || !dto.email?.trim() || !dto.password) throw new BadRequestException('name, email, password required');
     const role = dto.role ?? 'cashier';
-    if (!BASE_ROLES.includes(role)) throw new BadRequestException('invalid role');
+    if (!TENANT_ASSIGNABLE_ROLES.includes(role)) throw new BadRequestException('invalid role');
     // Plan entitlement: block if the tenant is at its staff-login (seat) cap.
     await this.entitlements.assertWithin(tenantId, 'users');
     const hash = await bcrypt.hash(dto.password, 10);
@@ -153,7 +175,10 @@ export class AccessService {
         await client.query('INSERT INTO user_outlets (user_id, outlet_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [userId, oid]);
       }
       await client.query('COMMIT');
-      return (await this.listUsers(tenantId)).find((u) => u.id === userId)!;
+      // includePlatformAdmins: this is a post-write re-read of a row we just
+      // created, which may itself be a platform admin — the list filter would
+      // otherwise hide it and the non-null assertion below would lie.
+      return (await this.listUsers(tenantId, true)).find((u) => u.id === userId)!;
     } catch (e: any) {
       await client.query('ROLLBACK');
       if (e?.code === '23505') throw new BadRequestException('Email already in use');
@@ -170,7 +195,7 @@ export class AccessService {
       const set: string[] = []; const v: unknown[] = []; let i = 1;
       if (patch.name !== undefined) { set.push(`name = $${i++}`); v.push(patch.name); }
       if (patch.role !== undefined) {
-        if (!BASE_ROLES.includes(patch.role)) throw new BadRequestException('invalid role');
+        if (!TENANT_ASSIGNABLE_ROLES.includes(patch.role)) throw new BadRequestException('invalid role');
         set.push(`role = $${i++}`); v.push(patch.role);
       }
       if (patch.customRoleId !== undefined) { set.push(`custom_role_id = $${i++}`); v.push(patch.customRoleId); }
@@ -179,7 +204,13 @@ export class AccessService {
       if (patch.outletIds !== undefined) { set.push(`outlet_id = $${i++}`); v.push(patch.outletIds[0] ?? null); }
       if (set.length > 0) {
         set.push('updated_at = NOW()'); v.push(id, tenantId);
-        const res = await client.query(`UPDATE users SET ${set.join(', ')} WHERE id = $${i} AND tenant_id = $${i + 1} RETURNING id`, v);
+        // Platform staff are invisible to the tenant's list, so they must also be
+        // untouchable through it — otherwise a tenant owner could reset the
+        // password of, or deactivate, an AIRIN operator by guessing their id.
+        const res = await client.query(
+          `UPDATE users SET ${set.join(', ')} WHERE id = $${i} AND tenant_id = $${i + 1} AND role <> 'platform_super_admin' RETURNING id`,
+          v,
+        );
         if (res.rows.length === 0) throw new NotFoundException('User not found');
       }
       if (patch.outletIds !== undefined) {
@@ -189,7 +220,8 @@ export class AccessService {
         }
       }
       await client.query('COMMIT');
-      return (await this.listUsers(tenantId)).find((u) => u.id === id)!;
+      // includePlatformAdmins: post-write re-read — see createUser above.
+      return (await this.listUsers(tenantId, true)).find((u) => u.id === id)!;
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -199,7 +231,12 @@ export class AccessService {
   }
 
   async deactivateUser(tenantId: string, id: string): Promise<void> {
-    const res = await this.pool.query('UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+    // See updateUser: AIRIN platform staff are out of the tenant's reach.
+    const res = await this.pool.query(
+      `UPDATE users SET is_active = false, updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND role <> 'platform_super_admin'`,
+      [id, tenantId],
+    );
     if (res.rowCount === 0) throw new NotFoundException('User not found');
   }
 

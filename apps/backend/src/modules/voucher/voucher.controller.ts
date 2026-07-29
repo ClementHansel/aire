@@ -39,7 +39,23 @@ interface ValidateBody {
 }
 
 /**
- * Voucher pack sales + catalog.
+ * Voucher pack sales + catalog — a POS till flow, not dashboard administration.
+ *
+ * `sell` and `issue` deliberately carry NO @RequirePermission, matching the two
+ * sibling POS sale endpoints (`POST /api/orders` and `POST /api/memberships/sell`,
+ * both JwtAuthGuard-only). They used to require `vouchers.write`, which is the
+ * key gating voucher TEMPLATE management on the dashboard (see
+ * VoucherTemplateController below). Reusing it here meant any tenant who built a
+ * restricted cashier role — naturally leaving "manage voucher templates" off —
+ * silently lost the ability to sell voucher packs at the till, with only a bare
+ * "Insufficient permissions" 403 to go on (AIRIN-128). Confirmed against real
+ * data: a custom role named "POS Only" holds ["transactions.read",
+ * "customers.read"] and 403s here while ordinary sales and membership sales work.
+ *
+ * Cashier-level authorisation still applies via JwtAuthGuard + the role
+ * hierarchy; this only stops a dashboard-admin permission from gating a till
+ * action. If POS selling should ever be gated, it needs its own key applied
+ * consistently to all three sale endpoints — not one of them.
  */
 @Controller('api/voucher-packs')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -57,7 +73,6 @@ export class VoucherPackController {
 
   /** POST /api/voucher-packs/sell — reserve a sale (customer + pending order). */
   @Post('sell')
-  @RequirePermission('vouchers.write')
   @HttpCode(HttpStatus.CREATED)
   async sell(@CurrentUser() user: JWTPayload, @Body() body: SellPackBody) {
     if (!body.templateId || !body.customer?.name?.trim() || !body.customer?.phone?.trim()) {
@@ -68,7 +83,6 @@ export class VoucherPackController {
 
   /** POST /api/voucher-packs/issue — generate + deliver codes after payment. */
   @Post('issue')
-  @RequirePermission('vouchers.write')
   @HttpCode(HttpStatus.CREATED)
   async issue(@CurrentUser() user: JWTPayload, @Body() body: IssuePackBody) {
     if (!body.orderId || !body.templateId) {

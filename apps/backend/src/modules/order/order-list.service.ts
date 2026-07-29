@@ -10,6 +10,7 @@ import {
   DEFAULT_PAGE,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  normalizePlate,
 } from '@aire/shared';
 
 /**
@@ -203,14 +204,21 @@ export class OrderListService {
       paramIdx++;
     }
 
-    // Search filter (ILIKE on order_number, customer_name, customer_phone)
+    // Search filter (ILIKE on order_number, customer_name, customer_phone, plate)
     if (params.search && params.search.trim().length > 0) {
-      const searchPattern = `%${params.search.trim()}%`;
+      const term = params.search.trim();
+      const searchPattern = `%${term}%`;
+      // Plate matching goes through plate_normalized so spacing is irrelevant:
+      // "B 8882 CST", "b8882cst" and "B8882 CST" all find the same order
+      // (AIRIN-117). Falls back to a raw ILIKE on license_plate so orders
+      // predating the backfill are still findable.
+      const platePattern = `%${normalizePlate(term).normalized}%`;
       conditions.push(
-        `(o.order_number ILIKE $${paramIdx} OR o.customer_name ILIKE $${paramIdx} OR o.customer_phone ILIKE $${paramIdx})`,
+        `(o.order_number ILIKE $${paramIdx} OR o.customer_name ILIKE $${paramIdx} OR o.customer_phone ILIKE $${paramIdx}
+          OR o.plate_normalized ILIKE $${paramIdx + 1} OR o.license_plate ILIKE $${paramIdx})`,
       );
-      queryParams.push(searchPattern);
-      paramIdx++;
+      queryParams.push(searchPattern, platePattern);
+      paramIdx += 2;
     }
 
     // Date range - from
@@ -228,10 +236,21 @@ export class OrderListService {
     }
 
     // Branch filter (role-resolved set). null/undefined = all branches; [] = none.
+    // An operator always sees their OWN orders even when the shift booked them to
+    // a branch outside their assigned set (AIRIN-110) — a row-level exception, so
+    // it grants "orders I rang up" and not the rest of that branch's data.
     if (params.outletIds != null) {
-      conditions.push(`o.outlet_id = ANY($${paramIdx}::uuid[])`);
-      queryParams.push(params.outletIds);
-      paramIdx++;
+      if (params.alwaysVisibleOperatorId) {
+        conditions.push(
+          `(o.outlet_id = ANY($${paramIdx}::uuid[]) OR o.operator_id = $${paramIdx + 1})`,
+        );
+        queryParams.push(params.outletIds, params.alwaysVisibleOperatorId);
+        paramIdx += 2;
+      } else {
+        conditions.push(`o.outlet_id = ANY($${paramIdx}::uuid[])`);
+        queryParams.push(params.outletIds);
+        paramIdx++;
+      }
     }
 
     const whereClause =

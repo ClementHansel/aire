@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
 
 export interface ServiceDTO {
   id: string;
@@ -13,16 +14,46 @@ export interface ServiceDTO {
   businessUnit: 'AIRE' | 'LEAD';
   categoryId: string | null;
   brandId: string | null;
+  /** Branches this item is sold at. null/empty/absent = every branch. */
+  outletIds?: string[] | null;
   price: number;
   isActive: boolean;
   isMainService: boolean;
   sortOrder: number;
   barcode?: string | null;
+  /** Per-item opt-in: whether a cashier may apply a manual discount at all (AIRIN-122/123). */
+  dynamicDiscountEnabled?: boolean;
+  /** Shape of the per-item discount cap. Null/absent when dynamicDiscountEnabled is false. */
+  dynamicDiscountKind?: 'fixed' | 'percentage' | null;
+  /** Per-item discount ceiling: Rupiah when kind='fixed', percent 0-100 when kind='percentage'. */
+  maxDiscount?: number | null;
 }
 
 export type AppliesTo = 'service' | 'product' | 'both';
 export interface Category { id: string; name: string; appliesTo?: AppliesTo }
 export interface Brand { id: string; code: string; name: string; color: string; appliesTo?: AppliesTo }
+export interface BranchLite { id: string; name: string }
+
+/**
+ * Label vocabulary for the three orthogonal groupings a sellable item carries.
+ * These were previously labelled inconsistently between the list and the form —
+ * the services list called `category` "Category" while the form called the same
+ * field "Type" and used "Category" for `categoryId`, so "Category" meant two
+ * different things depending on the screen (AIRIN-91). Import these instead of
+ * writing literals.
+ *
+ *  - BUSINESS_UNIT_LABEL → `businessUnit`: which business the item belongs to.
+ *  - TYPE_LABEL          → `category`: what kind of line item it is.
+ *  - CATALOG_LABEL       → `categoryId`: the tenant's own grouping label.
+ */
+export const BUSINESS_UNIT_LABEL = { key: 'catalog.businessUnit', fallback: 'Business unit' } as const;
+export const TYPE_LABEL = { key: 'catalog.type', fallback: 'Type' } as const;
+export const CATALOG_LABEL = { key: 'catalog.category', fallback: 'Category' } as const;
+export const BRAND_LABEL = { key: 'catalog.brand', fallback: 'Brand' } as const;
+export const BRANCH_LABEL = { key: 'catalog.branches', fallback: 'Available at branches' } as const;
+export const DYNAMIC_DISCOUNT_LABEL = { key: 'catalog.dynamicDiscount', fallback: 'Allow cashier discount' } as const;
+export const DYNAMIC_DISCOUNT_KIND_LABEL = { key: 'catalog.dynamicDiscountKind', fallback: 'Discount type' } as const;
+export const MAX_DISCOUNT_LABEL = { key: 'catalog.maxDiscount', fallback: 'Maximum discount' } as const;
 
 /** A category/brand belongs in a form when it targets that item type or 'both'. */
 export const matchesScope = (item: { appliesTo?: AppliesTo }, scope: 'service' | 'product') =>
@@ -46,10 +77,14 @@ interface FormState {
   businessUnit: ServiceDTO['businessUnit'];
   categoryId: string;
   brandId: string;
+  outletIds: string[];
   price: string;
   isActive: boolean;
   isMainService: boolean;
   barcode: string;
+  dynamicDiscountEnabled: boolean;
+  dynamicDiscountKind: 'fixed' | 'percentage';
+  maxDiscount: string;
 }
 
 /**
@@ -62,6 +97,7 @@ export function ServiceModal({
   initial,
   categories,
   brands,
+  branches = [],
   lockedCategory,
   categoryOptions = ['car_wash', 'add_on', 'product'],
   basePath = '/services',
@@ -72,6 +108,8 @@ export function ServiceModal({
   initial: ServiceDTO | null;
   categories: Category[];
   brands: Brand[];
+  /** Tenant branches, for the availability picker. Empty = picker hidden. */
+  branches?: BranchLite[];
   lockedCategory?: ServiceDTO['category'];
   categoryOptions?: ServiceDTO['category'][];
   /** API base for create/update — '/services' or '/products'. */
@@ -95,10 +133,14 @@ export function ServiceModal({
           businessUnit: initial.businessUnit ?? 'AIRE',
           categoryId: initial.categoryId ?? '',
           brandId: initial.brandId ?? '',
+          outletIds: initial.outletIds ?? [],
           price: String(initial.price),
           isActive: initial.isActive,
           isMainService: initial.isMainService,
           barcode: initial.barcode ?? '',
+          dynamicDiscountEnabled: initial.dynamicDiscountEnabled ?? false,
+          dynamicDiscountKind: initial.dynamicDiscountKind ?? 'fixed',
+          maxDiscount: initial.maxDiscount != null ? String(initial.maxDiscount) : '',
         }
       : {
           name: '',
@@ -106,10 +148,16 @@ export function ServiceModal({
           businessUnit: 'AIRE',
           categoryId: '',
           brandId: '',
+          // Empty = available everywhere, matching the backend's treatment of a
+          // null outlet_ids. New items stay tenant-wide unless narrowed.
+          outletIds: [],
           price: '',
           isActive: true,
           isMainService: false,
           barcode: '',
+          dynamicDiscountEnabled: false,
+          dynamicDiscountKind: 'fixed',
+          maxDiscount: '',
         },
   );
   const [saving, setSaving] = useState(false);
@@ -125,11 +173,18 @@ export function ServiceModal({
       businessUnit: form.businessUnit,
       categoryId: form.categoryId || null,
       brandId: form.brandId || null,
+      // The backend stores [] as NULL, i.e. "sold at every branch".
+      outletIds: form.outletIds,
       price: Number(form.price),
       isActive: form.isActive,
       isMainService: form.isMainService,
       // Only products carry a barcode; empty clears it (autoGenerate may fill in).
       ...(isProduct ? { barcode: form.barcode.trim() || null } : {}),
+      // Per-item cashier-discount opt-in (AIRIN-122/123). Kind/max are only
+      // meaningful — and only sent — while the flag is on.
+      dynamicDiscountEnabled: form.dynamicDiscountEnabled,
+      dynamicDiscountKind: form.dynamicDiscountEnabled ? form.dynamicDiscountKind : null,
+      maxDiscount: form.dynamicDiscountEnabled ? Number(form.maxDiscount) : null,
     };
     try {
       if (initial) {
@@ -160,16 +215,16 @@ export function ServiceModal({
             <input aria-label={t('dash.services.name', 'Name')} className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.services.businessUnit', 'Business unit')}</label>
-            <select aria-label={t('dash.services.businessUnit', 'Business unit')} className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as ServiceDTO['businessUnit'] })}>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">{t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)}</label>
+            <select aria-label={t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)} className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as ServiceDTO['businessUnit'] })}>
               <option value="AIRE">{t('dash.services.buAire', 'AIRE · Car Wash')}</option>
               <option value="LEAD">{t('dash.services.buLead', 'LEAD · Detailing & Polishing')}</option>
             </select>
           </div>
           {!lockedCategory && categoryOptions.length > 1 && (
             <div>
-              <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.services.type', 'Type')}</label>
-              <select aria-label={t('dash.services.type', 'Type')} className="input-field" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ServiceDTO['category'] })}>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t(TYPE_LABEL.key, TYPE_LABEL.fallback)}</label>
+              <select aria-label={t(TYPE_LABEL.key, TYPE_LABEL.fallback)} className="input-field" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ServiceDTO['category'] })}>
                 {categoryOptions.map((c) => (
                   <option key={c} value={c}>{t(CATEGORY_KEYS[c], CATEGORY_LABELS[c])}</option>
                 ))}
@@ -178,20 +233,48 @@ export function ServiceModal({
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.services.brand', 'Brand')}</label>
-              <select aria-label={t('dash.services.brand', 'Brand')} className="input-field" value={form.brandId} onChange={(e) => setForm({ ...form, brandId: e.target.value })}>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t(BRAND_LABEL.key, BRAND_LABEL.fallback)}</label>
+              <select aria-label={t(BRAND_LABEL.key, BRAND_LABEL.fallback)} className="input-field" value={form.brandId} onChange={(e) => setForm({ ...form, brandId: e.target.value })}>
                 <option value="">{t('dash.services.none', '— None —')}</option>
                 {scopedBrands.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.services.catalogCategory', 'Category')}</label>
-              <select aria-label={t('dash.services.catalogCategory', 'Category')} className="input-field" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t(CATALOG_LABEL.key, CATALOG_LABEL.fallback)}</label>
+              <select aria-label={t(CATALOG_LABEL.key, CATALOG_LABEL.fallback)} className="input-field" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                 <option value="">{t('dash.services.none', '— None —')}</option>
                 {scopedCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
           </div>
+          {branches.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">{t(BRANCH_LABEL.key, BRANCH_LABEL.fallback)}</label>
+              <p className="text-xs text-text-muted mb-2">{t('catalog.branchesHint', 'Leave all unticked to sell this at every branch. Ticking specific branches hides it from the POS menu everywhere else.')}</p>
+              <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-lg p-2">
+                <SelectAllCheckbox
+                  allIds={branches.map((b) => b.id)}
+                  selectedIds={form.outletIds}
+                  onChange={(ids) => setForm({ ...form, outletIds: ids })}
+                />
+                {branches.map((b) => (
+                  <label key={b.id} className="flex items-center gap-2 text-sm text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={form.outletIds.includes(b.id)}
+                      onChange={(e) => setForm({
+                        ...form,
+                        outletIds: e.target.checked
+                          ? [...form.outletIds, b.id]
+                          : form.outletIds.filter((id) => id !== b.id),
+                      })}
+                    />
+                    {b.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {(brands.length === 0 || categories.length === 0) && (
             <p className="text-xs text-text-muted -mt-1">{t('dash.services.catalogHint', 'Brands & categories are optional labels for grouping and reporting. Manage them in Catalog.')}</p>
           )}
@@ -206,6 +289,37 @@ export function ServiceModal({
               <p className="mt-1 text-xs text-text-muted">{t('dash.products.barcodeHint', 'Used for POS scan-to-cart and printed labels. Only applies when barcodes are enabled in Settings.')}</p>
             </div>
           )}
+          <div>
+            <label className="flex items-center gap-2 text-sm text-text-secondary mb-1.5">
+              <input type="checkbox" checked={form.dynamicDiscountEnabled} onChange={(e) => setForm({ ...form, dynamicDiscountEnabled: e.target.checked })} />
+              {t(DYNAMIC_DISCOUNT_LABEL.key, DYNAMIC_DISCOUNT_LABEL.fallback)}
+            </label>
+            <p className="text-xs text-text-muted mb-2">{t('catalog.dynamicDiscountHint', 'Lets a cashier apply a manual discount to this item at checkout, up to the cap below.')}</p>
+            {form.dynamicDiscountEnabled && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t(DYNAMIC_DISCOUNT_KIND_LABEL.key, DYNAMIC_DISCOUNT_KIND_LABEL.fallback)}</label>
+                  <select aria-label={t(DYNAMIC_DISCOUNT_KIND_LABEL.key, DYNAMIC_DISCOUNT_KIND_LABEL.fallback)} className="input-field" value={form.dynamicDiscountKind} onChange={(e) => setForm({ ...form, dynamicDiscountKind: e.target.value as 'fixed' | 'percentage' })}>
+                    <option value="fixed">{t('catalog.dynamicDiscountFixed', 'Fixed (Rp)')}</option>
+                    <option value="percentage">{t('catalog.dynamicDiscountPercentage', 'Percentage (%)')}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-text-primary mb-1.5">{t(MAX_DISCOUNT_LABEL.key, MAX_DISCOUNT_LABEL.fallback)}</label>
+                  <input
+                    aria-label={t(MAX_DISCOUNT_LABEL.key, MAX_DISCOUNT_LABEL.fallback)}
+                    type="number"
+                    min="0"
+                    max={form.dynamicDiscountKind === 'percentage' ? 100 : undefined}
+                    className="input-field"
+                    value={form.maxDiscount}
+                    onChange={(e) => setForm({ ...form, maxDiscount: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm text-text-secondary">
               <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />

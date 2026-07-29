@@ -139,6 +139,17 @@ export interface OrderQueryParams {
   outletId?: string;
   /** Restrict to a set of branches (role-resolved). null/undefined = all; [] = none. */
   outletIds?: string[] | null;
+  /**
+   * Operator whose own orders are always visible, regardless of `outletIds`.
+   *
+   * A shift can be opened at a branch outside the operator's assigned set, and
+   * orders are booked to the shift's branch — so a cover-shift cashier used to
+   * ring up orders that immediately vanished from their own Orders list while
+   * still showing on the owner's dashboard (AIRIN-110). This widens the branch
+   * filter by exactly one row-level rule ("I rang this up") rather than granting
+   * the whole branch.
+   */
+  alwaysVisibleOperatorId?: string;
   page?: number;
   pageSize?: number;
 }

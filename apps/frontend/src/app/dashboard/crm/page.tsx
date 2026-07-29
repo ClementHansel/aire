@@ -3,13 +3,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { memberBadge } from '@/lib/memberStatus';
 import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface GrowthPoint { period: string; newCustomers: number }
 interface Customer {
   id: string; name: string; phone: string; createdAt: string; totalVisits: number;
-  // Derived: 'active' | 'grace' | 'suspended' | 'inactive' member, or null = never a member.
-  membershipStatus: 'active' | 'grace' | 'suspended' | 'inactive' | null;
+  // Raw `memberships.status` of the customer's most recent membership, or null =
+  // never a member. Narrowing this to a subset used to drop `pending` on the
+  // floor and mislabel unpaid members as "Past member" (AIRIN-124) — keep it as
+  // the open string the API actually returns and let memberBadge() map it.
+  membershipStatus: string | null;
 }
 interface CustomerMembershipInfo { id: string; planName: string; status: string; startDate: string; endDate: string; usesCount: number; maxUses: number }
 interface CustomerVisit { orderId: string; orderNumber: string; outletName: string; date: string; total: number; services: string[]; paymentMethod: string | null }
@@ -22,14 +26,6 @@ interface CustomerProfile {
 }
 
 const fmtRp = (n: number) => `Rp ${(n ?? 0).toLocaleString('id-ID')}`;
-
-// Member badge styling by derived status. `null` renders nothing (normal customer).
-const MEMBER_BADGE: Record<string, { cls: string; label: string }> = {
-  active: { cls: 'bg-green-50 text-green-700', label: 'Member' },
-  grace: { cls: 'bg-orange-50 text-orange-700', label: 'Member · grace' },
-  suspended: { cls: 'bg-amber-50 text-amber-700', label: 'Member · suspended' },
-  inactive: { cls: 'bg-gray-100 text-gray-500', label: 'Past member' },
-};
 
 function today(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function daysAgo(n: number): string { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
@@ -149,7 +145,7 @@ export default function CrmPage() {
                 <td className="px-5 py-3 text-sm">{c.phone}</td>
                 <td className="px-5 py-3">
                   {c.membershipStatus
-                    ? <span className={`badge text-xs ${MEMBER_BADGE[c.membershipStatus]?.cls ?? ''}`}>{MEMBER_BADGE[c.membershipStatus]?.label ?? c.membershipStatus}</span>
+                    ? (() => { const b = memberBadge(c.membershipStatus); return <span className={`badge text-xs ${b.cls}`}>{t(b.key, b.label)}</span>; })()
                     : <span className="text-xs text-text-muted">{t('dash.crm.normalCustomer', 'Customer')}</span>}
                 </td>
                 <td className="px-5 py-3 text-sm text-right">{c.totalVisits}</td>
@@ -191,11 +187,6 @@ export default function CrmPage() {
   );
 }
 
-const MS_BADGE: Record<string, string> = {
-  active: 'bg-green-50 text-green-700', grace: 'bg-orange-50 text-orange-700', revoked: 'bg-rose-50 text-rose-700',
-  suspended: 'bg-amber-50 text-amber-700', expired: 'bg-gray-100 text-gray-500', pending: 'bg-blue-50 text-blue-700', cancelled: 'bg-red-50 text-red-700',
-};
-
 function CustomerDetailModal({ customer, onClose, onEdit }: { customer: Customer; onClose: () => void; onEdit: () => void }) {
   const { t } = useI18n();
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
@@ -219,7 +210,7 @@ function CustomerDetailModal({ customer, onClose, onEdit }: { customer: Customer
             <p className="text-sm text-text-muted">{customer.phone}</p>
           </div>
           {customer.membershipStatus
-            ? <span className={`badge text-xs ${MEMBER_BADGE[customer.membershipStatus]?.cls ?? ''}`}>{MEMBER_BADGE[customer.membershipStatus]?.label ?? customer.membershipStatus}</span>
+            ? (() => { const b = memberBadge(customer.membershipStatus); return <span className={`badge text-xs ${b.cls}`}>{t(b.key, b.label)}</span>; })()
             : <span className="badge bg-surface-sunken text-text-secondary text-xs">{t('dash.crm.normalCustomer', 'Customer')}</span>}
         </div>
 
@@ -247,7 +238,7 @@ function CustomerDetailModal({ customer, onClose, onEdit }: { customer: Customer
                   {profile.memberships.map((m) => (
                     <li key={m.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
                       <div><span className="font-medium">{m.planName}</span><span className="text-xs text-text-muted"> · {m.startDate} → {m.endDate}</span></div>
-                      <div className="flex items-center gap-2"><span className="text-xs text-text-muted">{m.usesCount}/{m.maxUses}</span><span className={`badge capitalize text-xs ${MS_BADGE[m.status] ?? 'bg-surface-sunken text-text-secondary'}`}>{m.status}</span></div>
+                      <div className="flex items-center gap-2"><span className="text-xs text-text-muted">{m.usesCount}/{m.maxUses}</span><span className={`badge capitalize text-xs ${memberBadge(m.status).cls}`}>{m.status}</span></div>
                     </li>
                   ))}
                 </ul>

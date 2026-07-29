@@ -353,6 +353,7 @@ export const en: Record<string, string> = {
   'portal.vouchers.none': 'No vouchers yet.',
   'portal.vouchers.service': 'Free service',
   'portal.vouchers.used': 'Used',
+  'pos.gate.branchMismatch': 'This terminal is registered to {device}, but your open shift is at {shift} — sales are being booked to {shift}.',
   'pos.gate.cashierSignIn': 'Cashier sign in',
   'pos.gate.checking': 'Loading…',
   'pos.gate.email': 'Email',

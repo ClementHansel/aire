@@ -16,6 +16,8 @@ describe('CampaignService', () => {
     tenant_id: tenantId,
     name: 'July Membership Bonus',
     plan_id: planId,
+    trigger_type: 'membership_plan',
+    trigger_template_id: null,
     bonus_template_id: bonusTemplateId,
     start_date: '2026-07-01',
     end_date: '2026-07-31',
@@ -54,8 +56,73 @@ describe('CampaignService', () => {
       const [sql, params] = mockPool.query.mock.calls[0];
       expect(sql).toContain('INSERT INTO campaigns');
       expect(params[0]).toBe(tenantId);
-      expect(params[7]).toBe(1); // perCustomerLimit default
-      expect(params[8]).toBe('active'); // status default
+      expect(params[3]).toBe('membership_plan'); // triggerType default
+      expect(params[4]).toBeNull(); // trigger_template_id unset for a membership_plan trigger
+      expect(params[9]).toBe(1); // perCustomerLimit default
+      expect(params[10]).toBe('active'); // status default
+    });
+
+    it('creates a voucher_pack-triggered campaign (AIRIN-102)', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ ...mockRow, plan_id: null, trigger_type: 'voucher_pack', trigger_template_id: 'template-trigger-001' }],
+      });
+
+      const result = await service.create(tenantId, {
+        name: 'Wash 10x -> Spray Wax 3x',
+        triggerType: 'voucher_pack',
+        triggerTemplateId: 'template-trigger-001',
+        bonusTemplateId,
+        startDate: '2026-07-01',
+        endDate: '2026-07-31',
+      });
+
+      expect(result.triggerType).toBe('voucher_pack');
+      expect(result.triggerTemplateId).toBe('template-trigger-001');
+      expect(result.planId).toBeNull();
+
+      const [, params] = mockPool.query.mock.calls[0];
+      expect(params[2]).toBeNull(); // plan_id unset for a voucher_pack trigger
+      expect(params[3]).toBe('voucher_pack');
+      expect(params[4]).toBe('template-trigger-001');
+    });
+
+    it('rejects a voucher_pack trigger with no triggerTemplateId', async () => {
+      await expect(
+        service.create(tenantId, {
+          name: 'Bad trigger',
+          triggerType: 'voucher_pack',
+          bonusTemplateId,
+          startDate: '2026-07-01',
+          endDate: '2026-07-31',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects a membership_plan trigger with no planId', async () => {
+      await expect(
+        service.create(tenantId, {
+          name: 'Bad trigger',
+          bonusTemplateId,
+          startDate: '2026-07-01',
+          endDate: '2026-07-31',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('rejects triggerTemplateId equal to bonusTemplateId (self-referential grant)', async () => {
+      await expect(
+        service.create(tenantId, {
+          name: 'Self-referential',
+          triggerType: 'voucher_pack',
+          triggerTemplateId: bonusTemplateId,
+          bonusTemplateId,
+          startDate: '2026-07-01',
+          endDate: '2026-07-31',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPool.query).not.toHaveBeenCalled();
     });
 
     it('rejects a campaign whose startDate is after endDate', async () => {
@@ -109,6 +176,34 @@ describe('CampaignService', () => {
       await expect(
         service.update(tenantId, campaignId, { status: 'bogus' as any }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects switching to voucher_pack trigger without a triggerTemplateId, validated against current row', async () => {
+      // update() must fetch the current row (a membership_plan trigger) before
+      // validating, so switching triggerType alone (leaving the stale planId
+      // in place) is still rejected rather than silently violating the
+      // exactly-one-trigger invariant.
+      mockPool.query.mockResolvedValueOnce({ rows: [mockRow] }); // this.get() fetch inside update()
+
+      await expect(
+        service.update(tenantId, campaignId, { triggerType: 'voucher_pack' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows switching to voucher_pack trigger when planId is cleared and triggerTemplateId is set together', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockRow] }); // this.get() fetch
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ ...mockRow, plan_id: null, trigger_type: 'voucher_pack', trigger_template_id: 'template-trigger-001' }],
+      });
+
+      const result = await service.update(tenantId, campaignId, {
+        triggerType: 'voucher_pack',
+        planId: null,
+        triggerTemplateId: 'template-trigger-001',
+      });
+
+      expect(result.triggerType).toBe('voucher_pack');
+      expect(result.triggerTemplateId).toBe('template-trigger-001');
     });
   });
 

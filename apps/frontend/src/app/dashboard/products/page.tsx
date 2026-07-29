@@ -8,9 +8,12 @@ import { buildDocHtml, type DocTemplate } from '@/components/dashboard/DocumentR
 import {
   ServiceModal,
   RecipeModal,
+  BUSINESS_UNIT_LABEL,
+  CATALOG_LABEL,
   type ServiceDTO,
   type Category,
   type Brand,
+  type BranchLite,
 } from '../services/service-forms';
 
 export default function ProductsPage() {
@@ -18,6 +21,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<ServiceDTO[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [branches, setBranches] = useState<BranchLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -31,14 +35,16 @@ export default function ProductsPage() {
     setLoading(true);
     setError('');
     try {
-      const [data, cats, brs] = await Promise.all([
+      const [data, cats, brs, outs] = await Promise.all([
         api.get<ServiceDTO[]>('/products'),
         api.get<Category[]>('/categories').catch(() => [] as Category[]),
         api.get<Brand[]>('/brands').catch(() => [] as Brand[]),
+        api.get<BranchLite[]>('/outlets').catch(() => [] as BranchLite[]),
       ]);
       setProducts(data);
       setCategories(cats);
       setBrands(brs);
+      setBranches(outs);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('dash.products.loadFailed', 'Failed to load products'));
     } finally {
@@ -111,8 +117,9 @@ export default function ProductsPage() {
             <thead>
               <tr className="border-b border-border bg-surface-sunken/50">
                 <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.name', 'Name')}</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.unit', 'Unit')}</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.category', 'Category')}</th>
+                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)}</th>
+                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t(CATALOG_LABEL.key, CATALOG_LABEL.fallback)}</th>
+                <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.branches', 'Branches')}</th>
                 <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.priceCol', 'Price')}</th>
                 <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.status', 'Status')}</th>
                 <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase tracking-wide">{t('dash.products.actions', 'Actions')}</th>
@@ -134,6 +141,19 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-5 py-3.5"><span className={`badge ${p.businessUnit === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{p.businessUnit ?? 'AIRE'}</span></td>
                     <td className="px-5 py-3.5 text-sm text-text-secondary">{cat ? cat.name : <span className="text-text-muted">—</span>}</td>
+                    <td className="px-5 py-3.5 text-xs">
+                      {!p.outletIds || p.outletIds.length === 0
+                        ? <span className="badge bg-gray-100 text-gray-600 text-xs">{t('dash.products.allBranches', 'All branches')}</span>
+                        : (
+                          <span className="flex flex-wrap gap-1">
+                            {p.outletIds.map((id) => (
+                              <span key={id} className="badge bg-sky-50 text-sky-700 text-xs">
+                                {branches.find((b) => b.id === id)?.name ?? id.slice(0, 8)}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                    </td>
                     <td className="px-5 py-3.5 text-sm text-text-primary text-right font-mono">Rp {p.price.toLocaleString('id-ID')}</td>
                     <td className="px-5 py-3.5 text-center">
                       <span className={`badge ${p.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{p.isActive ? t('dash.products.active', 'Active') : t('dash.products.inactive', 'Inactive')}</span>
@@ -157,6 +177,7 @@ export default function ProductsPage() {
           initial={editing}
           categories={categories}
           brands={brands}
+          branches={branches}
           lockedCategory="product"
           basePath="/products"
           titles={{ add: t('dash.products.addTitle', 'Add Product'), edit: t('dash.products.editTitle', 'Edit Product') }}

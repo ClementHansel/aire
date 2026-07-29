@@ -2541,6 +2541,7 @@ export const id: Record<string, string> = {
   'portal.vehicles.needPlate': 'Masukkan nomor pelat.',
   'portal.vehicles.plate': 'Nomor pelat',
   'portal.vehicles.remove': 'Hapus',
+  'pos.gate.branchMismatch': 'Terminal ini terdaftar di {device}, tapi shift Anda yang terbuka ada di {shift} — penjualan dicatat ke {shift}.',
   'pos.gate.cashierSignIn': 'Masuk kasir',
   'pos.gate.checking': 'Memuat…',
   'pos.gate.email': 'Email',
@@ -2569,7 +2570,9 @@ export const id: Record<string, string> = {
   'pos.orders.pinLabel': 'PIN Admin',
   'pos.orders.pinPlaceholder': 'Masukkan PIN 6 digit dari email',
   'pos.new.discount': 'Disc',
-  'pos.new.discountCapHint': 'Server membatasi maks',
+  // Per-item discount ceiling shown next to the field (AIRIN-121). Replaces
+  // discountCapHint, which warned after the fact; the input now clamps instead.
+  'pos.new.discountMaxHint': 'maks',
   'pos.new.manualDiscount': 'Diskon manual',
   'pos.new.qrisStatic': 'QRIS (statis — sudah ditempel)',
   'pos.new.qrisMode': 'Mode QRIS',
@@ -2600,4 +2603,132 @@ export const id: Record<string, string> = {
   'pos.orders.pmEdc': 'EDC / Debit',
   'pos.orders.pmCc': 'Kartu Kredit',
   'pos.orders.pmTransfer': 'Transfer Bank',
+
+  // Catalog taxonomy — one vocabulary shared by the service/product lists and
+  // forms so "Category" means the same thing on every screen (AIRIN-91).
+  'catalog.businessUnit': 'Unit bisnis',
+  'catalog.type': 'Jenis',
+  'catalog.category': 'Kategori',
+  'catalog.brand': 'Merek',
+  'catalog.branches': 'Tersedia di cabang',
+  'catalog.branchesHint': 'Biarkan semua tidak dicentang agar dijual di semua cabang. Mencentang cabang tertentu menyembunyikannya dari menu POS di cabang lain.',
+  'catalog.dynamicDiscount': 'Izinkan diskon kasir',
+  'catalog.dynamicDiscountHint': 'Memungkinkan kasir memberikan diskon manual pada item ini saat checkout, hingga batas maksimal di bawah ini.',
+  'catalog.dynamicDiscountKind': 'Jenis diskon',
+  'catalog.dynamicDiscountFixed': 'Nominal tetap (Rp)',
+  'catalog.dynamicDiscountPercentage': 'Persentase (%)',
+  'catalog.maxDiscount': 'Diskon maksimal',
+
+  // Services list — search & filters (AIRIN-119, AIRIN-120)
+  'dash.services.search': 'Cari',
+  'dash.services.searchPlaceholder': 'Cari nama layanan…',
+  'dash.services.branch': 'Cabang',
+  'dash.services.branches': 'Cabang',
+  'dash.services.allBranches': 'Semua cabang',
+  'dash.services.allUnits': 'Semua unit',
+  'dash.services.allBrands': 'Semua merek',
+  'dash.services.allCategories': 'Semua kategori',
+  'dash.services.clearFilters': 'Hapus filter',
+  'dash.services.showingCount': 'Menampilkan',
+  'dash.services.ofCount': 'dari',
+  'dash.services.noneMatch': 'Tidak ada layanan yang cocok dengan filter ini.',
+  'dash.products.branches': 'Cabang',
+  'dash.products.allBranches': 'Semua cabang',
+
+  // Promotions — branch column (AIRIN-136)
+  'dash.promotions.branch': 'Cabang',
+  'dash.promotions.allBranches': 'Semua cabang',
+
+  // Campaigns — Period column (AIRIN-135)
+  'dash.campaigns.colPeriod': 'Periode',
+
+  // Transactions — date range validation (AIRIN-132)
+  'dash.transactions.invalidRange': 'Tanggal mulai melewati tanggal akhir — sesuaikan rentang untuk melihat hasil.',
+
+  // POS order card highlights (AIRIN-115)
+  'pos.orders.cashierLabel': 'Kasir',
+  'pos.orders.unpaid': 'Belum dibayar',
+
+  // Membership status badges — one vocabulary everywhere (AIRIN-124)
+  'member.status.active': 'Member',
+  'member.status.grace': 'Member · tenggang',
+  'member.status.pending': 'Member pending',
+  'member.status.suspended': 'Member · ditangguhkan',
+  'member.status.revoked': 'Mantan member',
+  'member.status.expired': 'Mantan member',
+  'member.status.cancelled': 'Dibatalkan',
+  'member.status.inactive': 'Mantan member',
+
+  // Membership detail — registered plates (AIRIN-103)
+  'dash.members.plates': 'Plat terdaftar',
+  'dash.members.editPlates': 'Ubah plat',
+  'dash.members.platesUnavailable': 'Info plat tidak tersedia.',
+  'dash.members.plateReq': 'Plat *',
+  'dash.members.brand': 'Merek',
+  'dash.members.model': 'Model',
+  'dash.members.addPlate': 'Tambah plat nomor',
+  'dash.members.cancel': 'Batal',
+  'dash.members.saving': 'Menyimpan…',
+  'dash.members.savePlates': 'Simpan plat',
+  'dash.members.noPlates': 'Belum ada plat terdaftar.',
+  'dash.members.registerAtLeastOnePlate': 'Daftarkan minimal satu plat nomor.',
+  'dash.members.savePlatesFailed': 'Gagal menyimpan plat',
+
+  // Transactions — membership & voucher-pack purchase sections (AIRIN-133)
+  'dash.transactions.membershipPurchases': 'Pembelian membership',
+  'dash.transactions.voucherPackPurchases': 'Pembelian paket voucher',
+  'dash.transactions.plan': 'Paket',
+  'dash.transactions.buyer': 'Pembeli',
+  'dash.transactions.unitPrice': 'Harga satuan',
+  'dash.transactions.noMembershipPurchases': 'Tidak ada pembelian membership pada rentang ini.',
+  'dash.transactions.noVoucherPackPurchases': 'Tidak ada pembelian paket voucher pada rentang ini.',
+  'dash.transactions.failLoadPurchases': 'Gagal memuat data pembelian',
+
+  // Shared POS payment modal — new-order & sell-pack now render the same
+  // component (AIRIN-125); the shortfall guard is AIRIN-127.
+  'pos.payment.method': 'Metode Pembayaran',
+  'pos.payment.cash': 'Tunai',
+  'pos.payment.qrisScan': 'QRIS (pindai untuk bayar)',
+  'pos.payment.qrisStatic': 'QRIS (statis — sudah ditempel)',
+  'pos.payment.edcDebit': 'EDC / Debit',
+  'pos.payment.creditCard': 'Kartu Kredit',
+  'pos.payment.bankTransfer': 'Transfer Bank',
+  'pos.payment.qrisMode': 'Mode QRIS',
+  'pos.payment.qrisDynamicShort': 'Dinamis (pindai)',
+  'pos.payment.qrisStaticShort': 'Statis (sudah bayar)',
+  'pos.payment.settlesTo': 'Disetorkan ke akun',
+  'pos.payment.account': '.',
+  'pos.payment.amountReceived': 'Jumlah Diterima',
+  'pos.payment.shortfall': 'Kurang bayar:',
+  'pos.payment.shortfallHint': 'jumlah yang diterima kurang dari total. Masukkan jumlah penuh untuk melanjutkan.',
+  'pos.payment.change': 'Kembalian:',
+  'pos.payment.transferReference': 'Referensi transfer (4 digit terakhir)',
+  'pos.payment.edcReference': 'Nomor referensi/trace',
+  'pos.payment.referenceNumber': 'Nomor referensi',
+  'pos.payment.referencePlaceholder': 'contoh: 123456',
+  'pos.payment.referenceRequired': 'Masukkan nomor referensi/trace untuk menyelesaikan pembayaran ini.',
+  'pos.payment.qrisStaticInstruction': 'Minta pelanggan memindai stiker QRIS outlet, lalu konfirmasi di bawah setelah mereka membayar.',
+  'pos.payment.scanQris': 'Pindai dengan aplikasi QRIS apa pun untuk membayar',
+  'pos.payment.qrisAlt': 'Kode pembayaran QRIS',
+  'pos.payment.waitingConfirmation': 'Menunggu konfirmasi pembayaran…',
+  'pos.payment.close': 'Tutup',
+  'pos.payment.cancel': 'Batal',
+  'pos.payment.processing': 'Memproses…',
+  'pos.payment.generateQr': 'Buat QR',
+  'pos.payment.markPaid': 'Tandai Sudah Bayar',
+  'pos.payment.confirmPayment': 'Konfirmasi Pembayaran',
+
+  // Member benefit preview (pre-order, before Place Order) + multi-plate
+  // picker on the new-order cart (AIRIN-116/118/126).
+  'pos.new.multiplePlatesHint': 'Member ini memiliki beberapa kendaraan — pilih salah satu:',
+  'pos.new.memberBenefitTitle': 'Keuntungan Member',
+  'pos.new.memberBenefitAddItems': 'Tambahkan item untuk melihat pratinjau keuntungan member.',
+  'pos.new.memberQuotaExhausted': 'Kuota membership sudah habis — pesanan ini akan dikenakan harga normal.',
+  'pos.new.memberDailyLimitReached': 'Membership ini sudah dipakai cuci hari ini — batas harian tercapai (berlaku untuk semua mobil di membership ini). Akan dikenakan harga normal.',
+  'pos.new.memberBenefitNone': 'Tidak ada keuntungan member yang berlaku untuk item di keranjang ini.',
+  'pos.new.memberBenefitFixedBadge': 'HARGA MEMBER',
+  'pos.new.memberBenefitPctBadgePrefix': 'MEMBER -',
+
+  // Reports — branch scope note for outlet-bound roles (AIRIN-130)
+  'dash.reports.branchScopedNote': 'Hanya cabang Anda',
 };

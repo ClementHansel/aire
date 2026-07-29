@@ -51,6 +51,7 @@ export class ServiceService {
     this.validateCategory(dto.category);
     const businessUnit = dto.businessUnit ?? BusinessUnit.Aire;
     this.validateBusinessUnit(businessUnit);
+    this.validateDynamicDiscount(dto.dynamicDiscountEnabled, dto.dynamicDiscountKind, dto.maxDiscount);
 
     const isMainService =
       dto.isMainService !== undefined
@@ -61,9 +62,9 @@ export class ServiceService {
 
     try {
       const result = await this.pool.query(
-        `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, created_at`,
+        `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount, created_at`,
         [
           tenantId,
           dto.outletId ?? null,
@@ -78,6 +79,9 @@ export class ServiceService {
           dto.brandId ?? null,
           dto.outletIds && dto.outletIds.length > 0 ? dto.outletIds : null,
           barcode,
+          dto.dynamicDiscountEnabled ?? false,
+          dto.dynamicDiscountKind ?? null,
+          dto.maxDiscount ?? null,
         ],
       );
 
@@ -165,7 +169,7 @@ export class ServiceService {
       values.push(outletId);
     }
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE ${conditions.join(' AND ')}
        ORDER BY category, sort_order, name
@@ -221,7 +225,7 @@ export class ServiceService {
     const whereClause = conditions.join(' AND ');
 
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE ${whereClause}
        ORDER BY category, sort_order, name`,
@@ -238,7 +242,7 @@ export class ServiceService {
    */
   async findOne(tenantId: string, id: string): Promise<ServiceDTO> {
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode
+      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -267,6 +271,7 @@ export class ServiceService {
     if (dto.businessUnit) {
       this.validateBusinessUnit(dto.businessUnit);
     }
+    this.validateDynamicDiscount(dto.dynamicDiscountEnabled, dto.dynamicDiscountKind, dto.maxDiscount);
 
     // Verify exists first
     await this.findOne(tenantId, id);
@@ -347,6 +352,24 @@ export class ServiceService {
       paramIndex++;
     }
 
+    if (dto.dynamicDiscountEnabled !== undefined) {
+      setClauses.push(`dynamic_discount_enabled = $${paramIndex}`);
+      values.push(dto.dynamicDiscountEnabled);
+      paramIndex++;
+    }
+
+    if (dto.dynamicDiscountKind !== undefined) {
+      setClauses.push(`dynamic_discount_kind = $${paramIndex}`);
+      values.push(dto.dynamicDiscountKind);
+      paramIndex++;
+    }
+
+    if (dto.maxDiscount !== undefined) {
+      setClauses.push(`max_discount = $${paramIndex}`);
+      values.push(dto.maxDiscount);
+      paramIndex++;
+    }
+
     if (setClauses.length === 0) {
       return this.findOne(tenantId, id);
     }
@@ -359,7 +382,7 @@ export class ServiceService {
         `UPDATE services
          SET ${setClauses.join(', ')}
          WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode`,
+         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount`,
         [...values, id, tenantId],
       );
     } catch (err) {
@@ -434,6 +457,35 @@ export class ServiceService {
     }
   }
 
+  /**
+   * Mirrors the services_dynamic_discount_coherent_check DB constraint
+   * (migration 085) server-side, so a bad request 400s with a clear message
+   * instead of surfacing as an opaque Postgres constraint-violation 500.
+   * Fields are undefined when the caller isn't touching them (partial update).
+   */
+  private validateDynamicDiscount(
+    enabled: boolean | undefined,
+    kind: 'fixed' | 'percentage' | null | undefined,
+    maxDiscount: number | null | undefined,
+  ): void {
+    if (enabled && !kind) {
+      throw new BadRequestException('dynamicDiscountKind is required when dynamicDiscountEnabled is true');
+    }
+
+    if (enabled && (maxDiscount === undefined || maxDiscount === null)) {
+      throw new BadRequestException('maxDiscount is required when dynamicDiscountEnabled is true');
+    }
+
+    if (maxDiscount !== undefined && maxDiscount !== null) {
+      if (maxDiscount <= 0) {
+        throw new BadRequestException('maxDiscount must be greater than 0');
+      }
+      if (kind === 'percentage' && maxDiscount > 100) {
+        throw new BadRequestException('maxDiscount cannot exceed 100 when dynamicDiscountKind is percentage');
+      }
+    }
+  }
+
   private mapRow(row: any): ServiceDTO {
     return {
       id: row.id,
@@ -450,6 +502,9 @@ export class ServiceService {
       isMainService: row.is_main_service,
       sortOrder: row.sort_order,
       barcode: row.barcode ?? null,
+      dynamicDiscountEnabled: row.dynamic_discount_enabled ?? false,
+      dynamicDiscountKind: row.dynamic_discount_kind ?? null,
+      maxDiscount: row.max_discount != null ? parseFloat(row.max_discount) : null,
     };
   }
 }

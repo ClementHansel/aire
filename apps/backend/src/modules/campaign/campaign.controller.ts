@@ -9,8 +9,9 @@ import { CampaignService } from './campaign.service';
 import { CreateCampaignDto, UpdateCampaignDto } from './campaign.interfaces';
 
 /**
- * Owner-facing CRUD for membership-purchase bonus voucher campaigns.
- * Grant issuance itself happens out-of-band in CampaignGrantService.
+ * Owner-facing CRUD for bonus-voucher campaigns — triggered by either a
+ * membership plan purchase or a voucher-pack purchase (AIRIN-102). Grant
+ * issuance itself happens out-of-band in CampaignGrantService.
  */
 @Controller('api/campaigns')
 @UseGuards(JwtAuthGuard, RolesGuard)

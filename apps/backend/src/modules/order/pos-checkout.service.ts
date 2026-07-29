@@ -1,9 +1,48 @@
 import { Injectable, Inject, Optional } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
-import { JWTPayload, normalizePhone } from '@aire/shared';
+import { JWTPayload, normalizePhone, normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+
+/**
+ * Find or create a customer by normalized phone, on a caller-supplied client so
+ * it joins the caller's transaction.
+ *
+ * Standalone rather than a method because both PosCheckoutService (pack sales)
+ * and OrderService (ordinary POS checkout) need it, and OrderService reaching
+ * for it via DI would mean an optional injection that silently no-ops when
+ * unwired — the failure mode being fixed here is precisely "customers were never
+ * created", so it must not be able to fail quietly again.
+ *
+ * Returns `inserted` so the caller can emit CustomerCreated only on genuine
+ * creation; each caller owns its own event bus.
+ */
+export async function upsertCustomerRow(
+  client: PoolClient,
+  tenantId: string,
+  name: string,
+  phone: string,
+  email?: string,
+): Promise<{ id: string; inserted: boolean; phoneNormalized: string }> {
+  const { normalized } = normalizePhone(phone);
+  const phoneNormalized = normalized || phone.replace(/\D/g, '');
+  const cleanEmail = email?.trim() || null;
+
+  // COALESCE keeps an existing email when a later sale omits it.
+  // `xmax = 0` is true only for a freshly INSERTed row, letting the caller emit
+  // CustomerCreated on genuine creation and stay silent on repeat sales.
+  const res = await client.query<{ id: string; inserted: boolean }>(
+    `INSERT INTO customers (tenant_id, name, phone, phone_normalized, email)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (tenant_id, phone_normalized)
+     DO UPDATE SET name = EXCLUDED.name, email = COALESCE(EXCLUDED.email, customers.email), updated_at = NOW()
+     RETURNING id, (xmax = 0) AS inserted`,
+    [tenantId, name, phone, phoneNormalized, cleanEmail],
+  );
+  const row = res.rows[0]!;
+  return { id: row.id, inserted: row.inserted, phoneNormalized };
+}
 
 export interface PackOrderResult {
   id: string;
@@ -41,27 +80,12 @@ export class PosCheckoutService {
     phone: string,
     email?: string,
   ): Promise<string> {
-    const { normalized } = normalizePhone(phone);
-    const phoneNormalized = normalized || phone.replace(/\D/g, '');
-    const cleanEmail = email?.trim() || null;
-
-    // COALESCE keeps an existing email when a later sale omits it.
-    // `xmax = 0` is true only for a freshly INSERTed row, letting us emit
-    // CustomerCreated on genuine creation and stay silent on repeat sales.
-    const res = await client.query<{ id: string; inserted: boolean }>(
-      `INSERT INTO customers (tenant_id, name, phone, phone_normalized, email)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (tenant_id, phone_normalized)
-       DO UPDATE SET name = EXCLUDED.name, email = COALESCE(EXCLUDED.email, customers.email), updated_at = NOW()
-       RETURNING id, (xmax = 0) AS inserted`,
-      [tenantId, name, phone, phoneNormalized, cleanEmail],
-    );
-    const row = res.rows[0]!;
+    const row = await upsertCustomerRow(client, tenantId, name, phone, email);
     if (row.inserted) {
       void this.eventBus?.emit({
         type: DomainEventType.CustomerCreated,
         tenantId, actor: 'pos',
-        payload: { customerId: row.id, name, phone: phoneNormalized },
+        payload: { customerId: row.id, name, phone: row.phoneNormalized },
       });
     }
     return row.id;
@@ -118,6 +142,10 @@ export class PosCheckoutService {
     const paymentMethod = paidNow ? (params.paymentMethod ?? 'cash') : null;
     const amountReceived = paidNow ? params.total : null;
     const licensePlate = params.licensePlate?.trim() || null;
+    // Pack sales (membership / voucher packs) write plates too, so they need the
+    // same canonical form as ordinary checkout — otherwise plate search finds a
+    // customer's wash orders but not the membership they bought (AIRIN-117).
+    const plateNormalized = licensePlate ? (normalizePlate(licensePlate).normalized || null) : null;
     const vehicleBrand = params.vehicleBrand?.trim() || null;
     const vehicleModel = params.vehicleModel?.trim() || null;
 
@@ -127,10 +155,10 @@ export class PosCheckoutService {
     }>(
       `INSERT INTO orders
         (tenant_id, outlet_id, operator_id, customer_id, order_number, status,
-         customer_name, customer_phone, license_plate, vehicle_brand, vehicle_model,
+         customer_name, customer_phone, license_plate, plate_normalized, vehicle_brand, vehicle_model,
          subtotal, total, note, payment_method, amount_received, paid_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14, $15,
-               CASE WHEN $16 THEN NOW() ELSE NULL END)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15, $16,
+               CASE WHEN $17 THEN NOW() ELSE NULL END)
        RETURNING id, order_number, total, license_plate, vehicle_brand, vehicle_model`,
       [
         user.tenant_id,
@@ -142,6 +170,7 @@ export class PosCheckoutService {
         params.customerName,
         params.customerPhone,
         licensePlate,
+        plateNormalized,
         vehicleBrand,
         vehicleModel,
         params.total,

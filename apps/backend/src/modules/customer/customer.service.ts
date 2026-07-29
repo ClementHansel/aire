@@ -478,7 +478,26 @@ export class CustomerService {
         c.id,
         c.name,
         c.phone,
-        (SELECT m.status FROM memberships m WHERE m.customer_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS membership_status,
+        -- Most-actionable membership wins the badge, not merely the newest row.
+        -- Picking by created_at alone let a finished membership mask a still-open
+        -- one, so the list said "Past member" while the customer detail (which
+        -- lists every membership) showed 'pending' (AIRIN-124). Ranking mirrors
+        -- MemberLookupService, which already returns memberships most-actionable
+        -- first: live > awaiting payment > renewable > blocked > finished.
+        (SELECT m.status FROM memberships m
+          WHERE m.customer_id = c.id
+          ORDER BY CASE m.status
+                     WHEN 'active'    THEN 1
+                     WHEN 'pending'   THEN 2
+                     WHEN 'grace'     THEN 3
+                     WHEN 'suspended' THEN 4
+                     WHEN 'expired'   THEN 5
+                     WHEN 'revoked'   THEN 6
+                     WHEN 'cancelled' THEN 7
+                     ELSE 8
+                   END,
+                   m.created_at DESC
+          LIMIT 1) AS membership_status,
         (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits,
         (SELECT MAX(o.created_at)::text FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS last_visit_date
       FROM customers c

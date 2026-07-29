@@ -152,7 +152,7 @@ export class ReportService {
     ] = await Promise.all([
       this.getOverviewStats(tenantId, dateFrom, dateTo, outletIds, businessUnit),
       this.getPaymentMethodBreakdown(tenantId, dateFrom, dateTo, outletIds, businessUnit),
-      this.getBusinessUnitBreakdown(tenantId, dateFrom, dateTo, outletIds),
+      this.getBusinessUnitBreakdown(tenantId, dateFrom, dateTo, outletIds, businessUnit),
       this.getServiceBreakdown(tenantId, dateFrom, dateTo, outletIds, businessUnit),
     ]);
 
@@ -390,10 +390,18 @@ export class ReportService {
     dateFrom: string,
     dateTo: string,
     outletIds?: string[] | null,
+    businessUnit?: string,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
     const queryParams: unknown[] = [dateFrom, dateTo];
     queryParams.push(tenantId); let filter = ` AND tenant_id = $${queryParams.length}`;
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
+    // This breakdown was the only one of the four in getSummary() that ignored
+    // the business-unit filter, so selecting a unit narrowed every KPI while the
+    // BU split card — the most prominent BU element on the page — kept showing
+    // both units at full revenue. That read as "the filter does nothing"
+    // (AIRIN-130). The unselected unit is still returned zero-filled below, so
+    // the caller decides whether to render it.
+    if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
     const result = await this.pool.query<{ business_unit: string; revenue: string; count: string }>(
       `SELECT business_unit,

@@ -18,8 +18,8 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
-import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
+import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
 import { useI18n } from '@/lib/i18n';
 import {
   type PlateRow,
@@ -129,11 +129,19 @@ export default function SellPackPage() {
   const [vehicleBrand, setVehicleBrand] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
 
+  // Vehicle brand/type catalog for the brand → type dropdowns (AIRIN-114) — same
+  // datalist pattern new-order already uses, so brand/model are picked from the
+  // real vehicle catalog instead of free text on both plate-entry spots below.
+  const [vehicleBrands, setVehicleBrands] = useState<{ id: string; name: string; types: { id: string; name: string }[] }[]>([]);
+
   // sale + payment
   const [sale, setSale] = useState<Sale | null>(null);
   const [selling, setSelling] = useState(false);
-  const [payMethod, setPayMethod] = useState<'cash' | 'qris_dynamic' | 'edc' | 'transfer'>('cash');
+  const [payMethods, setPayMethods] = useState<PaymentMethodDTO[]>([]);
+  const [selectedPmId, setSelectedPmId] = useState<string | null>(null);
+  const [payMethod, setPayMethod] = useState<PosPaymentMethod>('cash');
   const [amountReceived, setAmountReceived] = useState('');
+  const [referenceNumber, setReferenceNumber] = useState('');
   const [paying, setPaying] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
@@ -171,6 +179,14 @@ export default function SellPackPage() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : t('pos.sellpack.failedLoadCatalog', 'Failed to load catalog')))
       .finally(() => setLoading(false));
+    // Payment-method grid + vehicle catalog — same sources new-order uses, so
+    // both POS surfaces present one consistent payment modal (AIRIN-125) and
+    // one consistent brand/model picker (AIRIN-114). Sell Pack isn't scoped to
+    // one outlet, so no outletId filter here.
+    api.get<PaymentMethodDTO[]>('/payment-methods?active=true').then(setPayMethods).catch(() => { /* falls back to the static select */ });
+    api.get<{ id: string; name: string; types: { id: string; name: string }[] }[]>('/vehicle-brands')
+      .then(setVehicleBrands)
+      .catch(() => { /* catalog optional — falls back to free text */ });
   }, []);
 
   const startSale = async () => {
@@ -253,6 +269,13 @@ export default function SellPackPage() {
 
   const confirmPayment = async () => {
     if (!sale) return;
+    // EDC / Credit Card / Transfer require a reference number before settling —
+    // the shared modal already disables Confirm until this is filled; this is
+    // defense-in-depth (AIRIN-125: sell-pack gained this capability from new-order).
+    if ((payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') && !referenceNumber.trim()) {
+      setError(t('pos.payment.referenceRequired', 'Enter the reference/trace number to settle this payment.'));
+      return;
+    }
     setPaying(true);
     setError('');
     try {
@@ -264,7 +287,9 @@ export default function SellPackPage() {
       }
       await api.post(`/orders/${sale.order.id}/pay`, {
         method: payMethod,
+        paymentChannel: payMethods.find((m) => m.id === selectedPmId)?.businessUnit ?? undefined,
         amountReceived: payMethod === 'cash' ? Number(amountReceived) : undefined,
+        referenceNumber: (payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') ? referenceNumber.trim() : undefined,
       });
       setPaid(true);
     } catch (e) {
@@ -368,6 +393,9 @@ export default function SellPackPage() {
     setPolling(false);
     setPaid(false);
     setPaying(false);
+    setSelectedPmId(null);
+    setPayMethod('cash');
+    setReferenceNumber('');
     setPlates([emptyPlateRow()]);
     setPlateError('');
     setActivating(false);
@@ -526,8 +554,12 @@ export default function SellPackPage() {
                 {tab === 'membership' && (
                   <div className="grid grid-cols-3 gap-2">
                     <input className="input-field" placeholder={t('pos.sellpack.vehiclePlateOptional', 'Plate (optional)')} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
-                    <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={vehicleBrand} onChange={(e) => setVehicleBrand(e.target.value)} />
-                    <input className="input-field" placeholder={t('pos.sellpack.model', 'Model')} value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
+                    {/* Brand/type picklist from the real vehicle catalog, not free
+                        text — matches new-order's picker (AIRIN-114). */}
+                    <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list="veh-brands-sale" value={vehicleBrand} onChange={(e) => setVehicleBrand(e.target.value)} />
+                    <datalist id="veh-brands-sale">{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
+                    <input className="input-field" placeholder={t('pos.new.vehicleType', 'Vehicle type')} list="veh-types-sale" value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} />
+                    <datalist id="veh-types-sale">{(vehicleBrands.find((b) => b.name === vehicleBrand)?.types ?? []).map((ty) => <option key={ty.id} value={ty.name} />)}</datalist>
                   </div>
                 )}
                 {tab === 'membership'
@@ -545,56 +577,33 @@ export default function SellPackPage() {
         </div>
       </div>
 
-      {/* Payment modal */}
+      {/* Payment modal (AIRIN-125: shared with new-order) */}
       {sale && !paid && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="card w-full max-w-md">
-            <h3 className="section-title">{t('pos.sellpack.payment', 'Payment')} — {sale.order.orderNumber}</h3>
-            <PaymentSandboxNote className="mt-3" />
-            <div className="mt-4 flex justify-between text-base font-semibold border-b border-border pb-3">
-              <span>{sale.kind === 'membership' ? sale.planName : sale.kind === 'voucher' ? sale.templateName : `${t('pos.sellpack.renewal', 'Renewal')} · ${sale.memberName}`}</span>
-              <span className="text-primary-600">{fmt(sale.order.total)}</span>
-            </div>
-
-            <div className="mt-4">
-              <label className="block text-sm font-medium mb-1.5">{t('pos.sellpack.paymentMethod', 'Payment Method')}</label>
-              <select className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
-                <option value="cash">{t('pos.sellpack.cash', 'Cash')}</option>
-                <option value="qris_dynamic">{t('pos.sellpack.qrisScan', 'QRIS (scan to pay)')}</option>
-                <option value="edc">{t('pos.sellpack.edcCard', 'EDC / Card')}</option>
-                <option value="transfer">{t('pos.sellpack.bankTransfer', 'Bank Transfer')}</option>
-              </select>
-            </div>
-
-            {payMethod === 'cash' && !qr && (
-              <div className="mt-3">
-                <label className="block text-sm font-medium mb-1.5">{t('pos.sellpack.amountReceived', 'Amount Received')}</label>
-                <input type="number" className="input-field" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
-                <p className="mt-1 text-sm text-text-secondary">{t('pos.sellpack.change', 'Change:')} <span className="font-medium text-text-primary">{fmt(Math.max(0, Number(amountReceived || 0) - sale.order.total))}</span></p>
-              </div>
-            )}
-
-            {qr && (
-              <div className="mt-4 text-center">
-                <p className="text-sm text-text-secondary mb-2">{t('pos.sellpack.scanQris', 'Scan with any QRIS app to pay')}</p>
-                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qr)}`} alt={t('pos.sellpack.qrisAlt', 'QRIS payment code')} className="mx-auto rounded-lg border border-border" width={220} height={220} />
-                <p className="mt-3 text-sm text-text-secondary flex items-center justify-center gap-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                  {t('pos.sellpack.waitingConfirmation', 'Waiting for payment confirmation…')}
-                </p>
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-end mt-5">
-              <button className="btn-secondary" onClick={reset} disabled={paying && !qr}>{t('pos.sellpack.cancel', 'Cancel')}</button>
-              {!qr && (
-                <button className="btn-primary" onClick={confirmPayment} disabled={paying}>
-                  {paying ? t('pos.sellpack.processing', 'Processing…') : payMethod === 'qris_dynamic' ? t('pos.sellpack.generateQr', 'Generate QR') : t('pos.sellpack.confirmPayment', 'Confirm Payment')}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <PaymentModal
+          orderLabel={`${t('pos.sellpack.payment', 'Payment')} — ${sale.order.orderNumber}`}
+          total={sale.order.total}
+          summaryLines={[
+            {
+              key: 'sale',
+              label: sale.kind === 'membership' ? sale.planName : sale.kind === 'voucher' ? sale.templateName : `${t('pos.sellpack.renewal', 'Renewal')} · ${sale.memberName}`,
+              amount: sale.order.total,
+              emphasis: true,
+            },
+          ] satisfies PaymentSummaryLine[]}
+          payMethods={payMethods}
+          selectedPmId={selectedPmId}
+          payMethod={payMethod}
+          onSelectMethod={(pmId, method) => { setSelectedPmId(pmId); setPayMethod(method); }}
+          amountReceived={amountReceived}
+          onAmountReceivedChange={setAmountReceived}
+          referenceNumber={referenceNumber}
+          onReferenceNumberChange={setReferenceNumber}
+          qr={qr}
+          polling={polling}
+          paying={paying}
+          onConfirm={confirmPayment}
+          onCancel={reset}
+        />
       )}
 
       {/* Membership: vehicle registration */}
@@ -614,8 +623,13 @@ export default function SellPackPage() {
                       onChange={(e) => updatePlate(i, 'plate', e.target.value)}
                       data-testid={`plate-input-${i}`}
                     />
-                    <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={p.brand} onChange={(e) => updatePlate(i, 'brand', e.target.value)} />
-                    <input className="input-field" placeholder={t('pos.sellpack.model', 'Model')} value={p.model} onChange={(e) => updatePlate(i, 'model', e.target.value)} />
+                    {/* Brand/type picklist, not free text (AIRIN-114) — each row
+                        gets its own datalist id so the type list is scoped to
+                        THAT row's chosen brand. */}
+                    <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list={`veh-brands-activate-${i}`} value={p.brand} onChange={(e) => updatePlate(i, 'brand', e.target.value)} />
+                    <datalist id={`veh-brands-activate-${i}`}>{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
+                    <input className="input-field" placeholder={t('pos.new.vehicleType', 'Vehicle type')} list={`veh-types-activate-${i}`} value={p.model} onChange={(e) => updatePlate(i, 'model', e.target.value)} />
+                    <datalist id={`veh-types-activate-${i}`}>{(vehicleBrands.find((b) => b.name === p.brand)?.types ?? []).map((ty) => <option key={ty.id} value={ty.name} />)}</datalist>
                   </div>
                   {plates.length > 1 && <button onClick={() => removePlate(i)} className="w-9 h-9 rounded bg-surface-sunken text-text-secondary shrink-0">✕</button>}
                 </div>

@@ -116,3 +116,71 @@ describe('VoucherTicketService.sellBook', () => {
     expect(checkout.createPackOrder).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * issueBonusBook — the FREE-grant counterpart to sellBook, used by
+ * CampaignGrantService (AIRIN-138/AIRIN-102). No order is created; the
+ * caller supplies its own transaction client so the book/tickets insert
+ * commits atomically with the caller's own campaign_grants row.
+ */
+describe('VoucherTicketService.issueBonusBook', () => {
+  let client: { query: ReturnType<typeof vi.fn> };
+  let service: VoucherTicketService;
+
+  beforeEach(() => {
+    client = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes('FROM outlets')) return { rows: [{ code: 'BTR' }] };
+        if (sql.includes('voucher_counters')) return { rows: [{ last_number: 3 }] };
+        if (sql.includes('INSERT INTO voucher_books')) return { rows: [{ id: 'book-bonus-1' }] };
+        return { rows: [] };
+      }),
+    };
+    service = new VoucherTicketService({} as any, {} as any, undefined);
+  });
+
+  it('inserts a free book (unit_price 0) with the given benefit + plaintext codes, without opening its own transaction', async () => {
+    const res = await service.issueBonusBook(client as any, 'tenant-1', {
+      outletId: 'outlet-1',
+      quantity: 3,
+      benefitType: 'service',
+      benefitServiceId: 'service-spray-wax',
+      expiryDate: '2026-12-31',
+      buyerName: 'Budi',
+      buyerPhone: '0811',
+      orderId: 'order-1',
+    });
+
+    expect(res.bookId).toBe('book-bonus-1');
+    expect(res.codes).toHaveLength(3);
+    for (const c of res.codes) expect(c).toMatch(/^BTR-\d{6}-\d{6}$/);
+
+    // No BEGIN/COMMIT/ROLLBACK — the caller (CampaignGrantService) owns the transaction.
+    expect(client.query).not.toHaveBeenCalledWith('BEGIN');
+    expect(client.query).not.toHaveBeenCalledWith('COMMIT');
+
+    const bookInsert = client.query.mock.calls.find((c: unknown[]) => String(c[0]).includes('INSERT INTO voucher_books'));
+    expect(bookInsert?.[1]).toEqual([
+      'tenant-1', 'outlet-1', 'Budi', '0811', 3,
+      'service', 'service-spray-wax', 0,
+      '2026-12-31', 'order-1',
+    ]);
+
+    const ticketInserts = client.query.mock.calls.filter((c: unknown[]) => String(c[0]).includes('INSERT INTO voucher_tickets'));
+    expect(ticketInserts).toHaveLength(3);
+  });
+
+  it('rejects a non-positive quantity', async () => {
+    await expect(
+      service.issueBonusBook(client as any, 'tenant-1', { outletId: 'outlet-1', quantity: 0, benefitType: 'service' }),
+    ).rejects.toThrow();
+  });
+
+  it('throws NotFoundException when the outlet does not belong to the tenant', async () => {
+    client.query.mockImplementation((sql: string) => (sql.includes('FROM outlets') ? { rows: [] } : { rows: [] }));
+
+    await expect(
+      service.issueBonusBook(client as any, 'tenant-1', { outletId: 'bad-outlet', quantity: 1, benefitType: 'fixed', benefitValue: 5000 }),
+    ).rejects.toThrow();
+  });
+});

@@ -1,5 +1,5 @@
 import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { JWTPayload } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { PosCheckoutService } from '../order/pos-checkout.service';
@@ -18,6 +18,22 @@ export interface SellBookDto {
   expiryDate?: string | null;
   /** Tender used to settle the sale. Defaults to cash. */
   paymentMethod?: string;
+}
+
+/** Input to issueBonusBook — a FREE grant, no order/price fields. */
+export interface IssueBonusBookDto {
+  outletId: string;
+  quantity: number;
+  benefitType: 'service' | 'fixed' | 'percentage';
+  benefitServiceId?: string | null;
+  benefitValue?: number;
+  expiryDate?: string | null;
+  buyerName?: string | null;
+  buyerPhone?: string | null;
+  /** The order that earned this bonus (e.g. the membership fee order, or the
+   *  voucher-pack purchase order) — stored for audit only; no cash order is
+   *  created here. */
+  orderId?: string | null;
 }
 
 export interface VoucherTicket {
@@ -168,6 +184,73 @@ export class VoucherTicketService {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Insert a FREE bonus book of shareable voucher tickets — no order, no
+   * charge — onto the caller's transaction (`client`). Used by
+   * CampaignGrantService so a campaign-granted bonus (e.g. "buy 10x wash ->
+   * get 3x spray wax free", AIRIN-102) lands on the SAME plaintext-code
+   * model the dashboard's Issued Vouchers tab reads and POS
+   * resolveDigitalVouchers redeems — instead of the hashed
+   * voucher_packs/voucher_codes model the dashboard never queries
+   * (AIRIN-138: that's why campaign-granted vouchers used to vanish).
+   *
+   * Mirrors sellBook's code-generation scheme (BRANCH-MMYYYY-NNNNNN) but
+   * takes an externally-managed client rather than opening its own
+   * transaction, so the caller can commit the book/tickets insert and its
+   * own campaign_grants dedupe row atomically together.
+   */
+  async issueBonusBook(
+    client: PoolClient,
+    tenantId: string,
+    dto: IssueBonusBookDto,
+  ): Promise<{ bookId: string; codes: string[] }> {
+    const qty = Number(dto.quantity);
+    if (!Number.isInteger(qty) || qty < 1) throw new BadRequestException('quantity must be a positive integer');
+
+    const outletRes = await client.query<{ code: string | null }>(
+      'SELECT code FROM outlets WHERE id = $1 AND tenant_id = $2',
+      [dto.outletId, tenantId],
+    );
+    if (outletRes.rows.length === 0) throw new NotFoundException('Branch not found');
+    const branchCode = (outletRes.rows[0]!.code || 'XXX').toUpperCase().slice(0, 3).padEnd(3, 'X');
+
+    const now = new Date();
+    const period = `${String(now.getMonth() + 1).padStart(2, '0')}${now.getFullYear()}`; // MMYYYY
+
+    const counterRes = await client.query<{ last_number: number }>(
+      `INSERT INTO voucher_counters (outlet_id, period, last_number) VALUES ($1, $2, $3)
+       ON CONFLICT (outlet_id, period) DO UPDATE SET last_number = voucher_counters.last_number + EXCLUDED.last_number
+       RETURNING last_number`,
+      [dto.outletId, period, qty],
+    );
+    const high = counterRes.rows[0]!.last_number;
+    const start = high - qty + 1;
+
+    const bookRes = await client.query<{ id: string }>(
+      `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date, order_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10) RETURNING id`,
+      [
+        tenantId, dto.outletId, dto.buyerName ?? null, dto.buyerPhone ?? null, qty,
+        dto.benefitType, dto.benefitServiceId ?? null, dto.benefitValue ?? 0,
+        dto.expiryDate ?? null, dto.orderId ?? null,
+      ],
+    );
+    const bookId = bookRes.rows[0]!.id;
+
+    const codes: string[] = [];
+    for (let n = start; n <= high; n++) {
+      const code = `${branchCode}-${period}-${String(n).padStart(6, '0')}`;
+      codes.push(code);
+      await client.query(
+        `INSERT INTO voucher_tickets (tenant_id, book_id, outlet_id, code, expiry_date)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, bookId, dto.outletId, code, dto.expiryDate ?? null],
+      );
+    }
+
+    return { bookId, codes };
   }
 
   /** Validate a shareable code (read-only). */

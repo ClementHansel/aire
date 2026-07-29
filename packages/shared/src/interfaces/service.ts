@@ -25,6 +25,12 @@ export interface ServiceDTO {
   sortOrder: number;
   /** Optional scan-to-cart barcode (unique per tenant). Null when unset. */
   barcode?: string | null;
+  /** Per-item opt-in: whether a cashier may apply a manual discount at all (AIRIN-122/123). */
+  dynamicDiscountEnabled?: boolean;
+  /** Shape of the per-item discount cap. Null/absent when dynamicDiscountEnabled is false. */
+  dynamicDiscountKind?: 'fixed' | 'percentage' | null;
+  /** Per-item discount ceiling: Rupiah when kind='fixed', percent 0-100 when kind='percentage'. */
+  maxDiscount?: number | null;
 }
 
 /**
@@ -44,6 +50,12 @@ export interface CreateServiceRequest {
   sortOrder?: number;
   /** Optional barcode. Empty string / null clears it. */
   barcode?: string | null;
+  /** Per-item opt-in: whether a cashier may apply a manual discount at all (AIRIN-122/123). */
+  dynamicDiscountEnabled?: boolean;
+  /** Shape of the per-item discount cap. Required when dynamicDiscountEnabled is true. */
+  dynamicDiscountKind?: 'fixed' | 'percentage' | null;
+  /** Per-item discount ceiling: Rupiah when kind='fixed', percent 0-100 when kind='percentage'. */
+  maxDiscount?: number | null;
 }
 
 /**

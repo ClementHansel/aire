@@ -148,6 +148,49 @@ describe('ReportService', () => {
       }
     });
 
+    it('applies the businessUnit filter to the business-unit breakdown too', async () => {
+      // AIRIN-130: getBusinessUnitBreakdown was the only one of the four summary
+      // queries that ignored `businessUnit`, so picking a unit narrowed every KPI
+      // while the BU split card still showed both units at full revenue — which
+      // is exactly what "the filter does nothing" looked like on screen.
+      // getOverviewStats dereferences rows[0], so it needs a real row; the other
+      // four summary queries tolerate an empty result.
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ total_orders: '0', revenue: '0', paid_count: '0', cancelled_count: '0', unique_members: '0' }],
+      });
+      for (let i = 0; i < 4; i++) mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await reportService.getSummary('tenant-1', {
+        dateFrom: '2024-01-01',
+        dateTo: '2024-01-31',
+        businessUnit: 'LEAD',
+      });
+
+      const buCall = mockPool.query.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('GROUP BY business_unit'),
+      );
+      expect(buCall, 'business-unit breakdown query was not issued').toBeDefined();
+      expect(buCall![0]).toContain('business_unit = $');
+      expect(buCall![1]).toContain('LEAD');
+    });
+
+    it('leaves the business-unit breakdown unfiltered when no unit is selected', async () => {
+      // getOverviewStats dereferences rows[0], so it needs a real row; the other
+      // four summary queries tolerate an empty result.
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ total_orders: '0', revenue: '0', paid_count: '0', cancelled_count: '0', unique_members: '0' }],
+      });
+      for (let i = 0; i < 4; i++) mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await reportService.getSummary('tenant-1', { dateFrom: '2024-01-01', dateTo: '2024-01-31' });
+
+      const buCall = mockPool.query.mock.calls.find(
+        ([sql]) => typeof sql === 'string' && sql.includes('GROUP BY business_unit'),
+      );
+      expect(buCall![1]).not.toContain('LEAD');
+      expect(buCall![1]).not.toContain('AIRE');
+    });
+
     it('should not include outlet filter when outletId is not provided', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [

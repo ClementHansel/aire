@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import BranchFilter from '@/components/dashboard/BranchFilter';
+import BranchFilter, { canFilterBranches } from '@/components/dashboard/BranchFilter';
+import { getUser } from '@/lib/auth';
 import { DocumentDesigner } from '@/components/dashboard/DocumentDesigner';
 
 type ReportsTab = 'reports' | 'designer';
@@ -41,10 +42,15 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Resolved in an effect, not during render: getUser() reads localStorage, which
+  // is unavailable server-side and would desync the first client paint.
+  const [userRole, setUserRole] = useState<string | undefined>(undefined);
+
   // Deep-link support: /dashboard/reports?tab=designer
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('tab');
     if (q === 'designer' || q === 'reports') setTab(q);
+    setUserRole(getUser()?.role);
   }, []);
 
   const loadReport = useCallback(async (overrides?: { from: string; to: string }) => {
@@ -68,6 +74,21 @@ export default function ReportsPage() {
       setLoading(false);
     }
   }, [dateFrom, dateTo, businessUnit, branch]);
+
+  // Load on mount and re-run whenever a filter changes. Previously the report
+  // only ever loaded on an explicit "Generate Report" click, so the page opened
+  // empty and changing Business unit / Branch appeared to do nothing at all —
+  // which is what AIRIN-130 was reported as. The Transactions page already
+  // auto-applies; this makes Reports consistent with it. The Generate button
+  // stays as an explicit refresh.
+  //
+  // An inverted date range is left to the server rather than guarded here: it
+  // returns an empty range instead of an error, and the date inputs' min/max
+  // already stop the pickers from producing one.
+  useEffect(() => {
+    if (tab !== 'reports') return;
+    void loadReport();
+  }, [loadReport, tab]);
 
   const exportCsv = (scope: 'orders' | 'daily') => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('aire_access_token') : null;
@@ -146,11 +167,11 @@ export default function ReportsPage() {
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <label htmlFor="report-date-from" className="block text-xs font-medium text-text-secondary mb-1">{t('dash.reports.from', 'From')}</label>
-            <input id="report-date-from" aria-label={t('dash.reports.fromDate', 'From date')} type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input-field" />
+            <input id="report-date-from" aria-label={t('dash.reports.fromDate', 'From date')} type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className="input-field" />
           </div>
           <div>
             <label htmlFor="report-date-to" className="block text-xs font-medium text-text-secondary mb-1">{t('dash.reports.to', 'To')}</label>
-            <input id="report-date-to" aria-label={t('dash.reports.toDate', 'To date')} type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input-field" />
+            <input id="report-date-to" aria-label={t('dash.reports.toDate', 'To date')} type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} className="input-field" />
           </div>
           <button
             type="button"
@@ -172,7 +193,21 @@ export default function ReportsPage() {
               <option value="LEAD">{t('dash.reports.leadDetailing', 'LEAD · Detailing')}</option>
             </select>
           </div>
+          {/* BranchFilter renders nothing for outlet-scoped roles (RLS/scope
+              already narrows their data). Say so, rather than leaving a gap where
+              a control should be — "Branch filter tidak berfungsi" is literally
+              true for such a user if the control is simply absent (AIRIN-130). */}
           <BranchFilter value={branch} onChange={setBranch} label={t('dash.reports.branch', 'Branch')} />
+          {/* Only once the role is known — rendering on the initial `undefined`
+              would flash this note at an owner before their dropdown appears. */}
+          {userRole !== undefined && !canFilterBranches(userRole) && (
+            <div>
+              <span className="block text-xs font-medium text-text-secondary mb-1">{t('dash.reports.branch', 'Branch')}</span>
+              <p className="text-sm text-text-muted py-2" data-testid="reports-branch-scope-note">
+                {t('dash.reports.branchScopedNote', 'Your assigned branch only')}
+              </p>
+            </div>
+          )}
           <button className="btn-primary" onClick={() => loadReport()} disabled={loading}>
             {loading ? t('dash.reports.loading', 'Loading…') : t('dash.reports.generateReport', 'Generate Report')}
           </button>
@@ -220,9 +255,11 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Business unit P&L split */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-            {(['AIRE', 'LEAD'] as const).map((bu) => {
+          {/* Business unit P&L split. When a unit is selected, show only that
+              unit — a two-card "split" with one card zeroed is as confusing as
+              the old behaviour of showing both at full revenue (AIRIN-130). */}
+          <div className={`grid grid-cols-1 gap-4 mb-6 ${businessUnit ? '' : 'sm:grid-cols-2'}`}>
+            {(businessUnit ? [businessUnit] as const : ['AIRE', 'LEAD'] as const).map((bu) => {
               const v = data.byBusinessUnit?.[bu] ?? { revenue: 0, count: 0 };
               return (
                 <div key={bu} className="card">

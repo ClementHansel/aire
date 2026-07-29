@@ -68,6 +68,42 @@ export class MeService {
     return this.resolveEmployee(tenantId, userId);
   }
 
+  /**
+   * The cashier's authoritative operating branch for the POS header —
+   * deliberately not gated by the employee-self-service lean flag (see
+   * MePosController), since POS needs this whenever lean mode is on.
+   *
+   * Precedence: open POS shift's outlet, else the employee's home outlet.
+   * The shift wins because that's the outlet order.service.ts actually books
+   * orders to (`shift.outletId`) — matching it here is what fixes the header
+   * showing a branch that isn't where sales are really landing (AIRIN-113).
+   */
+  async posBranch(tenantId: string, userId: string): Promise<{
+    outletId: string | null;
+    outletName: string | null;
+    source: 'shift' | 'home' | null;
+  }> {
+    const shift = await this.pool.query<{ outlet_id: string; outlet_name: string | null }>(
+      `SELECT ps.outlet_id, o.name AS outlet_name
+       FROM pos_shifts ps LEFT JOIN outlets o ON o.id = ps.outlet_id
+       WHERE ps.tenant_id = $1 AND ps.operator_id = $2 AND ps.status = 'open'
+       ORDER BY ps.opened_at DESC LIMIT 1`,
+      [tenantId, userId],
+    );
+    const s = shift.rows[0];
+    if (s) return { outletId: s.outlet_id, outletName: s.outlet_name ?? null, source: 'shift' };
+
+    const emp = await this.pool.query<{ outlet_id: string | null; outlet_name: string | null }>(
+      `SELECT e.outlet_id, o.name AS outlet_name
+       FROM employees e LEFT JOIN outlets o ON o.id = e.outlet_id
+       WHERE e.tenant_id = $1 AND e.user_id = $2 AND e.status = 'active' LIMIT 1`,
+      [tenantId, userId],
+    );
+    const e = emp.rows[0];
+    if (e?.outlet_id) return { outletId: e.outlet_id, outletName: e.outlet_name ?? null, source: 'home' };
+    return { outletId: null, outletName: null, source: null };
+  }
+
   /** Home aggregate: profile + today's schedule + today's attendance state. */
   async home(tenantId: string, userId: string): Promise<Record<string, unknown>> {
     const emp = await this.resolveEmployee(tenantId, userId);

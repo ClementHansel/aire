@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { toDateInput, fmtDateRange } from '@/lib/dates';
 import BranchFilter from '@/components/dashboard/BranchFilter';
 import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
 import { Gift, Ticket, Megaphone, Pencil, Trash2, Check } from 'lucide-react';
@@ -227,8 +228,10 @@ function PromoModal({ initial, branches, services, onClose, onSaved }: { initial
   const { t } = useI18n();
   const [name, setName] = useState(initial?.name ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
-  const [startDate, setStartDate] = useState(initial?.startDate ?? new Date().toISOString().slice(0, 10));
-  const [endDate, setEndDate] = useState(initial?.endDate ?? new Date().toISOString().slice(0, 10));
+  // toDateInput: the API may hand these back as ISO timestamps, which would make
+  // <input type="date"> render blank on edit (same defect as AIRIN-137).
+  const [startDate, setStartDate] = useState(toDateInput(initial?.startDate) || new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(toDateInput(initial?.endDate) || new Date().toISOString().slice(0, 10));
   const [rewardType, setRewardType] = useState(initial?.rewardType ?? 'discount_fixed');
   const [rewardValue, setRewardValue] = useState(String(initial?.rewardValue ?? 0));
   const [rewardServiceId, setRewardServiceId] = useState(initial?.rewardServiceId ?? '');
@@ -343,6 +346,26 @@ export default function VouchersPage() {
   const [tickets, setTickets] = useState<{ bookId: string; rows: Ticket[] } | null>(null);
   const [branch, setBranch] = useState('');
 
+  /**
+   * Render a promotion's branch scope. `null`/empty outletIds means the
+   * promotion applies everywhere — the create form labels it
+   * "Applies to branches (none = all)", so show that, not a blank cell.
+   */
+  const branchNames = useCallback((outletIds: string[] | null) => {
+    if (!outletIds || outletIds.length === 0) {
+      return <span className="badge bg-gray-100 text-gray-600 text-xs">{t('dash.promotions.allBranches', 'All branches')}</span>;
+    }
+    return (
+      <span className="flex flex-wrap gap-1">
+        {outletIds.map((id) => (
+          <span key={id} className="badge bg-sky-50 text-sky-700 text-xs">
+            {branches.find((b) => b.id === id)?.name ?? id.slice(0, 8)}
+          </span>
+        ))}
+      </span>
+    );
+  }, [branches, t]);
+
   // Deep-link support: /dashboard/vouchers?tab=promotions
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('tab');
@@ -432,17 +455,19 @@ export default function VouchersPage() {
             <thead><tr className="border-b border-border bg-surface-sunken/50">
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.promotion', 'Promotion')}</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.reward', 'Reward')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.branch', 'Branch')}</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.period', 'Period')}</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.quota', 'Quota')}</th>
               <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.status', 'Status')}</th>
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.promotions.actions', 'Actions')}</th>
             </tr></thead>
             <tbody className="divide-y divide-border">
-              {visiblePromos.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">{branch ? t('dash.promotions.noPromosBranch', 'No promotions apply to this branch.') : t('dash.promotions.noPromosYet', 'No promotions yet.')}</td></tr> : visiblePromos.map((p) => (
+              {visiblePromos.length === 0 ? <tr><td colSpan={7} className="px-5 py-6 text-sm text-text-muted text-center">{branch ? t('dash.promotions.noPromosBranch', 'No promotions apply to this branch.') : t('dash.promotions.noPromosYet', 'No promotions yet.')}</td></tr> : visiblePromos.map((p) => (
                 <tr key={p.id}>
                   <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{p.name}<div className="text-xs text-text-muted">{p.description}</div></td>
                   <td className="px-5 py-3.5 text-sm">{fmtReward(p)}</td>
-                  <td className="px-5 py-3.5 text-xs text-text-secondary">{p.startDate} → {p.endDate}</td>
+                  <td className="px-5 py-3.5 text-xs">{branchNames(p.outletIds)}</td>
+                  <td className="px-5 py-3.5 text-xs text-text-secondary">{fmtDateRange(p.startDate, p.endDate)}</td>
                   <td className="px-5 py-3.5 text-sm">{p.maxQuota != null ? `${p.usedQuota}/${p.maxQuota}` : '∞'}</td>
                   <td className="px-5 py-3.5 text-center"><span className={`badge ${p.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{p.isActive ? t('dash.promotions.activeBadge', 'Active') : t('dash.promotions.inactive', 'Inactive')}</span></td>
                   <td className="px-5 py-3.5 text-right whitespace-nowrap">

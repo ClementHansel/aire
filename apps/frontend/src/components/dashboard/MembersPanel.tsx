@@ -4,6 +4,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { getUser } from '@/lib/auth';
+import {
+  type PlateRow,
+  emptyPlateRow,
+  prefillPlateRow,
+  validatePlateRows,
+  canAddPlateRow,
+} from '@/lib/membership-plates';
+import type { MemberLookupResponse } from '@aire/shared/interfaces/member';
 import { MembershipCard, buildCardHtml, computeCardCode, type CardTemplate } from './MembershipCard';
 
 interface Membership {
@@ -142,10 +150,78 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  // Registered plates — the list endpoint (/memberships/manage) doesn't carry
+  // plates or the plan's maxPlates, so this modal re-resolves them via the same
+  // member-lookup endpoint the POS uses (GET /members/lookup), then picks out
+  // this one membership by id (AIRIN-103).
+  const [lookup, setLookup] = useState<MemberLookupResponse | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(true);
+  const [editingPlates, setEditingPlates] = useState(false);
+  const [plateRows, setPlateRows] = useState<PlateRow[]>([emptyPlateRow()]);
+  const [plateError, setPlateError] = useState('');
+  const [platesSaving, setPlatesSaving] = useState(false);
+
   useEffect(() => {
     setEvents(null);
     api.get<MembershipEvent[]>(`/memberships/${member.id}/events`).then(setEvents).catch(() => setEvents([]));
   }, [member.id]);
+
+  const loadLookup = useCallback(async () => {
+    setLookupLoading(true);
+    try {
+      // Prefer the membership number when issued — it's unambiguous — falling
+      // back to phone (a pending/newly-sold membership may not have one yet).
+      const q = member.membershipNumber
+        ? `number=${encodeURIComponent(member.membershipNumber)}`
+        : `phone=${encodeURIComponent(member.customerPhone)}`;
+      setLookup(await api.get<MemberLookupResponse>(`/members/lookup?${q}`));
+    } catch {
+      setLookup(null);
+    } finally {
+      setLookupLoading(false);
+    }
+  }, [member.membershipNumber, member.customerPhone]);
+
+  useEffect(() => { loadLookup(); }, [loadLookup]);
+
+  const plateDetail = lookup?.memberships.find((m) => m.id === member.id) ?? null;
+
+  const startEditPlates = () => {
+    setPlateError('');
+    setPlateRows(
+      plateDetail && plateDetail.plates.length > 0
+        ? plateDetail.plates.map((p) => prefillPlateRow(p.plate, p.brand, p.model))
+        : [emptyPlateRow()],
+    );
+    setEditingPlates(true);
+  };
+  const cancelEditPlates = () => { setEditingPlates(false); setPlateError(''); };
+  const updatePlateRow = (i: number, field: keyof PlateRow, value: string) =>
+    setPlateRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+  const addPlateRow = () => {
+    if (canAddPlateRow(plateRows.length, plateDetail?.maxPlates)) setPlateRows((prev) => [...prev, emptyPlateRow()]);
+  };
+  const removePlateRow = (i: number) => setPlateRows((prev) => prev.filter((_, idx) => idx !== i));
+
+  const savePlates = async () => {
+    const validation = validatePlateRows(plateRows, t('dash.members.registerAtLeastOnePlate', 'Register at least one plate.'));
+    if (!validation.ok) { setPlateError(validation.error); return; }
+    setPlatesSaving(true); setPlateError('');
+    try {
+      await api.put(`/memberships/${member.id}/plates`, {
+        plates: validation.plates.map((p) => ({ plate: p.plate, brand: p.brand || undefined, model: p.model || undefined })),
+      });
+      setEditingPlates(false);
+      await loadLookup();
+      onChanged();
+    } catch (e) {
+      // Surface the server's max-plates error as-is rather than duplicating that
+      // rule client-side — the UI only pre-limits how many rows can be added.
+      setPlateError(e instanceof Error ? e.message : t('dash.members.savePlatesFailed', 'Failed to save plates'));
+    } finally {
+      setPlatesSaving(false);
+    }
+  };
 
   const printCard = async () => {
     if (!cardTemplate || !member.membershipNumber) return;
@@ -209,6 +285,58 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
               {canManage && member.displayStatus === 'suspended' && <button className="btn-secondary text-xs" disabled={busy} onClick={reactivate}>{t('dash.members.reactivate', 'Reactivate')}</button>}
             </div>
           </div>
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-border" data-testid="member-plates-section">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold">{t('dash.members.plates', 'Registered plates')}</h4>
+            {canManage && !editingPlates && !lookupLoading && plateDetail && (
+              <button className="btn-secondary text-xs" onClick={startEditPlates}>{t('dash.members.editPlates', 'Edit plates')}</button>
+            )}
+          </div>
+
+          {lookupLoading ? (
+            <p className="text-sm text-text-muted">{t('dash.members.loading', 'Loading…')}</p>
+          ) : !plateDetail ? (
+            <p className="text-sm text-text-muted">{t('dash.members.platesUnavailable', 'Plate info unavailable.')}</p>
+          ) : editingPlates ? (
+            <div className="space-y-2">
+              {plateRows.map((r, i) => (
+                <div key={i} className="flex gap-2 items-start">
+                  <div className="flex-1 grid grid-cols-3 gap-2">
+                    <input
+                      className={`input-field ${i === 0 && plateError ? 'border-red-400 focus:ring-red-300' : ''}`}
+                      placeholder={t('dash.members.plateReq', 'Plate *')}
+                      value={r.plate}
+                      onChange={(e) => updatePlateRow(i, 'plate', e.target.value)}
+                      data-testid={`member-edit-plate-input-${i}`}
+                    />
+                    <input className="input-field" placeholder={t('dash.members.brand', 'Brand')} value={r.brand} onChange={(e) => updatePlateRow(i, 'brand', e.target.value)} />
+                    <input className="input-field" placeholder={t('dash.members.model', 'Model')} value={r.model} onChange={(e) => updatePlateRow(i, 'model', e.target.value)} />
+                  </div>
+                  {plateRows.length > 1 && <button onClick={() => removePlateRow(i)} className="w-9 h-9 rounded bg-surface-sunken text-text-secondary shrink-0">✕</button>}
+                </div>
+              ))}
+              {plateError && <p className="text-sm text-red-600">{plateError}</p>}
+              {canAddPlateRow(plateRows.length, plateDetail.maxPlates) && (
+                <button onClick={addPlateRow} className="btn-ghost text-sm">+ {t('dash.members.addPlate', 'Add license plate')}</button>
+              )}
+              <div className="flex gap-2 justify-end pt-1">
+                <button className="btn-secondary" onClick={cancelEditPlates} disabled={platesSaving}>{t('dash.members.cancel', 'Cancel')}</button>
+                <button className="btn-primary" onClick={savePlates} disabled={platesSaving}>{platesSaving ? t('dash.members.saving', 'Saving…') : t('dash.members.savePlates', 'Save plates')}</button>
+              </div>
+            </div>
+          ) : plateDetail.plates.length === 0 ? (
+            <p className="text-sm text-text-muted">{t('dash.members.noPlates', 'No plates registered.')}</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {plateDetail.plates.map((p) => (
+                <span key={p.plate} className="badge bg-surface-sunken text-text-secondary" data-testid={`member-detail-plate-${p.plate}`}>
+                  {p.plate}{p.brand && ` (${p.brand}${p.model ? ` ${p.model}` : ''})`}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mt-5 pt-4 border-t border-border">

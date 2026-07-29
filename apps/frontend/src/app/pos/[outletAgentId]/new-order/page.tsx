@@ -5,8 +5,10 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
-import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
+import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
 import { useI18n } from '@/lib/i18n';
+import { normalizePlate, maxLineDiscount, type DynamicDiscountRule } from '@aire/shared';
+import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
 
 interface ServiceDTO {
   id: string;
@@ -15,15 +17,10 @@ interface ServiceDTO {
   businessUnit: 'AIRE' | 'LEAD';
   price: number;
   isActive: boolean;
-}
-
-interface PaymentMethodDTO {
-  id: string;
-  name: string;
-  kind: 'cash' | 'qris' | 'edc' | 'cc' | 'transfer';
-  businessUnit: 'AIRE' | 'LEAD' | null;
-  logoUrl: string | null;
-  color: string;
+  /** Per-item manual-discount permission, set in the dashboard (AIRIN-121/122/123). */
+  dynamicDiscountEnabled?: boolean;
+  dynamicDiscountKind?: 'fixed' | 'percentage' | null;
+  maxDiscount?: number | null;
 }
 
 interface CartLine {
@@ -32,8 +29,11 @@ interface CartLine {
   price: number;
   qty: number;
   /** Cashier-entered manual discount for this line, in Rupiah (total, not per-unit).
-   *  The server clamps this to the outlet's configured cap — this is UX only. */
+   *  The server re-derives the cap from the item's own rule — this is UX only. */
   manualDiscount?: number;
+  /** Copied from the menu item so the cart can decide whether to offer a discount
+   *  field at all, without re-fetching the service. */
+  discountRule?: DynamicDiscountRule;
 }
 
 interface CreatedOrder {
@@ -49,15 +49,6 @@ interface CreatedOrder {
   membershipQuotaWarning?: string;
 }
 
-/** Client-side hint only — the server (order.service.ts) is the source of truth
- *  and always clamps to the outlet's configured (or default) cap regardless of
- *  what the POS displays here. */
-const CLIENT_MAX_MANUAL_DISCOUNT_PCT = 0.3;
-
-interface MemberLookupResp {
-  customer: { id: string; name: string; phone: string };
-  memberships: { id: string; planName: string; status: string; endDate: string }[];
-}
 
 /** A promo the cashier can opt into for the current cart (previewed server-side —
  * never auto-applied; only ids the cashier checks are sent to createOrder). */
@@ -154,6 +145,13 @@ export default function NewOrderPage() {
   const [selectedPlate, setSelectedPlate] = useState<string | null>(null);
   const [memberBanner, setMemberBanner] = useState<string | null>(null);
   const [memberExpiry, setMemberExpiry] = useState<string | null>(null);
+  // Full detail of the ACTIVE membership attached to this order (only set when
+  // status is genuinely active) — drives the pre-order benefit/quota preview
+  // (AIRIN-126) and the plate autofill/picker below (AIRIN-116/118).
+  const [memberDetail, setMemberDetail] = useState<MembershipDetail | null>(null);
+  // Every plate registered to that membership — when there's more than one, the
+  // cashier gets a picker instead of a silent single guess (AIRIN-116).
+  const [memberPlateOptions, setMemberPlateOptions] = useState<PlateInfo[]>([]);
   // Soft-pop shown when a detected member needs attention (expiring/grace/revoked/suspended/cancelled).
   const [memberAlert, setMemberAlert] = useState<{ level: 'info' | 'warn' | 'urgent'; title: string; body: string; canRenew: boolean } | null>(null);
   const [showQueuePicker, setShowQueuePicker] = useState(false);
@@ -169,7 +167,13 @@ export default function NewOrderPage() {
   // voucher redemption
   const [voucherCodes, setVoucherCodes] = useState<string[]>([]);
   const [voucherInput, setVoucherInput] = useState('');
-  const [voucherMsg, setVoucherMsg] = useState('');
+  /**
+   * Voucher feedback line. `tone` drives the colour: a rejected code (not found,
+   * inactive, expired, fully redeemed) has to look different from a successful
+   * apply — both used to render in the same neutral grey, so a cashier could read
+   * a rejection as an acceptance and hand over a free wash (AIRIN-109).
+   */
+  const [voucherMsg, setVoucherMsg] = useState<{ tone: 'ok' | 'error' | 'warn'; text: string } | null>(null);
   const [checkingVoucher, setCheckingVoucher] = useState(false);
   // Orange badge: code is real but doesn't apply to this cart (wrong outlet/brand/
   // service, or min-order not met) — carries the server's stated reason.
@@ -183,7 +187,7 @@ export default function NewOrderPage() {
 
   // payment state
   const [order, setOrder] = useState<CreatedOrder | null>(null);
-  const [payMethod, setPayMethod] = useState<'cash' | 'qris_static' | 'qris_dynamic' | 'edc' | 'cc' | 'transfer'>('cash');
+  const [payMethod, setPayMethod] = useState<PosPaymentMethod>('cash');
   const [amountReceived, setAmountReceived] = useState('');
   // Trace/slip or transfer reference — required for EDC / Credit Card / Transfer.
   const [referenceNumber, setReferenceNumber] = useState('');
@@ -275,15 +279,41 @@ export default function NewOrderPage() {
     return null;
   };
 
+  // Select one of the member's registered plates as the order's vehicle,
+  // autofilling brand/model from that plate's own record (AIRIN-116/118).
+  const choosePlate = (p: PlateInfo) => {
+    const norm = normalizePlate(p.plate).normalized;
+    setPlate(norm);
+    setSelectedPlate(norm);
+    setBrand(p.brand ?? '');
+    setModel(p.model ?? '');
+  };
+
   // Apply a resolved member to the order panel. Member pricing attaches ONLY for a
   // genuinely active membership; non-active ones still show the advisory soft-pop.
-  const applyMember = (m: MemberLookupResp, plateUsed?: string) => {
+  const applyMember = (m: MemberLookupResponse, plateUsed?: string) => {
     if (!m?.customer) return;
     setName(m.customer.name);
     setPhone(m.customer.phone);
-    if (plateUsed) setSelectedPlate(plateUsed);
     // memberships arrive most-actionable first; prefer the active one for pricing.
     const best = m.memberships?.find((x) => x.status === 'active') ?? m.memberships?.[0];
+    setMemberDetail(best?.status === 'active' ? best : null);
+    const plates = best?.plates ?? [];
+    setMemberPlateOptions(plates);
+    if (plateUsed) {
+      // Searched by plate — look up that plate's OWN brand/model instead of
+      // leaving them blank (AIRIN-118: previously only name/phone were set).
+      const norm = normalizePlate(plateUsed).normalized;
+      const match = plates.find((p) => normalizePlate(p.plate).normalized === norm);
+      setSelectedPlate(norm);
+      if (match) { setBrand(match.brand ?? ''); setModel(match.model ?? ''); }
+    } else if (plates.length > 0) {
+      // Searched by phone/member-number — no plate context at all, so nothing
+      // used to get autofilled (AIRIN-116). Default to the first/primary plate;
+      // the picker below (rendered when there's more than one) lets the cashier
+      // switch.
+      choosePlate(plates[0]!);
+    }
     if (best) {
       setMemberBanner(best.planName);
       setMembershipId(best.status === 'active' ? best.id : null);
@@ -303,7 +333,7 @@ export default function NewOrderPage() {
     if (q.customerPhone) setPhone(q.customerPhone);
     if (q.businessUnit === 'AIRE' || q.businessUnit === 'LEAD') setBusinessUnit(q.businessUnit);
     if (q.plate) {
-      api.get<MemberLookupResp>(`/members/lookup?plate=${encodeURIComponent(q.plate)}`)
+      api.get<MemberLookupResponse>(`/members/lookup?plate=${encodeURIComponent(q.plate)}`)
         .then((m) => applyMember(m, q.plate ?? undefined))
         .catch(() => { /* non-member — manual entry */ });
     }
@@ -320,8 +350,12 @@ export default function NewOrderPage() {
     const isPhone = !isNumber && /\d/.test(v) && !/[a-z]/i.test(v);
     const key = isNumber ? 'number' : isPhone ? 'phone' : 'plate';
     try {
-      const m = await api.get<MemberLookupResp>(`/members/lookup?${key}=${encodeURIComponent(v)}`);
-      if (m?.customer) { applyMember(m, key === 'plate' ? v.toUpperCase() : undefined); if (key === 'plate') setPlate(v.toUpperCase()); }
+      const m = await api.get<MemberLookupResponse>(`/members/lookup?${key}=${encodeURIComponent(v)}`);
+      // Canonicalise the plate the cashier typed before it becomes the order's
+      // plate: uppercasing alone left the spaces in, so "B 8882 CST" and
+      // "B8882CST" produced two different stored values (AIRIN-117).
+      const canonicalPlate = key === 'plate' ? normalizePlate(v).normalized : undefined;
+      if (m?.customer) { applyMember(m, canonicalPlate); if (canonicalPlate) setPlate(canonicalPlate); }
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.new.noMemberFound', 'No member found'));
     } finally { setFinding(false); }
@@ -350,7 +384,19 @@ export default function NewOrderPage() {
     setCart((prev) => {
       const found = prev.find((l) => l.serviceId === s.id);
       if (found) return prev.map((l) => l.serviceId === s.id ? { ...l, qty: l.qty + 1 } : l);
-      return [...prev, { serviceId: s.id, name: s.name, price: s.price, qty: 1 }];
+      return [...prev, {
+        serviceId: s.id,
+        name: s.name,
+        price: s.price,
+        qty: 1,
+        // Carried onto the line so the cart knows whether this item may be
+        // discounted at all, and by how much (AIRIN-121).
+        discountRule: {
+          enabled: s.dynamicDiscountEnabled ?? false,
+          kind: s.dynamicDiscountKind ?? null,
+          maxDiscount: s.maxDiscount ?? null,
+        },
+      }];
     });
   };
 
@@ -380,27 +426,59 @@ export default function NewOrderPage() {
     );
   };
 
-  // Manual per-line discount cap hint (UX only — the server clamps regardless).
-  const lineDiscountCap = (l: CartLine) => Math.floor(l.price * l.qty * CLIENT_MAX_MANUAL_DISCOUNT_PCT);
+  // Per-line discount ceiling from the item's OWN dashboard rule. 0 means the
+  // item was never enabled for cashier discounts, so no field is offered at all
+  // (AIRIN-121). The server re-derives this from the DB regardless.
+  const lineDiscountCap = (l: CartLine) => Math.floor(maxLineDiscount(l.discountRule, l.price, l.qty));
+  const canDiscount = (l: CartLine) => lineDiscountCap(l) > 0;
 
   const changeDiscount = (serviceId: string, value: string) => {
     const raw = Math.max(0, Number(value) || 0);
-    setCart((prev) => prev.map((l) => (l.serviceId === serviceId ? { ...l, manualDiscount: raw } : l)));
+    setCart((prev) => prev.map((l) => {
+      if (l.serviceId !== serviceId) return l;
+      // Clamp to this line's own ceiling so the cashier can't type past it and
+      // then be surprised when the server charges more than the screen showed.
+      return { ...l, manualDiscount: Math.min(raw, lineDiscountCap(l)) };
+    }));
   };
 
   const subtotal = cart.reduce((sum, l) => sum + Math.max(0, l.price * l.qty - (l.manualDiscount ?? 0)), 0);
   const totalManualDiscount = cart.reduce((sum, l) => sum + (l.manualDiscount ?? 0), 0);
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
+  // Pre-order membership eligibility preview (AIRIN-126). Mirrors the server's
+  // own gate in order.service.ts#getMembershipBenefits: the daily limit is
+  // PER MEMBERSHIP (summed across every registered plate), not per plate, and
+  // a lifetime cap of 0/undefined means unlimited. This is advisory only — the
+  // server re-derives everything at order-creation time; it exists so the
+  // cashier learns the outcome BEFORE placing the order instead of after.
+  const memberDailyUsageTotal = memberDetail
+    ? Object.values(memberDetail.dailyUsageToday).reduce((sum, n) => sum + n, 0)
+    : 0;
+  const memberQuotaExhausted = !!memberDetail && memberDetail.maxUses > 0 && memberDetail.usesCount >= memberDetail.maxUses;
+  const memberDailyLimitReached = !!memberDetail && !memberQuotaExhausted && memberDailyUsageTotal >= memberDetail.dailyLimit;
+  const memberBenefitBlocked = memberQuotaExhausted || memberDailyLimitReached;
+
+  /** The badge this member's plan grants a cart line, or null if none applies. */
+  const memberLineBenefit = (l: CartLine): string | null => {
+    if (!memberDetail || memberBenefitBlocked) return null;
+    if (memberDetail.freeServices.includes(l.serviceId)) return 'GRATIS';
+    const ds = memberDetail.discountedServices.find((d) => d.serviceId === l.serviceId);
+    if (!ds) return null;
+    if (typeof ds.fixedPrice === 'number' && ds.fixedPrice < l.price) return t('pos.new.memberBenefitFixedBadge', 'HARGA MEMBER');
+    if (typeof ds.discountPct === 'number' && ds.discountPct > 0) return `${t('pos.new.memberBenefitPctBadgePrefix', 'MEMBER -')}${ds.discountPct}%`;
+    return null;
+  };
+
   const applyVoucher = async () => {
     const code = voucherInput.trim().toUpperCase();
     if (!code) return;
     if (voucherCodes.includes(code)) {
-      setVoucherMsg(t('pos.new.codeAlreadyAdded', 'Code already added'));
+      setVoucherMsg({ tone: 'warn', text: t('pos.new.codeAlreadyAdded', 'Code already added') });
       return;
     }
     setCheckingVoucher(true);
-    setVoucherMsg('');
+    setVoucherMsg(null);
     setVoucherWarning(null);
     try {
       const res = await api.post<{ status: string; message: string; discountAmount?: number; reason?: string }>(
@@ -410,16 +488,17 @@ export default function NewOrderPage() {
       if (res.status === 'valid_applicable') {
         setVoucherCodes((prev) => [...prev, code]);
         setVoucherInput('');
-        setVoucherMsg(`${t('pos.new.applied', 'Applied:')} −${fmt(res.discountAmount ?? 0)}`);
+        setVoucherMsg({ tone: 'ok', text: `${t('pos.new.applied', 'Applied:')} −${fmt(res.discountAmount ?? 0)}` });
       } else if (res.status === 'valid_not_applicable') {
         // Real code, but not applicable to this cart (wrong outlet/brand/service or
         // min-order not met) — orange badge with the server's reason, not an error.
         setVoucherWarning({ code, reason: res.reason || res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied') });
       } else {
-        setVoucherMsg(res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied'));
+        // Not found / inactive / expired / fully redeemed — a hard rejection.
+        setVoucherMsg({ tone: 'error', text: res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied') });
       }
     } catch (e) {
-      setVoucherMsg(e instanceof Error ? e.message : t('pos.new.validationFailed', 'Validation failed'));
+      setVoucherMsg({ tone: 'error', text: e instanceof Error ? e.message : t('pos.new.validationFailed', 'Validation failed') });
     } finally {
       setCheckingVoucher(false);
     }
@@ -427,7 +506,7 @@ export default function NewOrderPage() {
 
   const removeVoucher = (code: string) => {
     setVoucherCodes((prev) => prev.filter((c) => c !== code));
-    setVoucherMsg('');
+    setVoucherMsg(null);
   };
 
   // Preview eligible promos for the current cart. Re-runs whenever the cart or the
@@ -484,7 +563,10 @@ export default function NewOrderPage() {
     setPlacing(true);
     try {
       const created = await api.post<CreatedOrder>('/orders', {
-        customer: { name: name.trim(), phone: phone.trim(), licensePlate: plate.trim() || undefined, brand: brand.trim() || undefined, model: model.trim() || undefined },
+        // Plate is canonicalised here too, so a plate typed straight into the
+        // field (never routed through member search) is stored in the same shape
+        // as one that was — otherwise the two paths disagree (AIRIN-117).
+        customer: { name: name.trim(), phone: phone.trim(), licensePlate: normalizePlate(plate).normalized || undefined, brand: brand.trim() || undefined, model: model.trim() || undefined },
         items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty, manualDiscount: l.manualDiscount || undefined })),
         businessUnit,
         salespersonName: salesperson.trim() || undefined,
@@ -541,11 +623,12 @@ export default function NewOrderPage() {
     setReceipt({ orderNumber, total, change, membershipQuotaWarning });
     setCart([]);
     setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
-    setVoucherCodes([]); setVoucherInput(''); setVoucherMsg(''); setVoucherWarning(null);
+    setVoucherCodes([]); setVoucherInput(''); setVoucherMsg(null); setVoucherWarning(null);
     setPromoOptions([]); setSelectedPromoIds([]);
     setOrder(null); setQr(null); setPolling(false); setPaying(false); setSelectedPmId(null);
     setQueueEntryId(null); setMembershipId(null); setSelectedPlate(null); setMemberBanner(null);
     setMemberExpiry(null); setMemberAlert(null); setFindInput('');
+    setMemberDetail(null); setMemberPlateOptions([]);
     setReferenceNumber(''); setPayMethod('cash');
   };
 
@@ -684,9 +767,42 @@ export default function NewOrderPage() {
                 {t('pos.new.fromQueue', 'From queue — enter name & phone to complete payment.')}
               </div>
             )}
+            {/* Multiple registered vehicles on this member — pick which one this
+                order is for; defaults to the first/primary plate (AIRIN-116). */}
+            {memberPlateOptions.length > 1 && (
+              <div className="rounded-lg bg-sky-50 border border-sky-200 p-2">
+                <label className="block text-[11px] font-medium text-sky-800 mb-1">
+                  {t('pos.new.multiplePlatesHint', 'This member has multiple vehicles — pick one:')}
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {memberPlateOptions.map((p) => {
+                    const norm = normalizePlate(p.plate).normalized;
+                    const active = selectedPlate === norm;
+                    return (
+                      <button
+                        key={p.plate}
+                        type="button"
+                        onClick={() => choosePlate(p)}
+                        className={`badge border ${active ? 'bg-primary-500 text-white border-primary-500' : 'bg-white text-text-secondary border-border hover:border-primary-300'}`}
+                      >
+                        {p.plate}{p.brand ? ` · ${p.brand}${p.model ? ` ${p.model}` : ''}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <input className="input-field" placeholder={t('pos.new.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
             <input className="input-field" placeholder={t('pos.new.phone', 'Phone (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
-            <input className="input-field" placeholder={t('pos.new.licensePlate', 'License plate (optional)')} value={plate} onChange={(e) => setPlate(e.target.value)} />
+            {/* Canonicalise as the cashier types: they see exactly what gets
+                stored and searched, so "B 8882 CST" can't quietly become a
+                second identity for the same car (AIRIN-117). */}
+            <input
+              className="input-field"
+              placeholder={t('pos.new.licensePlate', 'License plate (optional)')}
+              value={plate}
+              onChange={(e) => setPlate(normalizePlate(e.target.value).normalized)}
+            />
             <div className="grid grid-cols-2 gap-2">
               <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list="veh-brands" value={brand} onChange={(e) => setBrand(e.target.value)} />
               <datalist id="veh-brands">{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
@@ -727,24 +843,30 @@ export default function NewOrderPage() {
                     <button onClick={() => changeQty(l.serviceId, 1)} className="w-6 h-6 rounded bg-surface-sunken text-text-primary">+</button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 pl-0.5">
-                  <label htmlFor={`disc-${l.serviceId}`} className="text-[11px] text-text-muted">{t('pos.new.discount', 'Disc')}</label>
-                  <input
-                    id={`disc-${l.serviceId}`}
-                    type="number"
-                    min={0}
-                    className="input-field !py-1 !px-2 text-xs w-24"
-                    placeholder="Rp 0"
-                    value={l.manualDiscount || ''}
-                    onChange={(e) => changeDiscount(l.serviceId, e.target.value)}
-                    aria-label={`${t('pos.new.discount', 'Discount')} — ${l.name}`}
-                  />
-                  {(l.manualDiscount ?? 0) > lineDiscountCap(l) && (
-                    <span className="text-[11px] text-amber-600">
-                      {t('pos.new.discountCapHint', 'Server caps at')} {fmt(lineDiscountCap(l))}
+                {/* The discount field appears ONLY for items the dashboard has
+                    enabled for cashier discounts, capped by that item's own
+                    maximum. It used to show on every line under a single
+                    tenant-wide percentage (AIRIN-121). */}
+                {canDiscount(l) && (
+                  <div className="flex items-center gap-1.5 pl-0.5">
+                    <label htmlFor={`disc-${l.serviceId}`} className="text-[11px] text-text-muted">{t('pos.new.discount', 'Disc')}</label>
+                    <input
+                      id={`disc-${l.serviceId}`}
+                      type="number"
+                      min={0}
+                      max={lineDiscountCap(l)}
+                      className="input-field !py-1 !px-2 text-xs w-24"
+                      placeholder="Rp 0"
+                      value={l.manualDiscount || ''}
+                      onChange={(e) => changeDiscount(l.serviceId, e.target.value)}
+                      aria-label={`${t('pos.new.discount', 'Discount')} — ${l.name}`}
+                      data-testid={`line-discount-${l.serviceId}`}
+                    />
+                    <span className="text-[11px] text-text-muted">
+                      {t('pos.new.discountMaxHint', 'max')} {fmt(lineDiscountCap(l))}
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -763,7 +885,20 @@ export default function NewOrderPage() {
                 {checkingVoucher ? '…' : t('pos.new.apply', 'Apply')}
               </button>
             </div>
-            {voucherMsg && <p className="mt-1 text-xs text-text-secondary">{voucherMsg}</p>}
+            {voucherMsg && (
+              <p
+                role={voucherMsg.tone === 'error' ? 'alert' : 'status'}
+                data-testid="voucher-msg"
+                data-tone={voucherMsg.tone}
+                className={`mt-1 rounded-md px-2 py-1 text-xs font-medium ${
+                  voucherMsg.tone === 'ok' ? 'bg-green-50 text-green-700'
+                    : voucherMsg.tone === 'warn' ? 'bg-amber-50 text-amber-700'
+                      : 'bg-red-50 text-red-700'
+                }`}
+              >
+                {voucherMsg.tone === 'ok' ? '✓ ' : voucherMsg.tone === 'warn' ? '⚠ ' : '✕ '}{voucherMsg.text}
+              </p>
+            )}
             {voucherWarning && (
               <div className="mt-2 flex items-start gap-1.5 text-xs">
                 <span className="badge bg-orange-50 text-orange-700 border border-orange-200 shrink-0">{voucherWarning.code}</span>
@@ -829,6 +964,41 @@ export default function NewOrderPage() {
             )}
           </div>
 
+          {/* Member benefit / quota preview — surfaced BEFORE Place Order so the
+              cashier (and customer) know the outcome before an order even
+              exists, rather than discovering a withheld benefit only after
+              POST /orders already created it (AIRIN-126). */}
+          {membershipId && memberDetail && (
+            <div className="border-t border-border pt-3 mt-3">
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">{t('pos.new.memberBenefitTitle', 'Member Benefit')}</label>
+              {cart.length === 0 ? (
+                <p className="text-xs text-text-muted">{t('pos.new.memberBenefitAddItems', 'Add items to preview the member benefit.')}</p>
+              ) : memberBenefitBlocked ? (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800" data-testid="member-benefit-blocked">
+                  ⚠️ {memberQuotaExhausted
+                    ? t('pos.new.memberQuotaExhausted', 'Membership quota exhausted — this order will be charged full price.')
+                    : t('pos.new.memberDailyLimitReached', 'This membership already had a wash today — daily limit reached (applies to every car on this membership). Full price will be charged.')}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {cart.map((l) => {
+                    const badge = memberLineBenefit(l);
+                    if (!badge) return null;
+                    return (
+                      <div key={l.serviceId} className="flex items-center justify-between text-xs" data-testid={`member-benefit-${l.serviceId}`}>
+                        <span className="text-text-secondary truncate">{l.name}</span>
+                        <span className={`badge ${badge === 'GRATIS' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>{badge}</span>
+                      </div>
+                    );
+                  })}
+                  {cart.every((l) => !memberLineBenefit(l)) && (
+                    <p className="text-xs text-text-muted">{t('pos.new.memberBenefitNone', 'No member benefit applies to the items in this cart.')}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="border-t border-border pt-3 mt-3">
             <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium">{fmt(subtotal)}</span></div>
             {totalManualDiscount > 0 && (
@@ -846,150 +1016,34 @@ export default function NewOrderPage() {
         </div>
       </div>
 
-      {/* Payment modal */}
+      {/* Payment modal (AIRIN-125: shared with sell-pack) */}
       {order && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="card w-full max-w-md">
-            <h3 className="section-title">{t('pos.new.payment', 'Payment')} — {order.orderNumber}</h3>
-            <PaymentSandboxNote className="mt-3" />
-            {order.membershipQuotaWarning && (
-              <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
-                ⚠️ {order.membershipQuotaWarning}
-              </div>
-            )}
-            <div className="mt-4 space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span>{fmt(order.subtotal)}</span></div>
-              <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.serviceCharge', 'Service charge')}</span><span>{fmt(order.serviceCharge)}</span></div>
-              <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.tax', 'Tax')}</span><span>{fmt(order.tax)}</span></div>
-              {order.voucherDiscount > 0 && <div className="flex justify-between"><span className="text-text-secondary">{t('pos.new.voucher', 'Voucher')}</span><span className="text-green-600">−{fmt(order.voucherDiscount)}</span></div>}
-              <div className="flex justify-between text-base font-semibold border-t border-border pt-2 mt-2"><span>{t('pos.new.total', 'Total')}</span><span className="text-primary-600">{fmt(order.total)}</span></div>
-            </div>
-
-            <div className="mt-4">
-              <label className="block text-sm font-medium mb-1.5">{t('pos.new.paymentMethod', 'Payment Method')}</label>
-              {payMethods.length > 0 ? (
-                <div className="grid grid-cols-2 gap-2">
-                  {payMethods.map((pm) => {
-                    // A "qris" payment method covers both dynamic (gateway) and static
-                    // (printed/sticker) flows — default to dynamic; the toggle below lets
-                    // the cashier switch to static for this same method.
-                    const mapped = pm.kind === 'qris' ? 'qris_dynamic' : pm.kind;
-                    const active = selectedPmId === pm.id;
-                    return (
-                      <button
-                        key={pm.id}
-                        type="button"
-                        disabled={polling}
-                        onClick={() => { setSelectedPmId(pm.id); setPayMethod(mapped as typeof payMethod); }}
-                        className={`flex items-center gap-2 rounded-xl border p-2.5 text-left transition-all ${active ? 'border-primary-500 ring-2 ring-primary-100' : 'border-border hover:border-border-strong'}`}
-                      >
-                        <span className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-[10px] font-bold shrink-0" style={{ background: pm.color }}>
-                          {pm.logoUrl ? <img src={pm.logoUrl} alt="" className="w-6 h-6 object-contain" /> : pm.kind.toUpperCase().slice(0, 3)}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium text-text-primary truncate">{pm.name}</span>
-                          <span className="block text-[11px] text-text-muted">{pm.kind.toUpperCase()}{pm.businessUnit ? ` · ${pm.businessUnit}` : ''}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <select aria-label={t('pos.new.paymentMethod', 'Payment method')} className="input-field" value={payMethod} onChange={(e) => setPayMethod(e.target.value as typeof payMethod)} disabled={polling}>
-                  <option value="cash">{t('pos.new.cash', 'Cash')}</option>
-                  <option value="qris_dynamic">{t('pos.new.qrisScan', 'QRIS (scan to pay)')}</option>
-                  <option value="qris_static">{t('pos.new.qrisStatic', 'QRIS (static — sudah ditempel)')}</option>
-                  <option value="edc">{t('pos.new.edcDebit', 'EDC / Debit')}</option>
-                  <option value="cc">{t('pos.new.creditCard', 'Credit Card')}</option>
-                  <option value="transfer">{t('pos.new.bankTransfer', 'Bank Transfer')}</option>
-                </select>
-              )}
-              {(payMethod === 'qris_dynamic' || payMethod === 'qris_static') && payMethods.some((m) => m.id === selectedPmId && m.kind === 'qris') && (
-                <div className="mt-2 inline-flex rounded-md border border-border bg-surface-raised p-0.5" role="group" aria-label={t('pos.new.qrisMode', 'QRIS mode')}>
-                  <button
-                    type="button"
-                    disabled={polling}
-                    onClick={() => setPayMethod('qris_dynamic')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${payMethod === 'qris_dynamic' ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}
-                  >
-                    {t('pos.new.qrisDynamicShort', 'Dynamic (scan)')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={polling}
-                    onClick={() => setPayMethod('qris_static')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${payMethod === 'qris_static' ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}
-                  >
-                    {t('pos.new.qrisStaticShort', 'Static (sudah bayar)')}
-                  </button>
-                </div>
-              )}
-              {payMethod !== 'cash' && (
-                <p className="mt-1.5 text-xs text-text-muted">{t('pos.new.settlesTo', 'Settles to the')} <span className="font-medium text-text-primary">{payMethods.find((m) => m.id === selectedPmId)?.businessUnit ?? businessUnit}</span> {t('pos.new.account', 'account.')}</p>
-              )}
-            </div>
-
-            {payMethod === 'cash' && !qr && (
-              <div className="mt-3">
-                <label className="block text-sm font-medium mb-1.5">{t('pos.new.amountReceived', 'Amount Received')}</label>
-                <input aria-label={t('pos.new.amountReceived', 'Amount received')} type="number" className="input-field" value={amountReceived} onChange={(e) => setAmountReceived(e.target.value)} />
-                <p className="mt-1 text-sm text-text-secondary">{t('pos.new.change', 'Change:')} <span className="font-medium text-text-primary">{fmt(Math.max(0, Number(amountReceived || 0) - order.total))}</span></p>
-              </div>
-            )}
-
-            {(payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') && (
-              <div className="mt-3">
-                <label className="block text-sm font-medium mb-1.5">
-                  {payMethod === 'transfer' ? t('pos.new.transferReference', 'Transfer reference (last 4 digits)') : t('pos.new.edcReference', 'Reference / trace number')}
-                </label>
-                <input
-                  aria-label={t('pos.new.referenceNumber', 'Reference number')}
-                  className="input-field"
-                  placeholder={t('pos.new.referencePlaceholder', 'e.g. 123456')}
-                  value={referenceNumber}
-                  onChange={(e) => setReferenceNumber(e.target.value)}
-                />
-              </div>
-            )}
-
-            {payMethod === 'qris_static' && (
-              <div className="mt-4 text-center">
-                <p className="text-sm text-text-secondary mb-2">{t('pos.new.qrisStaticInstruction', 'Ask the customer to scan the outlet\'s printed QRIS sticker, then confirm below once they\'ve paid.')}</p>
-              </div>
-            )}
-
-            {qr && (
-              <div className="mt-4 text-center">
-                <p className="text-sm text-text-secondary mb-2">{t('pos.new.scanQris', 'Scan with any QRIS app to pay')}</p>
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qr)}`}
-                  alt={t('pos.new.qrisAlt', 'QRIS payment code')}
-                  className="mx-auto rounded-lg border border-border"
-                  width={220}
-                  height={220}
-                />
-                <p className="mt-3 text-sm text-text-secondary flex items-center justify-center gap-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                  {t('pos.new.waitingConfirmation', 'Waiting for payment confirmation…')}
-                </p>
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-end mt-5">
-              <button className="btn-secondary" onClick={() => { setOrder(null); setQr(null); setPolling(false); setReferenceNumber(''); }} disabled={paying && !qr}>
-                {qr ? t('pos.new.close', 'Close') : t('pos.new.cancel', 'Cancel')}
-              </button>
-              {!qr && (
-                <button className="btn-primary" onClick={confirmPayment} disabled={paying}>
-                  {paying ? t('pos.new.processing', 'Processing…')
-                    : payMethod === 'qris_dynamic' ? t('pos.new.generateQr', 'Generate QR')
-                      : payMethod === 'qris_static' ? t('pos.new.markPaid', 'Tandai Sudah Bayar')
-                        : t('pos.new.confirmPayment', 'Confirm Payment')}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <PaymentModal
+          orderLabel={`${t('pos.new.payment', 'Payment')} — ${order.orderNumber}`}
+          total={order.total}
+          summaryLines={[
+            { key: 'subtotal', label: t('pos.new.subtotal', 'Subtotal'), amount: order.subtotal },
+            { key: 'serviceCharge', label: t('pos.new.serviceCharge', 'Service charge'), amount: order.serviceCharge },
+            { key: 'tax', label: t('pos.new.tax', 'Tax'), amount: order.tax },
+            ...(order.voucherDiscount > 0 ? [{ key: 'voucher', label: t('pos.new.voucher', 'Voucher'), amount: order.voucherDiscount, discount: true }] : []),
+            { key: 'total', label: t('pos.new.total', 'Total'), amount: order.total, emphasis: true },
+          ] satisfies PaymentSummaryLine[]}
+          membershipQuotaWarning={order.membershipQuotaWarning}
+          payMethods={payMethods}
+          selectedPmId={selectedPmId}
+          payMethod={payMethod}
+          onSelectMethod={(pmId, method) => { setSelectedPmId(pmId); setPayMethod(method); }}
+          businessUnit={businessUnit}
+          amountReceived={amountReceived}
+          onAmountReceivedChange={setAmountReceived}
+          referenceNumber={referenceNumber}
+          onReferenceNumberChange={setReferenceNumber}
+          qr={qr}
+          polling={polling}
+          paying={paying}
+          onConfirm={confirmPayment}
+          onCancel={() => { setOrder(null); setQr(null); setPolling(false); setReferenceNumber(''); }}
+        />
       )}
 
       {showQueuePicker && openShift && (

@@ -127,6 +127,25 @@ describe('OrderListService', () => {
       expect(countCall[1]).toContain('%John%');
     });
 
+    it('finds an order by plate regardless of spacing', async () => {
+      // AIRIN-117: plates were stored as typed, so searching "B 8882 CST" missed
+      // an order stored as "B8882CST" and vice-versa. The search term is
+      // normalized and matched against plate_normalized.
+      mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 2) });
+
+      await service.listOrders({ tenantId: TENANT, search: 'b 8882 cst' });
+
+      const countCall = mockPool.query.mock.calls[0];
+      expect(countCall[0]).toContain('plate_normalized');
+      // Canonical pattern for plate matching…
+      expect(countCall[1]).toContain('%B8882CST%');
+      // …alongside the raw pattern, so pre-backfill rows stay findable via
+      // license_plate and name/phone/order-number search still works.
+      expect(countCall[1]).toContain('%b 8882 cst%');
+    });
+
     it('should filter by date range', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });

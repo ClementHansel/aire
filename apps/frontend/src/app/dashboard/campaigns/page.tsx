@@ -3,14 +3,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { toDateInput, fmtDateRange } from '@/lib/dates';
 import { Megaphone, Pencil, Ban, RotateCcw } from 'lucide-react';
 
 type CampaignStatus = 'active' | 'paused' | 'completed' | 'expired';
+type CampaignTriggerType = 'membership_plan' | 'voucher_pack';
 
 interface Campaign {
   id: string;
   name: string;
-  planId: string;
+  planId: string | null;
+  triggerType: CampaignTriggerType;
+  triggerTemplateId: string | null;
   bonusTemplateId: string;
   startDate: string;
   endDate: string;
@@ -25,7 +29,9 @@ interface TemplateLite { id: string; name: string }
 
 interface FormState {
   name: string;
+  triggerType: CampaignTriggerType;
   planId: string;
+  triggerTemplateId: string;
   bonusTemplateId: string;
   startDate: string;
   endDate: string;
@@ -36,7 +42,7 @@ interface FormState {
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY_FORM: FormState = {
-  name: '', planId: '', bonusTemplateId: '',
+  name: '', triggerType: 'membership_plan', planId: '', triggerTemplateId: '', bonusTemplateId: '',
   startDate: today(), endDate: today(),
   cap: '', perCustomerLimit: '1', status: 'active',
 };
@@ -62,10 +68,14 @@ function CampaignModal({
     initial
       ? {
           name: initial.name,
-          planId: initial.planId,
+          triggerType: initial.triggerType,
+          planId: initial.planId ?? '',
+          triggerTemplateId: initial.triggerTemplateId ?? '',
           bonusTemplateId: initial.bonusTemplateId,
-          startDate: initial.startDate,
-          endDate: initial.endDate,
+          // The API may return these as full ISO timestamps; <input type="date">
+          // renders blank for anything but YYYY-MM-DD.
+          startDate: toDateInput(initial.startDate),
+          endDate: toDateInput(initial.endDate),
           cap: initial.cap != null ? String(initial.cap) : '',
           perCustomerLimit: String(initial.perCustomerLimit),
           status: initial.status,
@@ -80,7 +90,12 @@ function CampaignModal({
     setSaving(true); setError('');
     const payload = {
       name: form.name.trim(),
-      planId: form.planId,
+      triggerType: form.triggerType,
+      // Only the field matching triggerType is sent — the other trigger's
+      // stale value (e.g. a leftover planId after switching to voucher_pack)
+      // must never be submitted, or the backend's exactly-one-trigger check rejects it.
+      planId: form.triggerType === 'membership_plan' ? form.planId : null,
+      triggerTemplateId: form.triggerType === 'voucher_pack' ? form.triggerTemplateId : null,
       bonusTemplateId: form.bonusTemplateId,
       startDate: form.startDate,
       endDate: form.endDate,
@@ -107,18 +122,41 @@ function CampaignModal({
             <input aria-label={t('dash.campaigns.name', 'Campaign name')} className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder={t('dash.campaigns.namePlaceholder', 'e.g. New Member Bonus — July')} />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.triggerPlan', 'Triggering membership plan')}</label>
-            <select aria-label={t('dash.campaigns.planId', 'Membership plan')} className="input-field" value={form.planId} onChange={(e) => setForm({ ...form, planId: e.target.value })} required>
-              <option value="">{t('dash.campaigns.selectPlan', '— select a plan —')}</option>
-              {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.triggerType', 'Triggering purchase')}</label>
+            <select
+              aria-label={t('dash.campaigns.triggerType', 'Triggering purchase')}
+              className="input-field"
+              value={form.triggerType}
+              onChange={(e) => setForm({ ...form, triggerType: e.target.value as CampaignTriggerType })}
+            >
+              <option value="membership_plan">{t('dash.campaigns.triggerTypeMembership', 'Buys a membership plan')}</option>
+              <option value="voucher_pack">{t('dash.campaigns.triggerTypeVoucherPack', 'Buys a voucher pack')}</option>
             </select>
-            <p className="text-xs text-text-muted mt-1">{t('dash.campaigns.triggerPlanHint', 'When a customer buys this plan, the campaign grants the bonus voucher below.')}</p>
           </div>
+          {form.triggerType === 'membership_plan' ? (
+            <div>
+              <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.triggerPlan', 'Triggering membership plan')}</label>
+              <select aria-label={t('dash.campaigns.planId', 'Membership plan')} className="input-field" value={form.planId} onChange={(e) => setForm({ ...form, planId: e.target.value })} required>
+                <option value="">{t('dash.campaigns.selectPlan', '— select a plan —')}</option>
+                {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <p className="text-xs text-text-muted mt-1">{t('dash.campaigns.triggerPlanHint', 'When a customer buys this plan, the campaign grants the bonus voucher below.')}</p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.triggerTemplate', 'Triggering voucher pack')}</label>
+              <select aria-label={t('dash.campaigns.triggerTemplateId', 'Triggering voucher pack')} className="input-field" value={form.triggerTemplateId} onChange={(e) => setForm({ ...form, triggerTemplateId: e.target.value })} required>
+                <option value="">{t('dash.campaigns.selectTemplate', '— select a voucher template —')}</option>
+                {templates.filter((tp) => tp.id !== form.bonusTemplateId).map((tp) => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
+              </select>
+              <p className="text-xs text-text-muted mt-1">{t('dash.campaigns.triggerTemplateHint', 'e.g. when a customer buys the "10x Wash" pack, the campaign grants the bonus voucher below (e.g. "3x Spray Wax").')}</p>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.bonusVoucher', 'Bonus voucher granted')}</label>
             <select aria-label={t('dash.campaigns.bonusTemplateId', 'Bonus voucher template')} className="input-field" value={form.bonusTemplateId} onChange={(e) => setForm({ ...form, bonusTemplateId: e.target.value })} required>
               <option value="">{t('dash.campaigns.selectTemplate', '— select a voucher template —')}</option>
-              {templates.map((tp) => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
+              {templates.filter((tp) => tp.id !== form.triggerTemplateId || form.triggerType !== 'voucher_pack').map((tp) => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -201,7 +239,7 @@ export default function CampaignsPage() {
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">{t('dash.campaigns.title', 'Campaigns')}</h1>
-          <p className="mt-1 text-sm text-text-secondary">{t('dash.campaigns.subtitle', 'Automatically grant a bonus voucher when a customer buys a membership plan, within a date window and cap.')}</p>
+          <p className="mt-1 text-sm text-text-secondary">{t('dash.campaigns.subtitle', 'Automatically grant a bonus voucher when a customer buys a membership plan or a voucher pack, within a date window and cap.')}</p>
         </div>
         <button className="btn-primary whitespace-nowrap" data-testid="add-campaign-btn" onClick={() => { setEditing(null); setModalOpen(true); }}>+ {t('dash.campaigns.addBtn', 'New Campaign')}</button>
       </div>
@@ -224,9 +262,9 @@ export default function CampaignsPage() {
           <table className="w-full">
             <thead><tr className="border-b border-border bg-surface-sunken/50">
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colCampaign', 'Campaign')}</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colTrigger', 'Trigger plan')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colTrigger', 'Trigger purchase')}</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colBonus', 'Bonus voucher')}</th>
-              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colWindow', 'Window')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colPeriod', 'Period')}</th>
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colGrants', 'Grants')}</th>
               <th className="text-center px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colStatus', 'Status')}</th>
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.campaigns.colActions', 'Actions')}</th>
@@ -235,9 +273,21 @@ export default function CampaignsPage() {
               {campaigns.map((c) => (
                 <tr key={c.id} data-testid={`campaign-row-${c.id}`}>
                   <td className="px-5 py-3.5 text-sm font-medium text-text-primary">{c.name}<div className="text-xs text-text-muted">{t('dash.campaigns.perCustomerLimit', 'Per-customer limit')}: {c.perCustomerLimit}</div></td>
-                  <td className="px-5 py-3.5 text-sm text-text-secondary">{planName(c.planId)}</td>
+                  <td className="px-5 py-3.5 text-sm text-text-secondary">
+                    {c.triggerType === 'voucher_pack' ? (
+                      <>
+                        <span className="badge bg-sky-50 text-sky-700 text-xs mr-1.5">{t('dash.campaigns.triggerBadgeVoucherPack', 'Voucher pack')}</span>
+                        {templateName(c.triggerTemplateId ?? '')}
+                      </>
+                    ) : (
+                      <>
+                        <span className="badge bg-amber-50 text-amber-700 text-xs mr-1.5">{t('dash.campaigns.triggerBadgeMembership', 'Membership')}</span>
+                        {planName(c.planId ?? '')}
+                      </>
+                    )}
+                  </td>
                   <td className="px-5 py-3.5 text-sm text-text-secondary">{templateName(c.bonusTemplateId)}</td>
-                  <td className="px-5 py-3.5 text-xs text-text-secondary whitespace-nowrap">{c.startDate} → {c.endDate}</td>
+                  <td className="px-5 py-3.5 text-xs text-text-secondary whitespace-nowrap">{fmtDateRange(c.startDate, c.endDate)}</td>
                   <td className="px-5 py-3.5 text-sm text-right">{c.grantsCount}{c.cap != null ? ` / ${c.cap}` : ''}</td>
                   <td className="px-5 py-3.5 text-center"><span className={`badge ${STATUS_BADGE[c.status]}`}>{statusLabel(c.status)}</span></td>
                   <td className="px-5 py-3.5 text-right whitespace-nowrap">
