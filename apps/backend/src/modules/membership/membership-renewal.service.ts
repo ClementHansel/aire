@@ -5,7 +5,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { Membership, MembershipRow } from './interfaces';
 import { MembershipPlanService } from './membership-plan.service';
 import { MembershipLifecycleService } from './membership-lifecycle.service';
-import { PosCheckoutService } from '../order/pos-checkout.service';
+import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 
@@ -58,12 +58,20 @@ export class MembershipRenewalService {
     let order: { id: string; orderNumber: string; total: number };
     try {
       await client.query('BEGIN');
+      // Same business-unit derivation as a first-time sale: a renewal of a LEAD
+      // plan is LEAD revenue. Leaving it to the column default put every renewal
+      // in the AIRE bucket and skewed the BU split.
+      const businessUnit = await resolveServiceBusinessUnit(client, [
+        ...(plan.freeServiceIds ?? []),
+        ...plan.discountedServices.map((d) => d.serviceId),
+      ]);
       order = await this.checkout.createPackOrder(client, user, {
         customerId,
         customerName: cust.rows[0]?.name ?? 'Member',
         customerPhone: cust.rows[0]?.phone ?? '',
         total: plan.price,
         note: `Renewal: ${plan.name}`,
+        businessUnit,
       });
       await client.query(
         `INSERT INTO membership_renewals (tenant_id, order_id, membership_id, plan_id)

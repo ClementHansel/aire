@@ -5,7 +5,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { MembershipRenewalService } from '../membership/membership-renewal.service';
 import { MembershipPlanService } from '../membership/membership-plan.service';
 import { MembershipSellService } from '../membership/membership-sell.service';
-import { PosCheckoutService } from '../order/pos-checkout.service';
+import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
 import { PaymentService } from '../payment/payment.service';
 
 /**
@@ -106,12 +106,19 @@ export class PortalRenewService {
     let order: { id: string; orderNumber: string; total: number };
     try {
       await client.query('BEGIN');
+      // Same business-unit derivation as the POS sale/renewal paths — a
+      // self-serve portal renewal of a LEAD plan is LEAD revenue, not AIRE.
+      const businessUnit = await resolveServiceBusinessUnit(client, [
+        ...(plan.freeServiceIds ?? []),
+        ...plan.discountedServices.map((d) => d.serviceId),
+      ]);
       order = await this.checkout.createPackOrder(client, user, {
         customerId,
         customerName: cust.rows[0].name,
         customerPhone: cust.rows[0].phone,
         total: plan.price,
         note: `Membership: ${plan.name}`,
+        businessUnit,
       });
       await client.query('COMMIT');
     } catch (err) {
