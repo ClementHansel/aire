@@ -410,4 +410,43 @@ describe('CustomerService', () => {
       expect(queryCall[1][1]).toBe(100); // pageSize capped at 100
     });
   });
+
+  /**
+   * AIRIN-124 regression. The CRM list derives a 4-bucket member indicator in
+   * SQL. 'pending' (sold, not yet activated) originally had no branch, so it fell
+   * into the 'inactive' catch-all and rendered as "Past member" — telling staff
+   * the sale was finished while the payment was still collectable.
+   *
+   * Reproduced live on production before the fix: a customer with a pending
+   * membership came back from /customers/list as membershipStatus 'inactive'.
+   *
+   * NOTE this is listCustomers(), which is what GET /api/customers/list uses —
+   * NOT the separate ranked subquery in searchCustomers. Both must handle
+   * pending; asserting on the SQL keeps them from drifting apart again.
+   */
+  describe('listCustomers — membership status derivation (AIRIN-124)', () => {
+    async function sqlFor() {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      await service.listCustomers(TENANT, 1, 10);
+      return mockPool.query.mock.calls[1][0] as string;
+    }
+
+    it('emits a distinct pending bucket', async () => {
+      expect(await sqlFor()).toContain("THEN 'pending'");
+    });
+
+    it('checks pending BEFORE the inactive catch-all', async () => {
+      const sql = await sqlFor();
+      expect(sql.indexOf("THEN 'pending'")).toBeGreaterThan(-1);
+      expect(sql.indexOf("THEN 'pending'")).toBeLessThan(sql.indexOf("THEN 'inactive'"));
+    });
+
+    it('still derives the other buckets', async () => {
+      const sql = await sqlFor();
+      for (const bucket of ["'active'", "'suspended'", "'grace'", "'inactive'"]) {
+        expect(sql, `missing bucket ${bucket}`).toContain(`THEN ${bucket}`);
+      }
+    });
+  });
 });

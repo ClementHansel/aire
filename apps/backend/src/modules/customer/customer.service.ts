@@ -635,8 +635,17 @@ export class CustomerService {
               (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits,
               -- Derived member indicator: a date-expired-but-still-'active' row does NOT count as active
               -- (mirrors the benefit-read lifecycle rule). NULL = never a member.
+              --
+              -- 'pending' MUST be checked before the catch-all: a membership that
+              -- has been sold but not yet activated is still collectable, and
+              -- lumping it into 'inactive' rendered it as "Past member" — telling
+              -- staff the sale was over while payment was still outstanding
+              -- (AIRIN-124). Ranked most-actionable-first, matching
+              -- MemberLookupService. Anything genuinely finished (expired /
+              -- revoked / cancelled) still falls through to 'inactive'.
               (CASE
                  WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'active' AND m.end_date >= CURRENT_DATE) THEN 'active'
+                 WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'pending') THEN 'pending'
                  WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'suspended') THEN 'suspended'
                  WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id AND m.status = 'grace') THEN 'grace'
                  WHEN EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = c.id) THEN 'inactive'
