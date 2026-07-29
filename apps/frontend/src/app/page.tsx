@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Eye, EyeOff, Sun, Moon } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { setSession, type AuthSession } from '@/lib/auth';
+import { friendlyAuthError } from '@/lib/authErrors';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
@@ -96,11 +97,14 @@ function LoginScreen() {
       if (err instanceof ApiError && err.status === 429) {
         const retry = Number((err.details as { retryAfterSeconds?: number } | undefined)?.retryAfterSeconds) || 60;
         setCooldown(retry);
-        setError(err.message || t('auth.login.tooManyAttempts', 'Terlalu banyak percobaan gagal. Silakan coba lagi nanti.'));
+        setError(friendlyAuthError(err.message, t) || t('auth.login.tooManyAttempts', 'Terlalu banyak percobaan gagal. Silakan coba lagi nanti.'));
         return;
       }
-      const message = err instanceof Error ? err.message : t('auth.login.failed', 'Login failed');
-      setError(message.includes('credentials') || message.includes('401') ? t('auth.login.invalidCreds', 'Invalid email or password') : message);
+      const message = err instanceof Error ? err.message : '';
+      // friendlyAuthError, not an inline includes(): the API returns uppercase
+      // codes like AUTH_INVALID_CREDENTIALS, which a case-sensitive check missed
+      // — users were shown the raw code (found live while verifying AIRIN-93).
+      setError(friendlyAuthError(message, t));
       // Brief cooldown so a failed attempt can't be re-submitted instantly.
       setCooldown(3);
     } finally {
