@@ -1,0 +1,974 @@
+diff --git a/database/seed.ts b/database/seed.ts
+index 7ca28e0..f325ff5 100644
+--- a/database/seed.ts
++++ b/database/seed.ts
+@@ -184,7 +184,7 @@ async function seed(): Promise<void> {
+           3,
+           500000,
+           ARRAY['44444444-4444-4444-4444-444444444401'::uuid, '44444444-4444-4444-4444-444444444402'::uuid],
+-          false
++          true
+         ),
+         (
+           '66666666-6666-6666-6666-666666666602',
+@@ -196,14 +196,11 @@ async function seed(): Promise<void> {
+           2,
+           275000,
+           ARRAY['44444444-4444-4444-4444-444444444401'::uuid],
+-          false
++          true
+         )
+       ON CONFLICT DO NOTHING;
+     `, [tenantId]);
+-    // Seeded inactive: the real AIRE catalog is "Unlimited Wash" (migration 018) +
+-    // the 10x voucher pack. "Silver/Gold" were placeholder demo tiers that don't
+-    // exist for AIRE (client feedback 2026-07-22) — kept for schema demo but hidden.
+-    console.log('  ✓ Membership plans seeded (Silver/Gold inactive; Unlimited via migration 018)');
++    console.log('  ✓ Membership plans created (2)');
+ 
+     // Voucher Templates (sellable packs)
+     await client.query(`
+diff --git a/docker-compose.bridge.yml b/docker-compose.bridge.yml
+deleted file mode 100644
+index 629b0b9..0000000
+--- a/docker-compose.bridge.yml
++++ /dev/null
+@@ -1,41 +0,0 @@
+-# Branch Bridge Agent — LOCAL DEV / SIMULATE ONLY.
+-#
+-# The branch-bridge agent is normally installed at a tenant's PHYSICAL BRANCH
+-# (on the POS PC / a Raspberry Pi / a mini-PC), NOT on the cloud VPS — it is the
+-# component that scans the branch LAN and relays camera video. This compose file
+-# exists only to run the agent locally in SIMULATE mode (ffmpeg test source, fake
+-# devices) so the full pipeline can be exercised without hardware.
+-#
+-# Usage (local):
+-#   1) Provision a bridge in the UI (Settings -> Branch Bridges) or via
+-#      POST /api/bridges to get a pairing token.
+-#   2) AIRE_BRIDGE_TOKEN=<token> docker compose -f docker-compose.yml -f docker-compose.bridge.yml up -d branch-bridge
+-#
+-# PRODUCTION install at a branch (per tenant) is a single `docker run` — see the
+-# install command shown on bridge creation, or apps/branch-bridge/README.md.
+-
+-services:
+-  branch-bridge:
+-    build:
+-      # The agent is a standalone app with its own lockfile; its Dockerfile is
+-      # context-local, so the build context is the app dir (not the repo root).
+-      context: ./apps/branch-bridge
+-    container_name: aire-branch-bridge
+-    restart: unless-stopped
+-    environment:
+-      AIRE_CLOUD_URL: http://backend:4000
+-      AIRE_BRIDGE_TOKEN: ${AIRE_BRIDGE_TOKEN:-}
+-      AIRE_SIMULATE: ${AIRE_SIMULATE:-true}
+-      AIRE_MQTT_URL: mqtt://mosquitto:1883
+-      BRIDGE_HEALTH_PORT: 4010
+-    ports:
+-      - "127.0.0.1:4010:4010"
+-    depends_on:
+-      - backend
+-    networks:
+-      - aire-network
+-
+-networks:
+-  aire-network:
+-    external: true
+-    name: aire_aire-network
+diff --git a/docker-compose.dev.yml b/docker-compose.dev.yml
+deleted file mode 100644
+index 5def421..0000000
+--- a/docker-compose.dev.yml
++++ /dev/null
+@@ -1,58 +0,0 @@
+-# =============================================================================
+-# AIRE — DEVELOPMENT / LOCAL-TEST overlay
+-# =============================================================================
+-# Apply on top of the base for local work:
+-#
+-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+-#
+-# What it changes vs the production-safe base:
+-#   - App images build the `development` stage (hot-reload: `pnpm dev`).
+-#   - Host source is bind-mounted in so edits reload without a rebuild.
+-#   - NODE_ENV=development, WAHA_MOCK defaults ON (no real WhatsApp number needed).
+-#   - nginx is published on a local-only port (default 58090) — never 80/443.
+-#
+-# Host ports are read from .env (the local .env remaps everything into a +50000
+-# range so this stack coexists with anything already bound to the standard ports).
+-# =============================================================================
+-
+-services:
+-  backend:
+-    build:
+-      target: development
+-    environment:
+-      NODE_ENV: development
+-      WAHA_MOCK: ${WAHA_MOCK:-true}
+-    volumes:
+-      - ./apps/backend/src:/app/apps/backend/src
+-      - ./packages:/app/packages
+-
+-  frontend:
+-    build:
+-      target: development
+-    environment:
+-      NODE_ENV: development
+-    volumes:
+-      - ./apps/frontend/src:/app/apps/frontend/src
+-      - ./packages:/app/packages
+-
+-  iot-gateway:
+-    build:
+-      target: development
+-    environment:
+-      NODE_ENV: development
+-    volumes:
+-      - ./apps/iot-gateway/src:/app/apps/iot-gateway/src
+-      - ./packages:/app/packages
+-
+-  n8n:
+-    environment:
+-      # No TLS locally — talk to n8n directly on its host port.
+-      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+-      N8N_HOST: ${N8N_HOST:-localhost}
+-      WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://localhost:55678}/
+-      N8N_EDITOR_BASE_URL: ${N8N_PUBLIC_URL:-http://localhost:55678}/
+-
+-  nginx:
+-    ports:
+-      # Local-only. Reach the whole app at http://localhost:${HTTP_PORT}.
+-      - "127.0.0.1:${HTTP_PORT:-58090}:80"
+diff --git a/docker-compose.n8n.yml b/docker-compose.n8n.yml
+new file mode 100644
+index 0000000..83c4edc
+--- /dev/null
++++ b/docker-compose.n8n.yml
+@@ -0,0 +1,34 @@
++# n8n agent-builder served under app.useairin.id/flows (subpath — reuses the
++# existing TLS cert; no new DNS). Added as a compose OVERRIDE so the hardened
++# base/prod compose files are never edited. Bring up with:
++#   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.n8n.yml up -d n8n frontend
++services:
++  n8n:
++    image: docker.n8n.io/n8nio/n8n:latest
++    container_name: aire-n8n
++    restart: unless-stopped
++    environment:
++      N8N_HOST: app.useairin.id
++      N8N_PORT: 5678
++      N8N_PROTOCOL: https
++      N8N_PATH: /flows/
++      N8N_EDITOR_BASE_URL: https://app.useairin.id/flows/
++      WEBHOOK_URL: https://app.useairin.id/flows/
++      N8N_PROXY_HOPS: 1
++      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change_me_n8n_encryption_key}
++      GENERIC_TIMEZONE: ${TZ:-Asia/Jakarta}
++      NODE_ENV: production
++    ports:
++      - "127.0.0.1:5678:5678"
++    volumes:
++      - n8n_data:/home/node/.n8n
++    networks:
++      - aire-network
++  # Point the dashboard link at the subpath (dev server reads NEXT_PUBLIC_* at runtime).
++  frontend:
++    environment:
++      NEXT_PUBLIC_N8N_URL: https://app.useairin.id/flows
++
++volumes:
++  n8n_data:
++    driver: local
+diff --git a/docker-compose.prod.yml b/docker-compose.prod.yml
+index 96c9536..4907c64 100644
+--- a/docker-compose.prod.yml
++++ b/docker-compose.prod.yml
+@@ -1,52 +1,22 @@
+-# =============================================================================
+-# AIRE — PRODUCTION (VPS) overlay
+-# =============================================================================
+-# Apply on top of the base on the VPS:
+-#
+-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+-#
+-# Use scripts/deploy-vps.sh instead of a bare `up` — it builds and starts one
+-# service at a time so a 2-vCPU / ~7.4 GB box never OOMs on a parallel build.
+-#
+-# What it changes vs the base:
+-#   - nginx is the ONLY public listener: 80 (→ redirect) + 443 (TLS).
+-#   - Let's Encrypt live certs are mounted read-only into nginx.
+-#   - n8n serves on the /flows/ subpath of the main domain (no extra DNS/cert).
+-#   - Everything else stays bound to 127.0.0.1 (inherited from the base).
+-#
+-# Requires a production .env (copy .env.prod.example → .env and fill it in),
+-# and certs at /etc/letsencrypt/live/${DOMAIN}/. See docs/DEPLOYMENT.md.
+-# =============================================================================
+-
+ services:
+   backend:
++    build:
++      target: production
+     environment:
+       NODE_ENV: production
++    volumes: []
+ 
+   frontend:
++    build:
++      target: production
+     environment:
+       NODE_ENV: production
++      HOSTNAME: "0.0.0.0"
++      PORT: "3000"
++    volumes: []
+ 
+   iot-gateway:
++    build:
++      target: production
+     environment:
+       NODE_ENV: production
+-
+-  n8n:
+-    environment:
+-      # Subpath hosting behind nginx at https://${DOMAIN}/flows/ — chosen over a
+-      # flows.<domain> subdomain to avoid provisioning new DNS + a second cert.
+-      N8N_HOST: ${N8N_HOST:-app.useairin.id}
+-      N8N_PROTOCOL: https
+-      N8N_PATH: ${N8N_PATH:-/flows/}
+-      WEBHOOK_URL: ${N8N_PUBLIC_URL:-https://app.useairin.id/flows/}
+-      N8N_EDITOR_BASE_URL: ${N8N_PUBLIC_URL:-https://app.useairin.id/flows/}
+-      N8N_PROXY_HOPS: 1
+-
+-  nginx:
+-    ports:
+-      - "80:80"
+-      - "443:443"
+-    volumes:
+-      # Live Let's Encrypt certs. The ssl.conf server block references
+-      # /etc/letsencrypt/live/${DOMAIN}/{fullchain,privkey}.pem.
+-      - /etc/letsencrypt:/etc/letsencrypt:ro
+diff --git a/docker-compose.yml b/docker-compose.yml
+index ae0aaee..84918dd 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,20 +1,5 @@
+ # =============================================================================
+-# AIRE Operations Platform - Docker Compose (PRODUCTION-SAFE BASE)
+-# =============================================================================
+-# This base file is production-safe on its own:
+-#   - App images build the final `production` stage (no `target:` override).
+-#   - No host source bind-mounts (code is baked into the image).
+-#   - Every internal service is bound to 127.0.0.1 only (never 0.0.0.0).
+-#   - nginx has NO host port here — the overlay decides how it is exposed.
+-#
+-# Compose merges `-f` files by CONCATENATING ports/volumes (an override can add
+-# but never remove base entries), so the dev-only source mounts and host ports
+-# live in the overlays, not here.
+-#
+-#   Local dev/test : docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+-#   Production VPS : docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+-#
+-# See docs/DEPLOYMENT.md and scripts/deploy-vps.sh (OOM-safe, one service at a time).
++# AIRE Operations Platform - Docker Compose Configuration
+ # =============================================================================
+ 
+ services:
+@@ -105,19 +90,17 @@ services:
+ 
+   # =============================================================================
+   # Application Layer
+-  #
+-  # No `target:` → Docker builds the final `production` stage of each Dockerfile.
+-  # The dev overlay flips this to `target: development` + adds source mounts.
+   # =============================================================================
+ 
+   backend:
+     build:
+       context: .
+       dockerfile: ./apps/backend/Dockerfile
++      target: development
+     container_name: aire-backend
+     restart: unless-stopped
+     environment:
+-      NODE_ENV: ${NODE_ENV:-production}
++      NODE_ENV: ${NODE_ENV:-development}
+       PORT: 4000
+       DATABASE_URL: postgres://${POSTGRES_USER:-aire}:${POSTGRES_PASSWORD:-aire_secret}@postgres:5432/${POSTGRES_DB:-aire}
+       REDIS_URL: redis://:${REDIS_PASSWORD:-aire_redis_secret}@redis:6379
+@@ -143,27 +126,17 @@ services:
+       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+       # WhatsApp (WAHA self-host). Provider/number/session are set per-tenant in the UI.
+       WAHA_URL: ${WAHA_URL:-http://waha:3000}
+-      # Must match WHATSAPP_API_KEY on the waha service below; WAHA rejects /api calls without it.
+-      WAHA_API_KEY: ${WAHA_API_KEY:-aire_waha_local_key}
++      WAHA_API_KEY: ${WAHA_API_KEY:-}
+       KIRIM_URL: ${KIRIM_URL:-https://api.kirimdev.com/v1}
+       KIRIM_WEBHOOK_SECRET: ${KIRIM_WEBHOOK_SECRET:-}
+-      # Path (inside the container) to the branch-bridge installer zip served by
+-      # GET /api/bridges/:id/installer. Mount the built package here; unset/missing
+-      # → the endpoint returns 503 and the UI shows the copy-paste command instead.
++      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:-}
+       BRANCH_BRIDGE_PACKAGE: ${BRANCH_BRIDGE_PACKAGE:-/opt/branch-bridge-package.zip}
+-      # Simulation bypass. Default false → real WAHA connection (production).
+-      # Set WAHA_MOCK=true in .env (the dev overlay defaults it true) to capture
+-      # outbound in wa_mock_outbox and test the whole pipeline without a live number.
+-      WAHA_MOCK: ${WAHA_MOCK:-false}
+-      # Base URL the hosted n8n instance uses to call the bridge back (internal network).
+-      BRIDGE_CALLBACK_BASE: ${BRIDGE_CALLBACK_BASE:-http://backend:4000}
+     ports:
+       - "127.0.0.1:${BACKEND_PORT:-4000}:4000"
+     volumes:
+-      # Read-only Docker socket so the platform-admin System Health page can list
+-      # container status + tail logs. Safe to omit on hosts that forbid it — the
+-      # backend degrades gracefully (System Health hides the container panel).
+-      - /var/run/docker.sock:/var/run/docker.sock:ro
++      - ./apps/backend/src:/app/apps/backend/src
++      - ./packages:/app/packages
++      - ./packages-dist/aire-branch-bridge.zip:/opt/branch-bridge-package.zip:ro
+     depends_on:
+       postgres:
+         condition: service_healthy
+@@ -184,18 +157,19 @@ services:
+     build:
+       context: .
+       dockerfile: ./apps/frontend/Dockerfile
++      target: development
+     container_name: aire-frontend
+     restart: unless-stopped
+     environment:
+-      NODE_ENV: ${NODE_ENV:-production}
++      NODE_ENV: ${NODE_ENV:-development}
+       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
+       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+       BACKEND_ORIGIN: ${BACKEND_ORIGIN:-http://backend:4000}
+-      # Public URL of the hosted n8n agent builder (link-out from the dashboards).
+-      NEXT_PUBLIC_N8N_URL: ${N8N_PUBLIC_URL:-https://flows.useairin.id}
+     ports:
+-      # 127.0.0.1 only — nginx is the public entry point and proxies to this.
+       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
++    volumes:
++      - ./apps/frontend/src:/app/apps/frontend/src
++      - ./packages:/app/packages
+     depends_on:
+       backend:
+         condition: service_healthy
+@@ -212,10 +186,11 @@ services:
+     build:
+       context: .
+       dockerfile: ./apps/iot-gateway/Dockerfile
++      target: development
+     container_name: aire-iot-gateway
+     restart: unless-stopped
+     environment:
+-      NODE_ENV: ${NODE_ENV:-production}
++      NODE_ENV: ${NODE_ENV:-development}
+       PORT: 4002
+       DATABASE_URL: postgres://${POSTGRES_USER:-aire}:${POSTGRES_PASSWORD:-aire_secret}@postgres:5432/${POSTGRES_DB:-aire}
+       REDIS_URL: redis://:${REDIS_PASSWORD:-aire_redis_secret}@redis:6379
+@@ -240,9 +215,13 @@ services:
+     networks:
+       - aire-network
+ 
++  # =============================================================================
++  # Reverse Proxy
++  # =============================================================================
++
+   # =============================================================================
+   # WHATSAPP GATEWAY (WAHA — unofficial, QR-scan). Optional: only needed when a
+-  # tenant chooses the WAHA provider. kirimdev (cloud) needs no container.
++  # tenant chooses the WAHA provider. Kapso (cloud) needs no container.
+   # =============================================================================
+ 
+   waha:
+@@ -251,13 +230,11 @@ services:
+     restart: unless-stopped
+     environment:
+       WHATSAPP_HOOK_URL: http://backend:4000/api/whatsapp/webhook
++      WHATSAPP_DEFAULT_ENGINE: NOWEB
+       WHATSAPP_HOOK_EVENTS: message
+       WAHA_PRINT_QR: "false"
+-      # Auto-start every persisted session on boot so a linked number survives
+-      # container restarts/redeploys without a fresh QR scan (data is on waha-data).
+       WHATSAPP_RESTART_ALL_SESSIONS: "true"
+-      # API-key auth. Recent WAHA images require this; the backend sends it as X-Api-Key.
+-      WHATSAPP_API_KEY: ${WAHA_API_KEY:-aire_waha_local_key}
++      WHATSAPP_API_KEY: ${WAHA_API_KEY:-}
+     ports:
+       - "127.0.0.1:${WAHA_PORT:-3001}:3000"
+     volumes:
+@@ -265,54 +242,19 @@ services:
+     networks:
+       - aire-network
+ 
+-  # =============================================================================
+-  # AGENT BUILDER (n8n — hosted, admin-only). Drag-and-drop flows that call the
+-  # AIRE bridge API. Persists to a volume (SQLite) — no extra DB needed. Exposed
+-  # to the public only via nginx (see infrastructure/nginx + the prod overlay).
+-  # =============================================================================
+-
+-  n8n:
+-    image: docker.n8n.io/n8nio/n8n:latest
+-    container_name: aire-n8n
+-    restart: unless-stopped
+-    environment:
+-      N8N_HOST: ${N8N_HOST:-flows.useairin.id}
+-      N8N_PORT: 5678
+-      N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
+-      # N8N_PATH lets n8n live on a subpath (e.g. /flows/) behind nginx.
+-      N8N_PATH: ${N8N_PATH:-/}
+-      WEBHOOK_URL: ${N8N_PUBLIC_URL:-https://flows.useairin.id}/
+-      N8N_EDITOR_BASE_URL: ${N8N_PUBLIC_URL:-https://flows.useairin.id}/
+-      GENERIC_TIMEZONE: ${TZ:-Asia/Jakarta}
+-      # Persisted so credentials/workflows survive restarts. MUST be set in .env.
+-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change_me_n8n_encryption_key}
+-      # Behind nginx TLS termination.
+-      N8N_PROXY_HOPS: 1
+-      N8N_CUSTOM_EXTENSIONS: /home/node/.n8n/custom
+-      NODE_ENV: production
+-    ports:
+-      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+-    volumes:
+-      - n8n_data:/home/node/.n8n
+-      # Custom AIRE node package (build it first: cd integrations/n8n-nodes-aire && npm i && npm run build).
+-      - ./integrations/n8n-nodes-aire:/home/node/.n8n/custom/n8n-nodes-aire:ro
+-    networks:
+-      - aire-network
+-
+-  # =============================================================================
+-  # Reverse Proxy. NO host port here — the overlay exposes it:
+-  #   dev  → 127.0.0.1:${HTTP_PORT}:80
+-  #   prod → 80:80 + 443:443 (public) with letsencrypt certs mounted.
+-  # =============================================================================
+-
+   nginx:
+     image: nginx:alpine
+     container_name: aire-nginx
+     restart: unless-stopped
++    ports:
++      - "80:80"
++      - "443:443"
+     volumes:
+       - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+       - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
+       - ./infrastructure/nginx/ssl:/etc/nginx/ssl:ro
++      - /var/www/certbot:/var/www/certbot:ro
++      - /etc/letsencrypt:/etc/letsencrypt:ro
+     depends_on:
+       backend:
+         condition: service_healthy
+@@ -327,22 +269,6 @@ services:
+     networks:
+       - aire-network
+ 
+-  # =============================================================================
+-  # DEMO ONLY — MediaMTX RTSP server for the "laptop webcam as CCTV" demo.
+-  # Enabled with `--profile demo`. scripts/demo-cctv.sh publishes the host
+-  # webcam into it; the branch-bridge reads rtsp://aire-mediamtx:8554/cam.
+-  # Not started by a normal `docker compose up`.
+-  # =============================================================================
+-  mediamtx:
+-    image: bluenviron/mediamtx:latest
+-    container_name: aire-mediamtx
+-    restart: unless-stopped
+-    profiles: ["demo"]
+-    ports:
+-      - "127.0.0.1:${DEMO_RTSP_PORT:-8554}:8554"
+-    networks:
+-      - aire-network
+-
+ # =============================================================================
+ # Volumes
+ # =============================================================================
+@@ -360,8 +286,6 @@ volumes:
+     driver: local
+   waha-data:
+     driver: local
+-  n8n_data:
+-    driver: local
+ 
+ # =============================================================================
+ # Networks
+diff --git a/infrastructure/nginx/conf.d/default.conf b/infrastructure/nginx/conf.d/default.conf
+index f9e1221..d25e357 100644
+--- a/infrastructure/nginx/conf.d/default.conf
++++ b/infrastructure/nginx/conf.d/default.conf
+@@ -1,88 +1,32 @@
+-# HTTP server — redirects to HTTPS in production
+ server {
+     listen 80;
+-    server_name ${DOMAIN:-localhost};
++    server_name app.useairin.id;
++
++    location /.well-known/acme-challenge/ {
++        root /var/www/certbot;
++    }
+ 
+-    # Health check endpoint for Nginx itself
+     location /health {
+         access_log off;
+         return 200 'OK';
+         add_header Content-Type text/plain;
+     }
+ 
+-    # In development, serve traffic directly over HTTP
+-    # In production, uncomment the redirect below and use the HTTPS server block
+-    # return 301 https://$host$request_uri;
+-
+-    # Static assets: defer to Next's own Cache-Control instead of forcing immutable.
+-    # In production Next sets `public, max-age=31536000, immutable` on content-hashed
+-    # files (so they're still cached forever); in development it sets no-cache.
+-    # Forcing immutable here broke dev — turbopack reuses chunk filenames across
+-    # recompiles, so browsers pinned stale chunks forever and edits never appeared.
+-    location /_next/static/ {
+-        proxy_pass http://frontend;
+-        proxy_http_version 1.1;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-    }
+-
+-    # API routes
+-    location /api/ {
+-        limit_req zone=api burst=50 nodelay;
+-
+-        proxy_pass http://backend;
+-        proxy_http_version 1.1;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-
+-        # Timeouts
+-        proxy_connect_timeout 30s;
+-        proxy_send_timeout 60s;
+-        proxy_read_timeout 60s;
+-    }
+-
+-    # Auth routes — stricter rate limiting
+-    location /api/auth/ {
+-        limit_req zone=auth burst=10 nodelay;
+-
+-        proxy_pass http://backend;
+-        proxy_http_version 1.1;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
++    location / {
++        return 301 https://$host$request_uri;
+     }
++}
+ 
+-    # WebSocket (Socket.IO)
+-    location /socket.io/ {
+-        proxy_pass http://websocket;
+-        proxy_http_version 1.1;
+-        proxy_set_header Upgrade $http_upgrade;
+-        proxy_set_header Connection "upgrade";
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-
+-        # WebSocket timeouts
+-        proxy_connect_timeout 7d;
+-        proxy_send_timeout 7d;
+-        proxy_read_timeout 7d;
+-    }
++server {
++    listen 80 default_server;
++    server_name _;
+ 
+-    # IoT Gateway
+-    location /api/iot/ {
+-        proxy_pass http://iot_gateway/;
+-        proxy_http_version 1.1;
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
++    location /health {
++        access_log off;
++        return 200 'OK';
++        add_header Content-Type text/plain;
+     }
+ 
+-    # Frontend (default catch-all)
+     location / {
+         proxy_pass http://frontend;
+         proxy_http_version 1.1;
+@@ -90,37 +34,5 @@ server {
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Proto $scheme;
+-
+-        # Don't let browsers/proxies serve a stale HTML document after a deploy
+-        # (static chunks under /_next/static are content-hashed and cached above).
+-        proxy_hide_header Cache-Control;
+-        add_header Cache-Control "no-cache, must-revalidate" always;
+-
+-        # Support Next.js hot reload in development
+-        proxy_set_header Upgrade $http_upgrade;
+-        proxy_set_header Connection "upgrade";
+     }
+ }
+-
+-# HTTPS server — uncomment for production with TLS certificates
+-# server {
+-#     listen 443 ssl http2;
+-#     server_name ${DOMAIN:-localhost};
+-#
+-#     ssl_certificate /etc/nginx/ssl/fullchain.pem;
+-#     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+-#
+-#     # TLS configuration
+-#     ssl_protocols TLSv1.2 TLSv1.3;
+-#     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+-#     ssl_prefer_server_ciphers off;
+-#     ssl_session_cache shared:SSL:10m;
+-#     ssl_session_timeout 1d;
+-#     ssl_session_tickets off;
+-#
+-#     # HSTS
+-#     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+-#
+-#     # Same location blocks as HTTP above...
+-#     # (copy all location blocks from the HTTP server)
+-# }
+diff --git a/infrastructure/nginx/conf.d/n8n.conf.example b/infrastructure/nginx/conf.d/n8n.conf.example
+deleted file mode 100644
+index f3753a2..0000000
+--- a/infrastructure/nginx/conf.d/n8n.conf.example
++++ /dev/null
+@@ -1,51 +0,0 @@
+-# flows.useairin.id — reverse proxy for the hosted n8n agent builder.
+-#
+-# Copy to n8n.conf (drop the .example) on the VPS once a TLS cert exists for the
+-# subdomain, then reload nginx. n8n needs WebSocket upgrade for the editor + long
+-# read timeouts for workflow executions.
+-#
+-# Get a cert first, e.g.:
+-#   certbot certonly --webroot -w /var/www/certbot -d flows.useairin.id
+-
+-upstream n8n_upstream {
+-    server n8n:5678;
+-}
+-
+-server {
+-    listen 80;
+-    server_name flows.useairin.id;
+-
+-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+-    location / { return 301 https://$host$request_uri; }
+-}
+-
+-server {
+-    listen 443 ssl http2;
+-    server_name flows.useairin.id;
+-
+-    ssl_certificate     /etc/letsencrypt/live/flows.useairin.id/fullchain.pem;
+-    ssl_certificate_key /etc/letsencrypt/live/flows.useairin.id/privkey.pem;
+-    ssl_protocols TLSv1.2 TLSv1.3;
+-
+-    # Editor uploads / large workflow payloads.
+-    client_max_body_size 32m;
+-
+-    location / {
+-        proxy_pass http://n8n_upstream;
+-        proxy_http_version 1.1;
+-
+-        # WebSocket (push) support for the editor.
+-        proxy_set_header Upgrade $http_upgrade;
+-        proxy_set_header Connection "upgrade";
+-
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-
+-        # Workflow executions can run for a while.
+-        proxy_connect_timeout 60s;
+-        proxy_send_timeout 600s;
+-        proxy_read_timeout 600s;
+-    }
+-}
+diff --git a/infrastructure/nginx/conf.d/ssl.conf.example b/infrastructure/nginx/conf.d/ssl.conf
+similarity index 55%
+rename from infrastructure/nginx/conf.d/ssl.conf.example
+rename to infrastructure/nginx/conf.d/ssl.conf
+index e6590c3..6da2831 100644
+--- a/infrastructure/nginx/conf.d/ssl.conf.example
++++ b/infrastructure/nginx/conf.d/ssl.conf
+@@ -1,48 +1,10 @@
+-# =============================================================================
+-# AIRE — PRODUCTION nginx server block (TLS + /flows/ subpath for n8n)
+-# =============================================================================
+-# nginx (mounted straight into conf.d) does NOT expand ${VARS}, so the domain
+-# and cert paths are LITERAL below. Edit `app.useairin.id` to your domain.
+-#
+-# Enable on the VPS:
+-#   1) Get a cert:   certbot certonly --webroot -w /var/www/certbot -d app.useairin.id
+-#      (or however certs already land in /etc/letsencrypt/live/<domain>/)
+-#   2) In this repo's checkout on the VPS:
+-#        mv infrastructure/nginx/conf.d/default.conf infrastructure/nginx/conf.d/default.conf.dev-off
+-#        cp infrastructure/nginx/conf.d/ssl.conf.example infrastructure/nginx/conf.d/ssl.conf
+-#      (nginx only loads *.conf, so the renamed dev file is ignored, and only ONE
+-#       server owns :80 — no "conflicting server name" warning.)
+-#   3) Ensure the prod overlay mounts certs + opens 80/443 (it does), then:
+-#        docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d nginx
+-#        docker compose ... exec nginx nginx -t && docker compose ... exec nginx nginx -s reload
+-# =============================================================================
+-
+-# --- HTTP :80 — ACME challenge + redirect everything else to HTTPS ----------
+ server {
+-    listen 80;
++    listen 443 ssl http2;
+     server_name app.useairin.id;
+ 
+-    # nginx's own healthcheck (docker healthcheck hits http://127.0.0.1/health).
+-    location /health {
+-        access_log off;
+-        return 200 'OK';
+-        add_header Content-Type text/plain;
+-    }
+-
+-    # Let's Encrypt renewals (webroot).
+-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+-
+-    location / { return 301 https://$host$request_uri; }
+-}
+-
+-# --- HTTPS :443 — the real app ----------------------------------------------
+-server {
+-    listen 443 ssl;
+-    http2 on;
+-    server_name app.useairin.id;
+-
+-    ssl_certificate     /etc/letsencrypt/live/app.useairin.id/fullchain.pem;
++    ssl_certificate /etc/letsencrypt/live/app.useairin.id/fullchain.pem;
+     ssl_certificate_key /etc/letsencrypt/live/app.useairin.id/privkey.pem;
++
+     ssl_protocols TLSv1.2 TLSv1.3;
+     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+     ssl_prefer_server_ciphers off;
+@@ -50,32 +12,14 @@ server {
+     ssl_session_timeout 1d;
+     ssl_session_tickets off;
+ 
+-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+-
+     location /health {
+         access_log off;
+         return 200 'OK';
+         add_header Content-Type text/plain;
+     }
+ 
+-    # --- n8n agent builder on a subpath (WebSocket editor + long executions) --
+-    # MUST come before `location /` so it wins. n8n runs with N8N_PATH=/flows/.
+-    location /flows/ {
+-        proxy_pass http://n8n:5678;
+-        proxy_http_version 1.1;
+-        proxy_set_header Upgrade $http_upgrade;
+-        proxy_set_header Connection "upgrade";
+-        proxy_set_header Host $host;
+-        proxy_set_header X-Real-IP $remote_addr;
+-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $scheme;
+-        proxy_connect_timeout 60s;
+-        proxy_send_timeout 7d;
+-        proxy_read_timeout 7d;
+-        client_max_body_size 32m;
+-    }
++    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+ 
+-    # Content-hashed static assets — safe to cache forever (immutable).
+     location /_next/static/ {
+         proxy_pass http://frontend;
+         proxy_http_version 1.1;
+@@ -85,7 +29,6 @@ server {
+         add_header Cache-Control "public, max-age=31536000, immutable" always;
+     }
+ 
+-    # API routes
+     location /api/ {
+         limit_req zone=api burst=50 nodelay;
+         proxy_pass http://backend;
+@@ -99,7 +42,6 @@ server {
+         proxy_read_timeout 60s;
+     }
+ 
+-    # Auth routes — stricter rate limiting
+     location /api/auth/ {
+         limit_req zone=auth burst=10 nodelay;
+         proxy_pass http://backend;
+@@ -110,7 +52,6 @@ server {
+         proxy_set_header X-Forwarded-Proto $scheme;
+     }
+ 
+-    # WebSocket (Socket.IO) — live queue, monitoring, branch-bridge CCTV.
+     location /socket.io/ {
+         proxy_pass http://websocket;
+         proxy_http_version 1.1;
+@@ -125,7 +66,6 @@ server {
+         proxy_read_timeout 7d;
+     }
+ 
+-    # IoT Gateway
+     location /api/iot/ {
+         proxy_pass http://iot_gateway/;
+         proxy_http_version 1.1;
+@@ -135,7 +75,22 @@ server {
+         proxy_set_header X-Forwarded-Proto $scheme;
+     }
+ 
+-    # Frontend catch-all (dashboards, kiosk, menu, /portal/*, /confirm-booking/*).
++    # n8n agent builder (admin-only), served under /flows. WebSocket-heavy editor,
++    # so long timeouts + upgrade headers. n8n runs with N8N_PATH=/flows/.
++    location /flows/ {
++        proxy_pass http://n8n:5678;
++        proxy_http_version 1.1;
++        proxy_set_header Upgrade $http_upgrade;
++        proxy_set_header Connection "upgrade";
++        proxy_set_header Host $host;
++        proxy_set_header X-Real-IP $remote_addr;
++        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++        proxy_set_header X-Forwarded-Proto $scheme;
++        proxy_connect_timeout 7d;
++        proxy_send_timeout 7d;
++        proxy_read_timeout 7d;
++    }
++
+     location / {
+         proxy_pass http://frontend;
+         proxy_http_version 1.1;
+@@ -143,10 +98,9 @@ server {
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Proto $scheme;
+-
+-        # Don't let browsers/proxies serve a stale HTML document after a deploy
+-        # (static chunks under /_next/static are content-hashed and cached above).
+         proxy_hide_header Cache-Control;
+         add_header Cache-Control "no-cache, must-revalidate" always;
++        proxy_set_header Upgrade $http_upgrade;
++        proxy_set_header Connection "upgrade";
+     }
+ }
+diff --git a/scripts/add-dev-ssh-key.sh b/scripts/add-dev-ssh-key.sh
+new file mode 100755
+index 0000000..48b8269
+--- /dev/null
++++ b/scripts/add-dev-ssh-key.sh
+@@ -0,0 +1,31 @@
++#!/usr/bin/env bash
++# Usage: ./scripts/add-dev-ssh-key.sh "ssh-ed25519 AAAA... comment" [airedev|ubuntu]
++set -euo pipefail
++KEY="${1:-}"
++TARGET_USER="${2:-airedev}"
++
++if [ -z "$KEY" ]; then
++  echo "Usage: $0 \"<public-key-line>\" [airedev|ubuntu]"
++  exit 1
++fi
++
++if [[ ! "$KEY" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2) ]]; then
++  echo "Error: invalid public key format"
++  exit 1
++fi
++
++if [ "$TARGET_USER" != "airedev" ] && [ "$TARGET_USER" != "ubuntu" ]; then
++  echo "Error: user must be airedev or ubuntu"
++  exit 1
++fi
++
++AUTH_FILE="/home/$TARGET_USER/.ssh/authorized_keys"
++sudo mkdir -p "/home/$TARGET_USER/.ssh"
++if sudo grep -qxF "$KEY" "$AUTH_FILE" 2>/dev/null; then
++  echo "Key already exists for $TARGET_USER"
++  exit 0
++fi
++echo "$KEY" | sudo tee -a "$AUTH_FILE" >/dev/null
++sudo chmod 600 "$AUTH_FILE"
++sudo chown -R "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/.ssh"
++echo "Added key for $TARGET_USER ($(echo "$KEY" | awk "{print \$NF}"))"
+diff --git a/scripts/enable-ssl.sh b/scripts/enable-ssl.sh
+new file mode 100755
+index 0000000..1d5e71c
+--- /dev/null
++++ b/scripts/enable-ssl.sh
+@@ -0,0 +1,77 @@
++#!/usr/bin/env bash
++set -euo pipefail
++APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
++DOMAIN=useairin.xyz
++VPS_IP=$(curl -s ifconfig.me)
++
++cd "$APP_DIR"
++
++echo "Checking DNS for $DOMAIN -> $VPS_IP"
++RESOLVED=$(dig +short "$DOMAIN" A @8.8.8.8 | head -1)
++if [ "$RESOLVED" != "$VPS_IP" ]; then
++  echo "ERROR: $DOMAIN resolves to '${RESOLVED:-<none>}', expected $VPS_IP"
++  echo "Fix DNS at your registrar first:"
++  echo "  A   @    -> $VPS_IP"
++  echo "  A   www  -> $VPS_IP"
++  exit 1
++fi
++
++echo "Requesting Let's Encrypt certificate..."
++sudo certbot certonly --webroot \
++  -w /var/www/certbot \
++  -d "$DOMAIN" \
++  -d "www.$DOMAIN" \
++  --email "admin@$DOMAIN" \
++  --agree-tos \
++  --no-eff-email \
++  --non-interactive
++
++# Enable HTTPS nginx config
++if [ -f infrastructure/nginx/conf.d/ssl.conf.disabled ]; then
++  mv infrastructure/nginx/conf.d/ssl.conf.disabled infrastructure/nginx/conf.d/ssl.conf
++fi
++
++# HTTP: only ACME + redirect to HTTPS for domain
++cat > infrastructure/nginx/conf.d/default.conf <<'NGINX'
++server {
++    listen 80;
++    server_name useairin.xyz www.useairin.xyz;
++
++    location /.well-known/acme-challenge/ {
++        root /var/www/certbot;
++    }
++
++    location /health {
++        access_log off;
++        return 200 'OK';
++        add_header Content-Type text/plain;
++    }
++
++    location / {
++        return 301 https://$host$request_uri;
++    }
++}
++
++server {
++    listen 80 default_server;
++    server_name _;
++
++    location /health {
++        access_log off;
++        return 200 'OK';
++        add_header Content-Type text/plain;
++    }
++
++    location / {
++        proxy_pass http://frontend;
++        proxy_http_version 1.1;
++        proxy_set_header Host $host;
++        proxy_set_header X-Real-IP $remote_addr;
++        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++        proxy_set_header X-Forwarded-Proto $scheme;
++    }
++}
++NGINX
++
++sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d nginx
++echo "SSL enabled! Test: https://$DOMAIN/health"
