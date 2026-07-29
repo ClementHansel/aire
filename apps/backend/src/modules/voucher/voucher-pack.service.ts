@@ -2,7 +2,7 @@ import { Injectable, Inject, Optional, Logger, BadRequestException, NotFoundExce
 import { Pool } from 'pg';
 import { JWTPayload, generateVoucherPack } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { PosCheckoutService } from '../order/pos-checkout.service';
+import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
 import { NotificationService } from '../notification/notification.service';
 import { VoucherTemplateService } from './voucher-template.service';
 import { SellVoucherPackResult, IssueVoucherPackResult } from './voucher.interfaces';
@@ -45,6 +45,13 @@ export class VoucherPackService {
     const template = await this.templates.getTemplate(user.tenant_id, templateId);
     if (!template.is_active) throw new BadRequestException('Voucher template is not active');
 
+    // A voucher template carries no business_unit of its own — derive it from
+    // the service(s) it's scoped to (service_ids), so the sale's revenue lands
+    // in the right AIRE/LEAD bucket instead of defaulting to AIRE by accident.
+    // A fixed/percentage template with no service_ids falls back to AIRE (see
+    // resolveServiceBusinessUnit).
+    const businessUnit = await resolveServiceBusinessUnit(this.pool, template.service_ids ?? []);
+
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -60,6 +67,7 @@ export class VoucherPackService {
         customerPhone: customer.phone.trim(),
         total: parseFloat(template.sale_price),
         note: `Voucher Pack: ${template.name}`,
+        businessUnit,
       });
       await client.query('COMMIT');
       // Emitted at sell time (mirrors MembershipSold) so the AI feed / monitoring

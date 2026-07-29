@@ -32,6 +32,25 @@ export interface MembershipListRow {
   maxUses: number;
   suspendedReason: string | null;
   membershipNumber: string | null;
+  /**
+   * When this membership was actually bought — the linked fee order's
+   * created_at (AIRIN-133). Null only for the rare membership with no
+   * order_id (e.g. hand-seeded data); consumers that need a date to display
+   * should fall back to startDate in that case, but should NOT use it for
+   * date-range filtering (start_date is the membership period, not a
+   * purchase timestamp, and filtering by it would wrongly match/exclude).
+   */
+  purchaseDate: string | null;
+}
+
+/** Optional filters for MembershipAdminService.list — AIRIN-133. */
+export interface MembershipListFilters {
+  dateFrom?: string;
+  dateTo?: string;
+  /** Branch scope, per ScopeService's contract: null = unrestricted, [] =
+   *  nothing, [ids] = restrict. Applied against the linked fee order's
+   *  outlet (memberships carry no outlet of their own). */
+  outletIds?: string[] | null;
 }
 
 /**
@@ -55,11 +74,21 @@ export class MembershipAdminService {
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
-  async list(tenantId: string, statusFilter?: string): Promise<MembershipListRow[]> {
+  async list(tenantId: string, statusFilter?: string, filters?: MembershipListFilters): Promise<MembershipListRow[]> {
+    const { dateFrom, dateTo, outletIds } = filters ?? {};
+    // LEFT JOIN: memberships.order_id is nullable, so a membership with no
+    // linked fee order still appears in the unfiltered list (purchaseDate null)
+    // but is excluded by a date/branch filter, since neither is knowable for it.
+    const qp: unknown[] = [tenantId];
+    let filter = '';
+    if (outletIds != null) { filter += ` AND o.outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
+    if (dateFrom) { filter += ` AND o.created_at >= $${qp.length + 1}::timestamptz`; qp.push(dateFrom); }
+    if (dateTo) { filter += ` AND o.created_at < ($${qp.length + 1}::date + INTERVAL '1 day')`; qp.push(dateTo); }
+
     const res = await this.pool.query(
       `SELECT m.id, c.name AS customer_name, c.phone AS customer_phone, c.membership_number, mp.name AS plan_name,
               m.status, m.start_date::text AS start_date, m.end_date::text AS end_date,
-              m.uses_count, m.max_uses, m.suspended_reason,
+              m.uses_count, m.max_uses, m.suspended_reason, o.created_at AS purchase_date,
               CASE
                 WHEN m.status IN ('suspended','cancelled','pending') THEN m.status
                 WHEN m.end_date < CURRENT_DATE
@@ -70,9 +99,10 @@ export class MembershipAdminService {
        FROM memberships m
        JOIN customers c ON c.id = m.customer_id
        JOIN membership_plans mp ON mp.id = m.plan_id
-       WHERE m.tenant_id = $1
+       LEFT JOIN orders o ON o.id = m.order_id
+       WHERE m.tenant_id = $1 ${filter}
        ORDER BY m.created_at DESC LIMIT 500`,
-      [tenantId],
+      qp,
     );
     const rows = res.rows.map((r: any) => ({
       id: r.id,
@@ -87,6 +117,7 @@ export class MembershipAdminService {
       maxUses: r.max_uses,
       suspendedReason: r.suspended_reason,
       membershipNumber: r.membership_number ?? null,
+      purchaseDate: r.purchase_date ? new Date(r.purchase_date).toISOString() : null,
     }));
     return statusFilter && statusFilter !== 'all'
       ? rows.filter((r) => r.displayStatus === statusFilter)

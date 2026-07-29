@@ -13,6 +13,7 @@ import {
 } from '@/lib/membership-plates';
 import type { MemberLookupResponse } from '@aire/shared/interfaces/member';
 import { MembershipCard, buildCardHtml, computeCardCode, type CardTemplate } from './MembershipCard';
+import { PlateInput } from '@/components/shared/PlateInput';
 
 interface Membership {
   id: string; customerName: string; customerPhone: string; planName: string;
@@ -304,12 +305,12 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
               {plateRows.map((r, i) => (
                 <div key={i} className="flex gap-2 items-start">
                   <div className="flex-1 grid grid-cols-3 gap-2">
-                    <input
+                    <PlateInput
                       className={`input-field ${i === 0 && plateError ? 'border-red-400 focus:ring-red-300' : ''}`}
                       placeholder={t('dash.members.plateReq', 'Plate *')}
                       value={r.plate}
-                      onChange={(e) => updatePlateRow(i, 'plate', e.target.value)}
-                      data-testid={`member-edit-plate-input-${i}`}
+                      onChange={(v) => updatePlateRow(i, 'plate', v)}
+                      testId={`member-edit-plate-input-${i}`}
                     />
                     <input className="input-field" placeholder={t('dash.members.brand', 'Brand')} value={r.brand} onChange={(e) => updatePlateRow(i, 'brand', e.target.value)} />
                     <input className="input-field" placeholder={t('dash.members.model', 'Model')} value={r.model} onChange={(e) => updatePlateRow(i, 'model', e.target.value)} />

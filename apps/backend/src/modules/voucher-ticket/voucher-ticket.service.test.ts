@@ -115,6 +115,41 @@ describe('VoucherTicketService.sellBook', () => {
     await expect(service.sellBook(user, { outletId: 'outlet-1', quantity: 0 })).rejects.toThrow();
     expect(checkout.createPackOrder).not.toHaveBeenCalled();
   });
+
+  // AIRIN pack business_unit gap: a ticket book with a service-typed benefit
+  // should tag the fee order with THAT service's business_unit, not silently
+  // default to AIRE via the orders table's column default.
+  it('derives business_unit from the benefit service when benefitType is "service"', async () => {
+    client.query.mockImplementation((sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('FROM outlets')) return { rows: [{ code: 'BTR' }] };
+      if (sql.includes('voucher_counters')) return { rows: [{ last_number: 3 }] };
+      if (sql.includes('INSERT INTO voucher_books')) return { rows: [{ id: 'book-1' }] };
+      if (sql.includes('FROM services')) return { rows: [{ business_unit: 'LEAD', n: '1' }] };
+      return { rows: [] };
+    });
+
+    await service.sellBook(user, {
+      outletId: 'outlet-1', quantity: 1, unitPrice: 100,
+      benefitType: 'service', benefitServiceId: 'service-detailing-1',
+    });
+
+    const [, , params] = checkout.createPackOrder.mock.calls[0];
+    expect(params).toMatchObject({ businessUnit: 'LEAD' });
+    const serviceLookup = client.query.mock.calls.find((c: unknown[]) => String(c[0]).includes('FROM services'));
+    expect(serviceLookup?.[1]).toEqual([['service-detailing-1']]);
+  });
+
+  it('falls back to AIRE when the benefit is not service-typed (no service to derive from)', async () => {
+    await service.sellBook(user, {
+      outletId: 'outlet-1', quantity: 1, unitPrice: 100,
+      benefitType: 'fixed', benefitValue: 10000,
+    });
+
+    const [, , params] = checkout.createPackOrder.mock.calls[0];
+    expect(params).toMatchObject({ businessUnit: 'AIRE' });
+    expect(client.query.mock.calls.some((c: unknown[]) => String(c[0]).includes('FROM services'))).toBe(false);
+  });
 });
 
 /**
@@ -182,5 +217,56 @@ describe('VoucherTicketService.issueBonusBook', () => {
     await expect(
       service.issueBonusBook(client as any, 'tenant-1', { outletId: 'bad-outlet', quantity: 1, benefitType: 'fixed', benefitValue: 5000 }),
     ).rejects.toThrow();
+  });
+});
+
+/**
+ * listBooks — the dashboard's "Voucher-pack purchases" section (AIRIN-133).
+ * Optional dateFrom/dateTo/outletIds filter server-side now; omitted means
+ * the full tenant list (unchanged default for any existing caller).
+ */
+describe('VoucherTicketService.listBooks', () => {
+  let pool: { query: ReturnType<typeof vi.fn> };
+  let service: VoucherTicketService;
+
+  beforeEach(() => {
+    pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    service = new VoucherTicketService(pool as any, {} as any, undefined);
+  });
+
+  it('queries with no filter clauses and no extra params when no filters are given', async () => {
+    await service.listBooks('tenant-1');
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).not.toContain('b.outlet_id = ANY');
+    expect(sql).not.toContain('b.created_at >=');
+    expect(params).toEqual(['tenant-1']);
+  });
+
+  it('adds outlet_id/date filter clauses (and their params) only when provided', async () => {
+    await service.listBooks('tenant-1', { dateFrom: '2026-07-01', dateTo: '2026-07-31', outletIds: ['outlet-1', 'outlet-2'] });
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toContain('b.outlet_id = ANY($2::uuid[])');
+    expect(sql).toContain('b.created_at >= $3::timestamptz');
+    expect(sql).toContain("b.created_at < ($4::date + INTERVAL '1 day')");
+    expect(params).toEqual(['tenant-1', ['outlet-1', 'outlet-2'], '2026-07-01', '2026-07-31']);
+  });
+
+  it('exposes outletId (not just outletName) on each row', async () => {
+    pool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'book-1', buyer_name: 'Budi', buyer_phone: '0811', quantity: 5,
+        benefit_type: 'service', unit_price: '10000', outlet_id: 'outlet-1', outlet_name: 'Bintaro',
+        redeemed: 2, created_at: new Date('2026-07-15T00:00:00Z'),
+      }],
+    });
+    const rows = await service.listBooks('tenant-1');
+    expect(rows[0]).toMatchObject({ id: 'book-1', outletId: 'outlet-1', outletName: 'Bintaro' });
+  });
+
+  it('an empty outletIds array (ScopeService: no branches) still restricts, not unrestricts', async () => {
+    await service.listBooks('tenant-1', { outletIds: [] });
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toContain('b.outlet_id = ANY($2::uuid[])');
+    expect(params).toEqual(['tenant-1', []]);
   });
 });

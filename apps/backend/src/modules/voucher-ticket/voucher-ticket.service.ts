@@ -2,7 +2,7 @@ import { Injectable, Inject, Optional, BadRequestException, NotFoundException } 
 import { Pool, PoolClient } from 'pg';
 import { JWTPayload } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { PosCheckoutService } from '../order/pos-checkout.service';
+import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 
@@ -110,6 +110,15 @@ export class VoucherTicketService {
           dto.buyerPhone.trim(),
         );
       }
+      // A shareable ticket book carries no business_unit of its own — derive it
+      // from its single benefit service when the benefit is service-typed, so
+      // the sale's revenue lands in the right AIRE/LEAD bucket instead of
+      // defaulting to AIRE by accident. Fixed/percentage benefits (not tied to
+      // one service) fall back to AIRE (see resolveServiceBusinessUnit).
+      const businessUnit = await resolveServiceBusinessUnit(client, [
+        dto.benefitType === 'service' ? dto.benefitServiceId : null,
+      ]);
+
       const order = await this.checkout.createPackOrder(client, orderUser, {
         customerId,
         customerName: dto.buyerName?.trim() || 'Walk-in',
@@ -118,6 +127,7 @@ export class VoucherTicketService {
         note: `Voucher Book: ${qty} tickets`,
         paidNow: true,
         paymentMethod,
+        businessUnit,
       });
 
       const bookRes = await client.query<{ id: string }>(
@@ -289,22 +299,39 @@ export class VoucherTicketService {
     return ticket;
   }
 
-  async listBooks(tenantId: string): Promise<Record<string, unknown>[]> {
+  /**
+   * List voucher-ticket books (the dashboard's "Voucher-pack purchases"
+   * section, AIRIN-133). dateFrom/dateTo/outletIds are optional — filters
+   * on the book's own created_at/outlet_id (unlike memberships, a voucher
+   * book IS its own sale record, no join needed for either).
+   */
+  async listBooks(
+    tenantId: string,
+    filters?: { dateFrom?: string; dateTo?: string; outletIds?: string[] | null },
+  ): Promise<Record<string, unknown>[]> {
+    const { dateFrom, dateTo, outletIds } = filters ?? {};
+    const qp: unknown[] = [tenantId];
+    let filter = '';
+    if (outletIds != null) { filter += ` AND b.outlet_id = ANY($${qp.length + 1}::uuid[])`; qp.push(outletIds); }
+    if (dateFrom) { filter += ` AND b.created_at >= $${qp.length + 1}::timestamptz`; qp.push(dateFrom); }
+    if (dateTo) { filter += ` AND b.created_at < ($${qp.length + 1}::date + INTERVAL '1 day')`; qp.push(dateTo); }
+
     const res = await this.pool.query(
       `SELECT b.id, b.buyer_name, b.buyer_phone, b.quantity, b.benefit_type, b.unit_price, b.created_at,
-              o.name AS outlet_name,
+              b.outlet_id, o.name AS outlet_name,
               COUNT(t.id) FILTER (WHERE t.status = 'redeemed')::int AS redeemed
        FROM voucher_books b
        JOIN outlets o ON o.id = b.outlet_id
        LEFT JOIN voucher_tickets t ON t.book_id = b.id
-       WHERE b.tenant_id = $1
+       WHERE b.tenant_id = $1 ${filter}
        GROUP BY b.id, o.name
        ORDER BY b.created_at DESC LIMIT 200`,
-      [tenantId],
+      qp,
     );
     return res.rows.map((b) => ({
       id: b.id, buyerName: b.buyer_name, buyerPhone: b.buyer_phone, quantity: b.quantity,
-      benefitType: b.benefit_type, unitPrice: parseFloat(b.unit_price), outletName: b.outlet_name,
+      benefitType: b.benefit_type, unitPrice: parseFloat(b.unit_price),
+      outletId: b.outlet_id, outletName: b.outlet_name,
       redeemed: b.redeemed, createdAt: b.created_at,
     }));
   }

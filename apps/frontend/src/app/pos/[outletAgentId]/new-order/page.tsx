@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
 import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
+import { PlateInput } from '@/components/shared/PlateInput';
 import { useI18n } from '@/lib/i18n';
 import { normalizePlate, maxLineDiscount, type DynamicDiscountRule } from '@aire/shared';
 import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
@@ -794,14 +795,10 @@ export default function NewOrderPage() {
             )}
             <input className="input-field" placeholder={t('pos.new.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
             <input className="input-field" placeholder={t('pos.new.phone', 'Phone (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
-            {/* Canonicalise as the cashier types: they see exactly what gets
-                stored and searched, so "B 8882 CST" can't quietly become a
-                second identity for the same car (AIRIN-117). */}
-            <input
-              className="input-field"
+            <PlateInput
               placeholder={t('pos.new.licensePlate', 'License plate (optional)')}
               value={plate}
-              onChange={(e) => setPlate(normalizePlate(e.target.value).normalized)}
+              onChange={setPlate}
             />
             <div className="grid grid-cols-2 gap-2">
               <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list="veh-brands" value={brand} onChange={(e) => setBrand(e.target.value)} />

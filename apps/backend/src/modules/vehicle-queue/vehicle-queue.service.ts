@@ -1,5 +1,6 @@
 import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
+import { normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 
@@ -76,10 +77,15 @@ export class VehicleQueueService {
       [dto.outletId],
     );
     const position = posRes.rows[0]?.next ?? 1;
+    // Canonical plate on write. A car queued as "B 1234 ABC" used to be stored
+    // with its spaces, so the POS's member lookup — which normalises before
+    // matching — could not resolve the queued car to its membership, and the same
+    // vehicle appeared under two spellings across queue and orders (AIRIN-117).
+    const plate = dto.plate ? (normalizePlate(dto.plate).normalized || null) : null;
     const res = await this.pool.query(
       `INSERT INTO vehicle_queue (tenant_id, outlet_id, plate, brand, model, customer_name, customer_phone, business_unit, note, position)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [tenantId, dto.outletId, dto.plate ?? null, dto.brand ?? null, dto.model ?? null,
+      [tenantId, dto.outletId, plate, dto.brand ?? null, dto.model ?? null,
         dto.customerName ?? null, dto.customerPhone ?? null, dto.businessUnit ?? null, dto.note ?? null, position],
     );
     const entry = this.map(res.rows[0]);

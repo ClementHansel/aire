@@ -18,6 +18,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { PlateInput } from '@/components/shared/PlateInput';
 import {
   type PlateRow,
   emptyPlateRow,
@@ -132,12 +133,12 @@ export function MemberManagementPanel({ member, onChanged }: MemberManagementPan
                   {editRows.map((r, i) => (
                     <div key={i} className="flex gap-2 items-start">
                       <div className="flex-1 grid grid-cols-3 gap-2">
-                        <input
+                        <PlateInput
                           className={`input-field ${i === 0 && editError ? 'border-red-400 focus:ring-red-300' : ''}`}
                           placeholder={t('pos.sellpack.plateReq', 'Plate *')}
                           value={r.plate}
-                          onChange={(e) => updateRow(i, 'plate', e.target.value)}
-                          data-testid={`edit-plate-input-${i}`}
+                          onChange={(v) => updateRow(i, 'plate', v)}
+                          testId={`edit-plate-input-${i}`}
                         />
                         <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={r.brand} onChange={(e) => updateRow(i, 'brand', e.target.value)} />
                         <input className="input-field" placeholder={t('pos.sellpack.model', 'Model')} value={r.model} onChange={(e) => updateRow(i, 'model', e.target.value)} />

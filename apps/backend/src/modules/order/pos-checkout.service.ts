@@ -1,6 +1,6 @@
 import { Injectable, Inject, Optional } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
-import { JWTPayload, normalizePhone, normalizePlate } from '@aire/shared';
+import { JWTPayload, normalizePhone, normalizePlate, BusinessUnit } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
@@ -42,6 +42,41 @@ export async function upsertCustomerRow(
   );
   const row = res.rows[0]!;
   return { id: row.id, inserted: row.inserted, phoneNormalized };
+}
+
+/**
+ * Resolve which business unit a pack sale (membership plan / voucher
+ * template / voucher-ticket book) belongs to, from the service(s) it is
+ * actually linked to — a plan's free/discounted services, a voucher
+ * template's service_ids, or a shareable ticket's single benefit service.
+ *
+ * Looked up at sale time rather than stored on the plan/template itself:
+ * plans and templates are editable after creation (services can be added or
+ * swapped), so re-deriving from the *services actually granted* keeps
+ * revenue attribution honest even if a plan's linked services later change.
+ *
+ * Falls back to BusinessUnit.Aire — car wash, the tenant's original/primary
+ * unit — when nothing service-specific is linked (e.g. a flat cash voucher
+ * template with no service_ids, or a percentage-off ticket not tied to one
+ * service). This is an explicit, commented default, not the orders table's
+ * schema default (which is what silently mis-tagged every pack order as
+ * AIRE before this fix — see AIRIN pack-order business_unit gap).
+ */
+export async function resolveServiceBusinessUnit(
+  db: Pool | PoolClient,
+  serviceIds: (string | null | undefined)[],
+): Promise<BusinessUnit> {
+  const ids = [...new Set(serviceIds.filter((id): id is string => !!id))];
+  if (ids.length === 0) return BusinessUnit.Aire;
+  // Majority vote across the linked services in the rare case they straddle
+  // both units — deterministic enough for a reporting tag, and correct in
+  // the overwhelmingly common case of a single linked service.
+  const res = await db.query<{ business_unit: string }>(
+    `SELECT business_unit, COUNT(*) AS n FROM services WHERE id = ANY($1::uuid[])
+     GROUP BY business_unit ORDER BY n DESC LIMIT 1`,
+    [ids],
+  );
+  return (res.rows[0]?.business_unit as BusinessUnit | undefined) ?? BusinessUnit.Aire;
 }
 
 export interface PackOrderResult {
@@ -134,6 +169,11 @@ export class PosCheckoutService {
       licensePlate?: string;
       vehicleBrand?: string;
       vehicleModel?: string;
+      /** Which co-located business unit (AIRE/LEAD) this pack's revenue
+       *  belongs to — callers should derive this via resolveServiceBusinessUnit
+       *  from the thing being sold rather than leave it to the column default.
+       *  Falls back to BusinessUnit.Aire, explicitly, if omitted. */
+      businessUnit?: BusinessUnit;
     },
   ): Promise<Omit<PackOrderResult, 'customerId'>> {
     const orderNumber = await this.generateOrderNumber(client, user.outlet_id!);
@@ -141,6 +181,9 @@ export class PosCheckoutService {
     const status = paidNow ? 'paid' : 'ordered';
     const paymentMethod = paidNow ? (params.paymentMethod ?? 'cash') : null;
     const amountReceived = paidNow ? params.total : null;
+    // Explicit default (not the orders.business_unit column default) — see
+    // resolveServiceBusinessUnit's doc comment for why AIRE is the fallback.
+    const businessUnit = params.businessUnit ?? BusinessUnit.Aire;
     const licensePlate = params.licensePlate?.trim() || null;
     // Pack sales (membership / voucher packs) write plates too, so they need the
     // same canonical form as ordinary checkout — otherwise plate search finds a
@@ -156,9 +199,9 @@ export class PosCheckoutService {
       `INSERT INTO orders
         (tenant_id, outlet_id, operator_id, customer_id, order_number, status,
          customer_name, customer_phone, license_plate, plate_normalized, vehicle_brand, vehicle_model,
-         subtotal, total, note, payment_method, amount_received, paid_at)
+         subtotal, total, note, payment_method, amount_received, paid_at, business_unit)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15, $16,
-               CASE WHEN $17 THEN NOW() ELSE NULL END)
+               CASE WHEN $17 THEN NOW() ELSE NULL END, $18)
        RETURNING id, order_number, total, license_plate, vehicle_brand, vehicle_model`,
       [
         user.tenant_id,
@@ -178,6 +221,7 @@ export class PosCheckoutService {
         paymentMethod,
         amountReceived,
         paidNow,
+        businessUnit,
       ],
     );
     const order = res.rows[0]!;

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { randomBytes } from 'node:crypto';
+import { normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { WhatsappService } from '../whatsapp';
 
@@ -63,11 +64,15 @@ export class PortalBookingService {
     }
 
     const token = randomBytes(18).toString('hex');
+    // Canonical plate on write, matching the POS and membership paths — a booking
+    // made from the portal as "B 1234 ABC" must resolve to the same vehicle the
+    // cashier later looks up as "B1234ABC" (AIRIN-117).
+    const plate = dto.plate ? (normalizePlate(dto.plate).normalized || null) : null;
     const ins = await this.pool.query<{ id: string }>(
       `INSERT INTO bookings
         (tenant_id, outlet_id, customer_id, customer_name, customer_phone, license_plate, service_id, service_name, scheduled_at, notes, status, confirmation_token, source)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11,'portal') RETURNING id`,
-      [tenantId, dto.outletId, customerId, cust.rows[0]!.name, cust.rows[0]!.phone, dto.plate ?? null,
+      [tenantId, dto.outletId, customerId, cust.rows[0]!.name, cust.rows[0]!.phone, plate,
         dto.serviceId ?? null, serviceName, dto.scheduledAt, dto.notes ?? null, token],
     );
 
@@ -78,7 +83,8 @@ export class PortalBookingService {
       const link = `${APP_URL}/confirm-booking/${token}`;
       const msg = [
         `📅 *Booking baru* — ${outlet.rows[0]!.name}`,
-        `${cust.rows[0]!.name}${dto.plate ? ` · ${dto.plate}` : ''}`,
+        // Canonical plate, so the cashier sees the same spelling that was stored.
+        `${cust.rows[0]!.name}${plate ? ` · ${plate}` : ''}`,
         serviceName ? `Layanan: ${serviceName}` : null,
         `Waktu: ${when}`,
         ``,

@@ -9,6 +9,7 @@ import { portalApi, getPortalToken, setPortalToken, clearPortalToken, PortalAuth
 import { LEAN_MODE } from '@aire/shared';
 import { MembershipCard, type CardTemplate } from '@/components/dashboard/MembershipCard';
 import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
+import { PlateInput } from '@/components/shared/PlateInput';
 
 interface Plate { plate: string; brand?: string; model?: string }
 interface Membership {
@@ -480,7 +481,7 @@ function VehiclesView({ me, tenantId, onChanged }: { me: MemberResp; tenantId: s
       {hasMembership ? (
         <div className="card space-y-3">
           <p className="section-title">{t('portal.vehicles.add', 'Add a vehicle')}</p>
-          <input className="input-field" placeholder={t('portal.vehicles.plate', 'License plate')} value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} />
+          <PlateInput placeholder={t('portal.vehicles.plate', 'License plate')} value={form.plate} onChange={(v) => setForm({ ...form, plate: v })} />
           <div className="grid grid-cols-2 gap-3">
             <input className="input-field" placeholder={t('portal.vehicles.brand', 'Brand (optional)')} value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} />
             <input className="input-field" placeholder={t('portal.vehicles.model', 'Model (optional)')} value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
@@ -683,7 +684,7 @@ function BuyMembershipView({ tenantId, onDone }: { tenantId: string; onDone: () 
             <label className="block text-sm font-medium text-text-primary">{t('portal.buy.vehicles', 'Your vehicle(s)')}</label>
             {plates.map((pl, i) => (
               <div key={i} className="grid grid-cols-3 gap-2">
-                <input className="input-field" placeholder={t('portal.vehicles.plate', 'License plate')} value={pl.plate} onChange={(e) => setPlates(plates.map((x, j) => j === i ? { ...x, plate: e.target.value } : x))} />
+                <PlateInput placeholder={t('portal.vehicles.plate', 'License plate')} value={pl.plate} onChange={(v) => setPlates(plates.map((x, j) => j === i ? { ...x, plate: v } : x))} />
                 <input className="input-field" placeholder={t('portal.vehicles.brand', 'Brand')} value={pl.brand} onChange={(e) => setPlates(plates.map((x, j) => j === i ? { ...x, brand: e.target.value } : x))} />
                 <input className="input-field" placeholder={t('portal.vehicles.model', 'Model')} value={pl.model} onChange={(e) => setPlates(plates.map((x, j) => j === i ? { ...x, model: e.target.value } : x))} />
               </div>
@@ -794,7 +795,7 @@ function BookView({ tenantId }: { tenantId: string }) {
           <label className="block text-sm font-medium text-text-primary mb-1">{t('portal.book.when', 'Date & time')}</label>
           <input aria-label={t('portal.book.when', 'Date & time')} type="datetime-local" className="input-field" value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} />
         </div>
-        <input className="input-field" placeholder={t('portal.book.plate', 'License plate (optional)')} value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} />
+        <PlateInput placeholder={t('portal.book.plate', 'License plate (optional)')} value={form.plate} onChange={(v) => setForm({ ...form, plate: v })} />
         <button className="btn-primary w-full" onClick={submit} disabled={busy}>{busy ? t('portal.book.submitting', 'Submitting…') : t('portal.book.submit', 'Request booking')}</button>
         <p className="text-xs text-text-muted">{t('portal.book.note', 'The branch confirms your booking on WhatsApp before your car joins the queue.')}</p>
       </div>

@@ -8,6 +8,7 @@ import { MembershipCard, type CardTemplate } from '@/components/dashboard/Member
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
 import { LEAN_MODE } from '@aire/shared';
+import { PlateInput } from '@/components/shared/PlateInput';
 
 /**
  * Self-service kiosk ordering: identify (optional) → pick products → details →
@@ -423,7 +424,9 @@ export default function KioskOrderPage() {
             <div className="space-y-3">
               <input className="input-field" placeholder={`${t('kiosk.name', 'Name')} *`} value={name} onChange={(e) => setName(e.target.value)} />
               <input className="input-field" placeholder={`${t('kiosk.phone', 'Phone')} *`} value={phone} onChange={(e) => setPhone(e.target.value)} />
-              <input className="input-field uppercase" placeholder={t('kiosk.plate', 'License plate')} value={plate} onChange={(e) => setPlate(e.target.value)} />
+              {/* PlateInput normalises the value itself; the old `uppercase` class
+                  only restyled the text while leaving spaces in the stored value. */}
+              <PlateInput placeholder={t('kiosk.plate', 'License plate')} value={plate} onChange={setPlate} />
               <div className="grid grid-cols-2 gap-2">
                 <input className="input-field" placeholder={t('kiosk.brand', 'Brand')} list="k-veh-brands" value={brand} onChange={(e) => setBrand(e.target.value)} />
                 <datalist id="k-veh-brands">{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>

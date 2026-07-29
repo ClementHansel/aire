@@ -20,6 +20,7 @@ import { isAuthenticated } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
 import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
+import { PlateInput } from '@/components/shared/PlateInput';
 import { useI18n } from '@/lib/i18n';
 import {
   type PlateRow,
@@ -553,7 +554,7 @@ export default function SellPackPage() {
                 {tab === 'membership' && <input className="input-field" type="email" placeholder={t('pos.sellpack.emailOptional', 'Email (optional)')} value={email} onChange={(e) => setEmail(e.target.value)} />}
                 {tab === 'membership' && (
                   <div className="grid grid-cols-3 gap-2">
-                    <input className="input-field" placeholder={t('pos.sellpack.vehiclePlateOptional', 'Plate (optional)')} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} />
+                    <PlateInput placeholder={t('pos.sellpack.vehiclePlateOptional', 'Plate (optional)')} value={vehiclePlate} onChange={setVehiclePlate} />
                     {/* Brand/type picklist from the real vehicle catalog, not free
                         text — matches new-order's picker (AIRIN-114). */}
                     <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list="veh-brands-sale" value={vehicleBrand} onChange={(e) => setVehicleBrand(e.target.value)} />
@@ -616,12 +617,12 @@ export default function SellPackPage() {
               {plates.map((p, i) => (
                 <div key={i} className="flex gap-2 items-start">
                   <div className="flex-1 grid grid-cols-3 gap-2">
-                    <input
+                    <PlateInput
                       className={`input-field ${i === 0 && plateError ? 'border-red-400 focus:ring-red-300' : ''}`}
                       placeholder={t('pos.sellpack.plateReq', 'Plate *')}
                       value={p.plate}
-                      onChange={(e) => updatePlate(i, 'plate', e.target.value)}
-                      data-testid={`plate-input-${i}`}
+                      onChange={(v) => updatePlate(i, 'plate', v)}
+                      testId={`plate-input-${i}`}
                     />
                     {/* Brand/type picklist, not free text (AIRIN-114) — each row
                         gets its own datalist id so the type list is scoped to

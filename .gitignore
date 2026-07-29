@@ -1,5 +1,11 @@
 # ─── Dependencies ──────────────────────────────────────────────────
 node_modules/
+# pnpm's content-addressable store. Was accidentally committed on the production
+# VPS's branch (71 MB / ~2900 blobs), which made a routine git divergence look
+# like a 3771-file, 1M-line conflict. NOTE: gitignore has no trailing comments —
+# `#` only starts a comment at the beginning of a line, so this must stay above
+# the pattern, not beside it.
+.pnpm-store/
 
 # ─── Build Outputs ────────────────────────────────────────────────
 dist/

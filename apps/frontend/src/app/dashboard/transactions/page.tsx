@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import BranchFilter from '@/components/dashboard/BranchFilter';
-import { fmtDate, toDateInput } from '@/lib/dates';
+import { fmtDate } from '@/lib/dates';
 import { memberBadge } from '@/lib/memberStatus';
 import { Bot } from 'lucide-react';
 
@@ -20,11 +20,12 @@ interface OrderCard {
   id: string; orderNumber: string; customerName: string; customerPhone: string;
   status: string; total: number; createdAt: string; operatorName: string;
 }
-// Membership row from GET /memberships/manage — plan sales (AIRIN-133). This
-// list has no createdAt/price of its own, so startDate stands in as the
-// purchase date and price is joined in from GET /membership-plans by name.
+// Membership row from GET /memberships/manage — plan sales (AIRIN-133).
+// purchaseDate is the linked fee order's created_at (null only for the rare
+// membership with no order_id); price is joined in from GET /membership-plans
+// by name. Both endpoints accept dateFrom/dateTo/outletId server-side now.
 interface MembershipSaleRow {
-  id: string; customerName: string; planName: string; startDate: string;
+  id: string; customerName: string; planName: string; startDate: string; purchaseDate: string | null;
   status: string; displayStatus: string;
 }
 interface PlanPrice { id: string; name: string; price: number }
@@ -32,7 +33,7 @@ interface PlanPrice { id: string; name: string; price: number }
 // shareable ticket codes at one unit price.
 interface VoucherBookRow {
   id: string; buyerName: string; buyerPhone: string; quantity: number;
-  benefitType: string; unitPrice: number; outletName: string; redeemed: number; createdAt: string;
+  benefitType: string; unitPrice: number; outletId: string; outletName: string; redeemed: number; createdAt: string;
 }
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
@@ -117,30 +118,31 @@ export default function TransactionsPage() {
     } catch (err) { setError(err instanceof Error ? err.message : t('dash.transactions.failLoadOrders', 'Failed to load orders')); }
   }, [dateFrom, dateTo, page, pageSize, todayOnly, branchQs, rangeInvalid]);
 
-  // Membership-plan and voucher-pack sales have no dedicated dashboard section
-  // (AIRIN-133). Neither /memberships/manage nor /voucher-tickets/books accept
-  // date/branch query params, so filtering by range happens client-side here;
-  // branch can't be applied to these two (memberships carries no outlet, and
-  // voucher books expose only an outlet *name*, not an id to match BranchFilter's
-  // value against) — tenant-wide for now.
+  // Membership-plan and voucher-pack sales (AIRIN-133). Both endpoints now
+  // accept dateFrom/dateTo/outletId server-side (dates filter by purchase
+  // date — the linked fee order's created_at for memberships, the book's own
+  // created_at for voucher books; branch scoping goes through ScopeService
+  // exactly like /reports and /orders), so this page's date range and
+  // BranchFilter apply the same way they do to every other section.
   const loadPurchases = useCallback(async () => {
     if (rangeInvalid) { setMembershipSales([]); setVoucherBooks([]); return; }
     setPurchasesLoading(true);
     try {
+      const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${branchQs}`;
       const [memberships, planList, books] = await Promise.all([
-        api.get<MembershipSaleRow[]>('/memberships/manage'),
+        api.get<MembershipSaleRow[]>(`/memberships/manage?${qs}`),
         api.get<PlanPrice[]>('/membership-plans'),
-        api.get<VoucherBookRow[]>('/voucher-tickets/books'),
+        api.get<VoucherBookRow[]>(`/voucher-tickets/books?${qs}`),
       ]);
       setPlans(planList);
-      setMembershipSales(memberships.filter((m) => m.startDate >= dateFrom && m.startDate <= dateTo));
-      setVoucherBooks(books.filter((b) => { const d = toDateInput(b.createdAt); return d >= dateFrom && d <= dateTo; }));
+      setMembershipSales(memberships);
+      setVoucherBooks(books);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('dash.transactions.failLoadPurchases', 'Failed to load purchase data'));
     } finally {
       setPurchasesLoading(false);
     }
-  }, [dateFrom, dateTo, rangeInvalid, t]);
+  }, [dateFrom, dateTo, branchQs, rangeInvalid, t]);
 
   useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
   useEffect(() => { loadOrders(); }, [loadOrders]);
@@ -301,7 +303,7 @@ export default function TransactionsPage() {
                   <tr key={m.id}>
                     <td className="px-4 py-2.5 text-sm">{m.customerName}</td>
                     <td className="px-4 py-2.5 text-sm text-text-secondary">{m.planName}</td>
-                    <td className="px-4 py-2.5 text-xs text-text-muted">{fmtDate(m.startDate)}</td>
+                    <td className="px-4 py-2.5 text-xs text-text-muted">{fmtDate(m.purchaseDate ?? m.startDate)}</td>
                     <td className="px-4 py-2.5 text-center"><span className={`badge capitalize ${badge.cls}`}>{t(badge.key, badge.label)}</span></td>
                     <td className="px-4 py-2.5 text-sm text-right font-mono">{fmt(planPrice(m.planName))}</td>
                   </tr>

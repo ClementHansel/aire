@@ -12,7 +12,7 @@ import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../../common/guards';
 import { CurrentUser, Roles } from '../../common/decorators';
-import { PosCheckoutService } from '../order/pos-checkout.service';
+import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
 import { MembershipPlanService } from './membership-plan.service';
 import { MembershipSellService } from './membership-sell.service';
 import { MembershipRenewalService } from './membership-renewal.service';
@@ -105,6 +105,16 @@ export class MembershipSellController {
 
     const plan = await this.planService.getPlan(body.planId);
 
+    // A membership plan carries no business_unit of its own — derive it from
+    // whichever services it actually grants (free or member-discounted), so
+    // the fee order's revenue lands in the right AIRE/LEAD bucket instead of
+    // defaulting to AIRE by accident (see PosCheckoutService.createPackOrder).
+    const planServiceIds = [
+      ...(plan.freeServiceIds ?? []),
+      ...plan.discountedServices.map((d) => d.serviceId),
+    ];
+    const businessUnit = await resolveServiceBusinessUnit(this.checkout.db, planServiceIds);
+
     // Create the customer + pending order atomically.
     const client = await this.checkout.db.connect();
     let order: {
@@ -130,6 +140,7 @@ export class MembershipSellController {
         licensePlate: body.customer.licensePlate,
         vehicleBrand: body.customer.vehicleBrand,
         vehicleModel: body.customer.vehicleModel,
+        businessUnit,
       });
       await client.query('COMMIT');
     } catch (err) {

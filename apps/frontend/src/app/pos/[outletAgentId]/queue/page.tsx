@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { isAuthenticated, getUser } from '@/lib/auth';
 import { getPosOutletId } from '@/lib/posDevice';
 import { PosNav } from '@/components/pos/PosNav';
+import { PlateInput } from '@/components/shared/PlateInput';
 import { useI18n } from '@/lib/i18n';
 
 interface QueueEntry {
@@ -135,7 +136,9 @@ export default function QueuePage() {
                 <button key={bu} type="button" onClick={() => setBusinessUnit(bu)} className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-md ${businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{bu}</button>
               ))}
             </div>
-            <input className="input-field uppercase" placeholder={t('pos.queue.platePlaceholder', 'Plate (e.g. D1234ABC) *')} value={plate} onChange={(e) => setPlate(e.target.value)} />
+            {/* PlateInput normalises the value itself; the old `uppercase` class
+                only restyled the text while leaving spaces in the stored value. */}
+            <PlateInput placeholder={t('pos.queue.platePlaceholder', 'Plate (e.g. D1234ABC) *')} value={plate} onChange={setPlate} />
             <input className="input-field" placeholder={t('pos.queue.brandPlaceholder', 'Brand (e.g. Honda)')} list="q-veh-brands" value={brand} onChange={(e) => setBrand(e.target.value)} />
             <datalist id="q-veh-brands">{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
             <input className="input-field" placeholder={t('pos.queue.typePlaceholder', 'Type (e.g. Brio)')} list="q-veh-types" value={model} onChange={(e) => setModel(e.target.value)} />

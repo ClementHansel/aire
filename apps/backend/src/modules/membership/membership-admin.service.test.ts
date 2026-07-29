@@ -190,4 +190,61 @@ describe('MembershipAdminService', () => {
       );
     });
   });
+
+  /**
+   * list — the CRM members list AND the dashboard's "Membership purchases"
+   * section (AIRIN-133) share this endpoint. dateFrom/dateTo/outletIds are
+   * optional so the CRM (which passes none of them) keeps seeing the full
+   * tenant list; the dashboard passes them to filter by purchase date
+   * (the linked fee order's created_at) and branch.
+   */
+  describe('list', () => {
+    it('queries with no filter clauses and no extra params when no filters are given', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      await service.list(tenantId);
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).not.toContain('o.outlet_id = ANY');
+      expect(sql).not.toContain('o.created_at >=');
+      expect(sql).toContain('LEFT JOIN orders o ON o.id = m.order_id');
+      expect(params).toEqual([tenantId]);
+    });
+
+    it('adds outlet_id/date filter clauses (and their params) only when provided', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      await service.list(tenantId, undefined, {
+        dateFrom: '2026-07-01', dateTo: '2026-07-31', outletIds: ['outlet-1'],
+      });
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('o.outlet_id = ANY($2::uuid[])');
+      expect(sql).toContain('o.created_at >= $3::timestamptz');
+      expect(sql).toContain("o.created_at < ($4::date + INTERVAL '1 day')");
+      expect(params).toEqual([tenantId, ['outlet-1'], '2026-07-01', '2026-07-31']);
+    });
+
+    it('maps the linked order\'s created_at to purchaseDate (dropping the startDate proxy)', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: membershipId, customer_name: 'Budi', customer_phone: '0811', membership_number: 'M-001',
+          plan_name: 'Unlimited Wash', status: 'active', start_date: '2026-07-01', end_date: '2026-08-01',
+          uses_count: 0, max_uses: 31, suspended_reason: null,
+          purchase_date: new Date('2026-06-28T03:00:00Z'), display_status: 'active',
+        }],
+      });
+      const rows = await service.list(tenantId);
+      expect(rows[0]!.purchaseDate).toBe(new Date('2026-06-28T03:00:00Z').toISOString());
+    });
+
+    it('leaves purchaseDate null for a membership with no linked order', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: membershipId, customer_name: 'Budi', customer_phone: '0811', membership_number: null,
+          plan_name: 'Unlimited Wash', status: 'active', start_date: '2026-07-01', end_date: '2026-08-01',
+          uses_count: 0, max_uses: 31, suspended_reason: null,
+          purchase_date: null, display_status: 'active',
+        }],
+      });
+      const rows = await service.list(tenantId);
+      expect(rows[0]!.purchaseDate).toBeNull();
+    });
+  });
 });
