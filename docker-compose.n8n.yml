@@ -1,0 +1,34 @@
+# n8n agent-builder served under app.useairin.id/flows (subpath — reuses the
+# existing TLS cert; no new DNS). Added as a compose OVERRIDE so the hardened
+# base/prod compose files are never edited. Bring up with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.n8n.yml up -d n8n frontend
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: aire-n8n
+    restart: unless-stopped
+    environment:
+      N8N_HOST: app.useairin.id
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_PATH: /flows/
+      N8N_EDITOR_BASE_URL: https://app.useairin.id/flows/
+      WEBHOOK_URL: https://app.useairin.id/flows/
+      N8N_PROXY_HOPS: 1
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change_me_n8n_encryption_key}
+      GENERIC_TIMEZONE: ${TZ:-Asia/Jakarta}
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - aire-network
+  # Point the dashboard link at the subpath (dev server reads NEXT_PUBLIC_* at runtime).
+  frontend:
+    environment:
+      NEXT_PUBLIC_N8N_URL: https://app.useairin.id/flows
+
+volumes:
+  n8n_data:
+    driver: local

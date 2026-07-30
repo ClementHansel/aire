@@ -1,52 +1,22 @@
-# =============================================================================
-# AIRE — PRODUCTION (VPS) overlay
-# =============================================================================
-# Apply on top of the base on the VPS:
-#
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-#
-# Use scripts/deploy-vps.sh instead of a bare `up` — it builds and starts one
-# service at a time so a 2-vCPU / ~7.4 GB box never OOMs on a parallel build.
-#
-# What it changes vs the base:
-#   - nginx is the ONLY public listener: 80 (→ redirect) + 443 (TLS).
-#   - Let's Encrypt live certs are mounted read-only into nginx.
-#   - n8n serves on the /flows/ subpath of the main domain (no extra DNS/cert).
-#   - Everything else stays bound to 127.0.0.1 (inherited from the base).
-#
-# Requires a production .env (copy .env.prod.example → .env and fill it in),
-# and certs at /etc/letsencrypt/live/${DOMAIN}/. See docs/DEPLOYMENT.md.
-# =============================================================================
-
 services:
   backend:
+    build:
+      target: production
     environment:
       NODE_ENV: production
+    volumes: []
 
   frontend:
+    build:
+      target: production
     environment:
       NODE_ENV: production
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+    volumes: []
 
   iot-gateway:
+    build:
+      target: production
     environment:
       NODE_ENV: production
-
-  n8n:
-    environment:
-      # Subpath hosting behind nginx at https://${DOMAIN}/flows/ — chosen over a
-      # flows.<domain> subdomain to avoid provisioning new DNS + a second cert.
-      N8N_HOST: ${N8N_HOST:-app.useairin.id}
-      N8N_PROTOCOL: https
-      N8N_PATH: ${N8N_PATH:-/flows/}
-      WEBHOOK_URL: ${N8N_PUBLIC_URL:-https://app.useairin.id/flows/}
-      N8N_EDITOR_BASE_URL: ${N8N_PUBLIC_URL:-https://app.useairin.id/flows/}
-      N8N_PROXY_HOPS: 1
-
-  nginx:
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      # Live Let's Encrypt certs. The ssl.conf server block references
-      # /etc/letsencrypt/live/${DOMAIN}/{fullchain,privkey}.pem.
-      - /etc/letsencrypt:/etc/letsencrypt:ro
