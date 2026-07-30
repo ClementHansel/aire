@@ -79,11 +79,15 @@ export class ReportService {
     const [payments, volume, categories, newMembers, renewals, vouchers] = await Promise.all([
       // Money in, by method × settlement channel.
       this.pool.query<{ day: string; method: string | null; channel: string | null; revenue: string }>(
+        // GROUP BY repeats the expressions rather than the output aliases:
+        // `orders` has its own `channel` column, so `GROUP BY channel` binds to
+        // THAT and leaves payment_channel ungrouped ("must appear in the GROUP
+        // BY clause"). Postgres resolves input columns before output names.
         `SELECT ${DAY} AS day, o.payment_method AS method,
                 COALESCE(o.payment_channel, o.business_unit) AS channel,
                 COALESCE(SUM(o.total), 0) AS revenue
          FROM orders o WHERE ${WINDOW} ${orderFilter}
-         GROUP BY day, method, channel`,
+         GROUP BY ${DAY}, o.payment_method, COALESCE(o.payment_channel, o.business_unit)`,
         qp,
       ),
       // Volume + member split.
@@ -91,7 +95,7 @@ export class ReportService {
         `SELECT ${DAY} AS day, COUNT(*)::int AS orders,
                 COUNT(*) FILTER (WHERE o.membership_id IS NOT NULL)::int AS member
          FROM orders o WHERE ${WINDOW} ${orderFilter}
-         GROUP BY day`,
+         GROUP BY ${DAY}`,
         qp,
       ),
       // Items sold by catalog category (their CW / TREAT / PRODUCT columns).
@@ -101,7 +105,7 @@ export class ReportService {
          JOIN orders o ON o.id = oi.order_id
          JOIN services s ON s.id = oi.service_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY day, s.category`,
+         GROUP BY ${DAY}, s.category`,
         qp,
       ),
       // Memberships sold new, by plan length.
@@ -111,7 +115,7 @@ export class ReportService {
          JOIN orders o ON o.id = m.order_id
          JOIN membership_plans p ON p.id = m.plan_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY day, months`,
+         GROUP BY ${DAY}, p.duration_months`,
         qp,
       ),
       // Renewals, by plan length.
@@ -121,7 +125,7 @@ export class ReportService {
          JOIN orders o ON o.id = r.order_id
          JOIN membership_plans p ON p.id = r.plan_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY day, months`,
+         GROUP BY ${DAY}, p.duration_months`,
         qp,
       ),
       // Voucher packs sold — both the code-pack product and the shareable
@@ -210,7 +214,7 @@ export class ReportService {
          JOIN orders o ON o.id = m.order_id
          JOIN membership_plans p ON p.id = m.plan_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY agent, months`,
+         GROUP BY ${AGENT}, p.duration_months`,
         qp,
       ),
       this.pool.query<{ agent: string; months: number; n: string }>(
@@ -219,14 +223,14 @@ export class ReportService {
          JOIN orders o ON o.id = r.order_id
          JOIN membership_plans p ON p.id = r.plan_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY agent, months`,
+         GROUP BY ${AGENT}, p.duration_months`,
         qp,
       ),
       this.pool.query<{ agent: string; n: string }>(
         `SELECT ${AGENT} AS agent, COUNT(*)::int AS n
          FROM voucher_packs vp JOIN orders o ON o.id = vp.order_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY agent`,
+         GROUP BY ${AGENT}`,
         qp,
       ),
       // Every sold line, pack lines included (they carry item_name since 089).
@@ -237,7 +241,7 @@ export class ReportService {
          JOIN orders o ON o.id = oi.order_id
          LEFT JOIN services s ON s.id = oi.service_id
          WHERE ${WINDOW} ${orderFilter}
-         GROUP BY agent, name, kind`,
+         GROUP BY ${AGENT}, COALESCE(s.name, oi.item_name), oi.item_type`,
         qp,
       ),
     ]);
