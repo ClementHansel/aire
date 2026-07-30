@@ -215,19 +215,101 @@ export class WhatsappService implements OnModuleInit {
   // ── WAHA session management (for the QR-connect UI) ─────────────────────────
   // outletId targets a specific branch line when per-branch WhatsApp is on;
   // omit it for the tenant central line.
-  async ensureSession(tenantId: string, outletId?: string | null): Promise<{ status: string }> {
+
+  /** WAHA statuses from which a QR can be served / the line is already live. */
+  private static readonly WAHA_HEALTHY = ['WORKING', 'SCAN_QR_CODE', 'STARTING'];
+
+  /** One WAHA session call. Returns the parsed body, or null on transport/HTTP error. */
+  private async wahaSessionCall(
+    session: string, action: 'start' | 'restart' | 'logout',
+  ): Promise<{ status?: string } | null> {
+    try {
+      const res = await fetch(
+        `${this.wahaUrl}/api/sessions/${encodeURIComponent(session)}/${action}`,
+        { method: 'POST', headers: this.wahaHeaders(true) },
+      );
+      if (!res.ok) {
+        this.logger.warn(`WAHA ${action} '${session}' → HTTP ${res.status}`);
+        return null;
+      }
+      // logout returns 201 with no useful body; start/restart return the session.
+      return (await res.json().catch(() => ({}))) as { status?: string };
+    } catch (e) {
+      this.logger.warn(`WAHA ${action} '${session}' failed: ${String(e)}`);
+      return null;
+    }
+  }
+
+  /** Poll the session until it leaves STARTING, or the budget runs out. */
+  private async awaitSettled(session: string, tries = 5, delayMs = 1500): Promise<string> {
+    let status = await this.rawStatus(session);
+    for (let i = 0; i < tries && status === 'STARTING'; i++) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      status = await this.rawStatus(session);
+    }
+    return status;
+  }
+
+  /** The session's status straight from WAHA, with no tenant/mock interpretation. */
+  private async rawStatus(session: string): Promise<string> {
+    try {
+      const res = await fetch(`${this.wahaUrl}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders() });
+      if (!res.ok) return 'stopped';
+      const data = (await res.json()) as { status?: string };
+      return data.status ?? 'unknown';
+    } catch { return 'unreachable'; }
+  }
+
+  /**
+   * Drive the session toward a state where it is either WORKING or serving a QR.
+   * Self-healing, because a dead line cannot be recovered by `start` alone:
+   *
+   *  - WORKING / SCAN_QR_CODE / STARTING → leave it alone.
+   *  - stopped / unknown                 → `start`.
+   *  - FAILED                            → `restart`; if it fails AGAIN, the stored
+   *    credentials have been revoked by WhatsApp (`stream:error 401` +
+   *    `conflict{device_removed}`, i.e. the device was logged out on the phone), so
+   *    `logout` to wipe them and `start` fresh → SCAN_QR_CODE.
+   *
+   * `logout` is destructive (it drops the pairing and forces a re-scan), so it is
+   * reached ONLY from a twice-FAILED session whose credentials are already dead —
+   * never from a healthy one.
+   */
+  async ensureSession(tenantId: string, outletId?: string | null): Promise<{ status: string; reason?: string }> {
     const cfg = await this.config(tenantId, outletId);
     if (this.isMockActive(cfg)) return { status: 'WORKING' };
     // Per-branch on but this branch has no line of its own yet.
     if (cfg?.wa_connection_missing) return { status: 'not_configured' };
+    if (cfg?.wa_provider === 'kirim') return { status: cfg.kirim_api_key ? 'configured' : 'not_configured' };
     const session = cfg?.waha_session || 'default';
-    try {
-      await fetch(`${this.wahaUrl}/api/sessions/start`, {
-        method: 'POST', headers: this.wahaHeaders(true),
-        body: JSON.stringify({ name: session }),
-      });
-    } catch (e) { this.logger.warn(`WAHA start session failed: ${String(e)}`); }
-    return this.status(tenantId, outletId);
+
+    let status = await this.rawStatus(session);
+    if (status === 'unreachable') return { status, reason: 'WAHA service is not reachable.' };
+    if (WhatsappService.WAHA_HEALTHY.includes(status)) return { status };
+
+    if (status !== 'FAILED') {
+      // Never started, or stopped: a plain start is enough.
+      await this.wahaSessionCall(session, 'start');
+      return { status: await this.awaitSettled(session) };
+    }
+
+    // FAILED: try a restart first — cheapest recovery, keeps the pairing.
+    this.logger.warn(`WAHA session '${session}' is FAILED; attempting restart.`);
+    await this.wahaSessionCall(session, 'restart');
+    status = await this.awaitSettled(session);
+    if (WhatsappService.WAHA_HEALTHY.includes(status)) return { status };
+
+    // Still FAILED: the credentials are revoked. Wipe and re-pair from scratch.
+    this.logger.warn(`WAHA session '${session}' still FAILED after restart; wiping revoked credentials to force re-pairing.`);
+    await this.wahaSessionCall(session, 'logout');
+    await this.wahaSessionCall(session, 'start');
+    status = await this.awaitSettled(session);
+    return {
+      status,
+      reason: WhatsappService.WAHA_HEALTHY.includes(status)
+        ? 'The previous pairing was revoked (the device was logged out on the phone). Scan the QR again to reconnect.'
+        : 'WhatsApp rejected the connection. The WAHA image is likely out of date — pull the latest image, then retry.',
+    };
   }
 
   async status(tenantId: string, outletId?: string | null): Promise<{ status: string }> {
@@ -235,29 +317,43 @@ export class WhatsappService implements OnModuleInit {
     if (this.isMockActive(cfg)) return { status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { status: 'not_configured' };
     if (cfg?.wa_provider === 'kirim') return { status: cfg.kirim_api_key ? 'configured' : 'not_configured' };
-    const session = cfg?.waha_session || 'default';
-    try {
-      const res = await fetch(`${this.wahaUrl}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders() });
-      if (!res.ok) return { status: 'stopped' };
-      const data = (await res.json()) as { status?: string };
-      return { status: data.status ?? 'unknown' };
-    } catch { return { status: 'unreachable' }; }
+    return { status: await this.rawStatus(cfg?.waha_session || 'default') };
   }
 
-  /** Returns a data-URL QR for the WAHA session (to scan in the UI). */
-  async qr(tenantId: string, outletId?: string | null): Promise<{ qr: string | null; status: string }> {
+  /**
+   * Returns a data-URL QR for the WAHA session (to scan in the UI).
+   *
+   * Never reports a bare "no_qr": the session is healed first, and when a QR
+   * genuinely can't exist the caller gets the real WAHA status plus a reason, so
+   * the UI can say WHY (already connected / credentials revoked / image stale)
+   * instead of a dead end.
+   */
+  async qr(tenantId: string, outletId?: string | null): Promise<{ qr: string | null; status: string; reason?: string }> {
     const cfg = await this.config(tenantId, outletId);
     if (this.isMockActive(cfg)) return { qr: null, status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { qr: null, status: 'not_configured' };
     if (cfg?.wa_provider === 'kirim') return { qr: null, status: 'kirim' };
     const session = cfg?.waha_session || 'default';
-    await this.ensureSession(tenantId, outletId);
+
+    const ensured = await this.ensureSession(tenantId, outletId);
+    // A QR only exists in SCAN_QR_CODE. Anything else: say what state we're in.
+    if (ensured.status === 'WORKING') {
+      return { qr: null, status: 'WORKING', reason: ensured.reason ?? 'Already connected — no QR needed.' };
+    }
+    if (ensured.status !== 'SCAN_QR_CODE') {
+      return { qr: null, status: ensured.status, reason: ensured.reason };
+    }
+
     try {
       const res = await fetch(`${this.wahaUrl}/api/${encodeURIComponent(session)}/auth/qr?format=image`, { headers: this.wahaHeaders() });
-      if (!res.ok) return { qr: null, status: 'no_qr' };
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        this.logger.warn(`WAHA QR '${session}' → HTTP ${res.status} ${detail.slice(0, 200)}`);
+        return { qr: null, status: await this.rawStatus(session), reason: `WAHA could not produce a QR (HTTP ${res.status}). Try again in a moment.` };
+      }
       const buf = Buffer.from(await res.arrayBuffer());
-      return { qr: `data:image/png;base64,${buf.toString('base64')}`, status: 'qr' };
-    } catch { return { qr: null, status: 'unreachable' }; }
+      return { qr: `data:image/png;base64,${buf.toString('base64')}`, status: 'qr', reason: ensured.reason };
+    } catch { return { qr: null, status: 'unreachable', reason: 'WAHA service is not reachable.' }; }
   }
 
   // ── Outbound ────────────────────────────────────────────────────────────────

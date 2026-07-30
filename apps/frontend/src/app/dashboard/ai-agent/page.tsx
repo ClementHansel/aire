@@ -139,15 +139,35 @@ export default function AiAgentPage() {
   );
 }
 
+/**
+ * Raw WAHA/backend status → what an owner should read. Keeps the operator out of
+ * guessing games when a line is down: every state either says it's fine or says
+ * what to do next.
+ */
+const WA_STATUS_LABEL: Record<string, string> = {
+  WORKING: 'Connected',
+  SCAN_QR_CODE: 'Waiting for QR scan',
+  STARTING: 'Starting…',
+  FAILED: 'Failed — could not connect',
+  stopped: 'Not started',
+  qr: 'Waiting for QR scan',
+  kirim: 'Using kirimdev (no QR needed)',
+  configured: 'Configured',
+  not_configured: 'Not configured',
+  unreachable: 'WhatsApp service unreachable',
+  unknown: 'Unknown',
+};
+
 function WahaConnect({ outletId }: { outletId?: string }) {
   const { t } = useI18n();
   const [status, setStatus] = useState('');
+  const [reason, setReason] = useState<string | undefined>();
   const [qr, setQr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const suffix = outletId ? `?outletId=${encodeURIComponent(outletId)}` : '';
 
   const refresh = async () => {
-    try { const s = await api.get<{ status: string }>(`/whatsapp/status${suffix}`); setStatus(s.status); } catch { setStatus('unreachable'); }
+    try { const s = await api.get<{ status: string }>(`/whatsapp/status${suffix}`); setStatus(s.status); setReason(undefined); } catch { setStatus('unreachable'); }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [outletId]);
 
@@ -155,21 +175,24 @@ function WahaConnect({ outletId }: { outletId?: string }) {
     setLoading(true);
     try {
       await api.post('/whatsapp/connect', outletId ? { outletId } : {});
-      const res = await api.get<{ qr: string | null; status: string }>(`/whatsapp/qr${suffix}`);
-      setQr(res.qr); setStatus(res.status);
-    } catch { setStatus('unreachable'); }
+      const res = await api.get<{ qr: string | null; status: string; reason?: string }>(`/whatsapp/qr${suffix}`);
+      setQr(res.qr); setStatus(res.status); setReason(res.reason);
+    } catch { setStatus('unreachable'); setReason(undefined); }
     finally { setLoading(false); }
   };
 
   return (
     <div className="rounded-lg bg-surface-sunken p-3 text-sm">
       <div className="flex items-center justify-between">
-        <span className="text-text-secondary">{t('dash.aiAgent.connectionStatus', 'Connection status:')} <span className="font-medium text-text-primary">{status || '—'}</span></span>
+        <span className="text-text-secondary">{t('dash.aiAgent.connectionStatus', 'Connection status:')} <span className="font-medium text-text-primary">{status ? (WA_STATUS_LABEL[status] ?? status) : '—'}</span></span>
         <div className="flex gap-2">
           <button type="button" className="btn-ghost text-xs" onClick={refresh}>{t('dash.aiAgent.refresh', 'Refresh')}</button>
           <button type="button" className="btn-primary text-xs py-1" onClick={connect} disabled={loading}>{loading ? t('dash.aiAgent.connecting', 'Connecting…') : t('dash.aiAgent.connectGetQr', 'Connect / Get QR')}</button>
         </div>
       </div>
+      {reason && (
+        <p className={`mt-2 text-xs ${status === 'WORKING' ? 'text-text-muted' : 'text-amber-700 dark:text-amber-400'}`}>{reason}</p>
+      )}
       {qr && (
         <div className="mt-3 text-center">
           <p className="text-xs text-text-muted mb-2">{t('dash.aiAgent.scanQr', 'Scan this with WhatsApp on the agent phone')}</p>
