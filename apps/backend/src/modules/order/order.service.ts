@@ -191,6 +191,11 @@ export class OrderService {
     user: JWTPayload,
     opts: { shift?: { id: string; outletId: string } } = {},
   ): Promise<CreatedOrderResponse> {
+    // A pack-only sale (membership plan / voucher pack, no wash) legitimately
+    // arrives with no items at all; normalise once so every step below can keep
+    // treating request.items as a list.
+    if (!request.items) request = { ...request, items: [] };
+
     // Step 1: Look up services by ID to get prices and isMainService flags
     const serviceIds = request.items.map((item) => item.serviceId);
     const services = await this.lookupServices(serviceIds);
@@ -199,6 +204,16 @@ export class OrderService {
     // receipt/payment. The order's business_unit records the payment channel; it
     // defaults to the caller's selected unit (see request.businessUnit).
     const businessUnit = request.businessUnit ?? BusinessUnit.Aire;
+
+    // Step 1b: Packs sold on THIS order (Samuel 2026-07-30 — sell-pack merged
+    // into new-order so an upsell at the counter is one transaction, not two).
+    // A pack is a cart line with no services row behind it (migration 089), so
+    // it is priced and inserted alongside the service lines rather than through
+    // PosCheckoutService.createPackOrder. Resolved before validation because a
+    // pack sale legitimises an order with no wash in it.
+    const packLines = await this.resolvePackLines(user.tenant_id, request);
+    const packTotal = packLines.reduce((s, p) => s + p.unitPrice, 0);
+    const sellsMembershipPlan = packLines.some((p) => p.kind === 'membership_plan');
 
     // Step 2: Build validation input
     const validationInput: OrderValidationInput = {
@@ -213,6 +228,7 @@ export class OrderService {
         };
       }),
       voucherCodes: request.voucherCodes,
+      sellsPack: packLines.length > 0,
     };
 
     // If membership is provided, look up plates for validation
@@ -275,6 +291,7 @@ export class OrderService {
       membershipQuotaWarning = meta.quotaWarning;
       membershipBenefits = meta.benefits;
     }
+
 
     // Every order is booked into an open cashier shift and inherits that shift's
     // branch (the branch is chosen once, at shift open — so finance never
@@ -382,6 +399,25 @@ export class OrderService {
       for (const p of pricingResult.appliedPricing) memberPricedServiceIds.add(p.serviceId);
     }
 
+    // Step 6c: Counter upsell — a membership plan bought in the SAME order as a
+    // wash makes that day's wash free (Samuel 2026-07-30: "kalau dibeli secara
+    // bersamaan untuk plat nomor yang sama itu jadi free yang hari itu cuci
+    // regulernya, tapi tetap tercatat kalau dia itu upsale di tempat").
+    //
+    // Only 'car_wash' lines are freed — the wash itself. Add-ons and products
+    // stay charged, which is what "cuci regulernya" means at the counter.
+    // Marked as member pricing so payment consumes one usage (the customer's
+    // first wash on the new plan) and the 'member' tag lands on the order, and
+    // the plan line itself keeps the sale visible as an upsell.
+    if (sellsMembershipPlan) {
+      cartItems = cartItems.map((ci) => {
+        if (services.get(ci.serviceId)?.category !== 'car_wash') return ci;
+        memberPricedServiceIds.add(ci.serviceId);
+        return { ...ci, discount: ci.quantity * ci.unitPrice };
+      });
+      membershipApplied = membershipApplied || cartItems.some((ci) => services.get(ci.serviceId)?.category === 'car_wash');
+    }
+
     // Step 7: outletConfig was already fetched above (Step 5b), ahead of the
     // manual-discount clamp, so it's reused here rather than re-queried.
 
@@ -396,12 +432,20 @@ export class OrderService {
     const promoDiscount = promo.discount;
 
     // Step 8: Calculate cart summary
-    const cartSummary = calculateCartSummary(
+    const serviceSummary = calculateCartSummary(
       cartItems,
       outletConfig,
       voucherDiscount,
       promoDiscount,
     );
+    // Pack fees ride on top of the service math: a membership fee is not a
+    // washing service, so it takes no service charge and no tax, and vouchers /
+    // promos priced against the wash must not eat into it either.
+    const cartSummary = {
+      ...serviceSummary,
+      subtotal: serviceSummary.subtotal + packTotal,
+      total: serviceSummary.total + packTotal,
+    };
 
     // Step 9: Generate order number
     const orderNumber = await this.generateOrderNumber(operatingOutletId!);
@@ -512,13 +556,14 @@ export class OrderService {
 
         const itemResult = await client.query<{ id: string }>(
           `INSERT INTO order_items
-            (order_id, service_id, quantity, unit_price, discount, subtotal,
+            (order_id, service_id, item_type, item_name, quantity, unit_price, discount, subtotal,
              is_member_pricing, membership_id, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           VALUES ($1, $2, 'service', $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING id`,
           [
             order.id,
             cartItem.serviceId,
+            cartItem.serviceName,
             cartItem.quantity,
             cartItem.unitPrice,
             cartItem.discount,
@@ -539,6 +584,77 @@ export class OrderService {
           subtotal: itemSubtotal,
           isMemberPricing,
         });
+      }
+
+      // Pack lines (membership plan / voucher pack) sold on this same order.
+      // They sort after the services so the receipt reads "wash, then the plan
+      // that made it free".
+      for (let p = 0; p < packLines.length; p++) {
+        const pack = packLines[p]!;
+        const packResult = await client.query<{ id: string }>(
+          `INSERT INTO order_items
+            (order_id, service_id, item_type, item_name, membership_plan_id, voucher_template_id,
+             quantity, unit_price, discount, subtotal, is_member_pricing, sort_order)
+           VALUES ($1, NULL, $2, $3, $4, $5, 1, $6, 0, $6, false, $7)
+           RETURNING id`,
+          [
+            order.id,
+            pack.kind,
+            pack.name,
+            pack.kind === 'membership_plan' ? pack.id : null,
+            pack.kind === 'voucher_pack' ? pack.id : null,
+            pack.unitPrice,
+            cartItems.length + p,
+          ],
+        );
+        orderItems.push({
+          id: packResult.rows[0]!.id,
+          serviceId: '',
+          serviceName: pack.name,
+          quantity: 1,
+          unitPrice: pack.unitPrice,
+          discount: 0,
+          subtotal: pack.unitPrice,
+          isMemberPricing: false,
+        });
+      }
+
+      // A plan sold on this order creates its membership right here, in the same
+      // transaction — MembershipSellService.sellMembership runs on its own pool
+      // connection, so calling it would let the order commit with a paid plan
+      // line and no membership behind it. Status stays 'pending' until payment
+      // (and plate registration) exactly as the old sell-pack flow did.
+      let soldMembershipId: string | null = null;
+      const planLine = packLines.find((p) => p.kind === 'membership_plan');
+      if (planLine?.plan) {
+        const plan = planLine.plan;
+        const start = new Date();
+        const end = new Date(start);
+        end.setMonth(end.getMonth() + (plan.duration_months ?? 1));
+        const mem = await client.query<{ id: string }>(
+          `INSERT INTO memberships
+            (tenant_id, customer_id, plan_id, status, start_date, end_date, uses_count, max_uses, daily_limit, order_id)
+           VALUES ($1, $2, $3, 'pending', $4, $5, 0, $6, $7, $8)
+           RETURNING id`,
+          [
+            user.tenant_id,
+            customerId,
+            plan.id,
+            start.toISOString().slice(0, 10),
+            end.toISOString().slice(0, 10),
+            plan.max_uses,
+            plan.daily_limit,
+            order.id,
+          ],
+        );
+        soldMembershipId = mem.rows[0]!.id;
+        // Point the order (and the wash lines it just made free) at the new
+        // membership, so payment consumes one usage against the right record.
+        await client.query(`UPDATE orders SET membership_id = $1 WHERE id = $2`, [soldMembershipId, order.id]);
+        await client.query(
+          `UPDATE order_items SET membership_id = $1 WHERE order_id = $2 AND is_member_pricing = true`,
+          [soldMembershipId, order.id],
+        );
       }
 
       // Record initial status log entry
@@ -622,7 +738,9 @@ export class OrderService {
       await this.applyRecipeCogs(
         client,
         { id: order.id, orderNumber: order.order_number },
-        orderItems,
+        // Service lines only — a membership/voucher pack has no recipe, no stock
+        // to deduct, and no services row its serviceId could resolve against.
+        orderItems.filter((oi) => oi.serviceId !== ''),
         user.sub,
         user.tenant_id,
       );
@@ -687,12 +805,13 @@ export class OrderService {
       // Inter-branch settlement accrual is emitted at PAYMENT alongside the
       // membership-usage recording it derives from (see recordMembershipConsumption).
 
-      // Preview customer-type tags for the response (persisted at payment). The
-      // NEW_MEMBER / RENEWAL / BUY_VOUCHER_PACK tags come from the Sell Pack flows,
-      // not a plain wash order, so they are false here.
+      // Preview customer-type tags for the response (persisted at payment).
+      // NEW_MEMBER / BUY_VOUCHER_PACK are no longer exclusive to a separate Sell
+      // Pack order — a counter upsell puts the pack on this very order, and that
+      // is exactly the case the owner wants to see tagged.
       const tags = assignCustomerTags({
-        hasVoucherPackPurchase: false,
-        hasNewMembership: false,
+        hasVoucherPackPurchase: packLines.some((p) => p.kind === 'voucher_pack'),
+        hasNewMembership: soldMembershipId != null,
         hasMembershipRenewal: false,
         hasVoucherRedemption:
           (request.voucherCodes?.length ?? 0) > 0 && voucherDiscount > 0,
@@ -730,6 +849,78 @@ export class OrderService {
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Resolve the packs (membership plan / voucher pack) a cart is selling into
+   * priced order lines. Both are looked up under the caller's tenant and must be
+   * active, so a stale POS tab can't sell a retired plan at its old price.
+   *
+   * At most one membership plan per order — memberships.order_id is the link
+   * back, and MembershipSellService already rejects a second plan on the same
+   * order (ERR_MEMBERSHIP_ONE_PLAN_PER_ORDER); this keeps the merged POS path
+   * honouring the same rule instead of writing a state it can't represent.
+   */
+  private async resolvePackLines(
+    tenantId: string,
+    request: CreateOrderRequest,
+  ): Promise<Array<{
+    kind: 'membership_plan' | 'voucher_pack';
+    id: string;
+    name: string;
+    unitPrice: number;
+    plan?: { id: string; duration_months: number; max_uses: number; daily_limit: number; max_plates: number };
+  }>> {
+    const lines: Array<{
+      kind: 'membership_plan' | 'voucher_pack';
+      id: string; name: string; unitPrice: number;
+      plan?: { id: string; duration_months: number; max_uses: number; daily_limit: number; max_plates: number };
+    }> = [];
+
+    if (request.membershipPlanId) {
+      const r = await this.pool.query<{
+        id: string; name: string; price: string;
+        duration_months: number; max_uses: number; daily_limit: number; max_plates: number;
+      }>(
+        `SELECT id, name, price, duration_months, max_uses, daily_limit, max_plates
+         FROM membership_plans
+         WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+        [request.membershipPlanId, tenantId],
+      );
+      const plan = r.rows[0];
+      if (!plan) throw new BadRequestException('Membership plan not found or inactive');
+      lines.push({
+        kind: 'membership_plan',
+        id: plan.id,
+        name: plan.name,
+        unitPrice: parseFloat(plan.price),
+        plan: {
+          id: plan.id,
+          duration_months: plan.duration_months,
+          max_uses: plan.max_uses,
+          daily_limit: plan.daily_limit,
+          max_plates: plan.max_plates,
+        },
+      });
+    }
+
+    if (request.voucherPackTemplateId) {
+      const r = await this.pool.query<{ id: string; name: string; sale_price: string | null }>(
+        `SELECT id, name, sale_price FROM voucher_templates
+         WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
+        [request.voucherPackTemplateId, tenantId],
+      );
+      const tpl = r.rows[0];
+      if (!tpl) throw new BadRequestException('Voucher pack not found or inactive');
+      lines.push({
+        kind: 'voucher_pack',
+        id: tpl.id,
+        name: tpl.name,
+        unitPrice: tpl.sale_price != null ? parseFloat(tpl.sale_price) : 0,
+      });
+    }
+
+    return lines;
+  }
 
   /**
    * Marks an order as paid. Records the payment method, reference,
@@ -835,10 +1026,13 @@ export class OrderService {
       );
       row = updated.rows[0];
 
+      // LEFT JOIN, not JOIN: a membership-plan / voucher-pack line has no
+      // services row behind it (migration 089), and an inner join would drop it
+      // from the receipt and from the paid-order response entirely.
       const itemsRes = await client.query(
-        `SELECT oi.*, s.name AS service_name
+        `SELECT oi.*, COALESCE(s.name, oi.item_name) AS service_name
          FROM order_items oi
-         JOIN services s ON s.id = oi.service_id
+         LEFT JOIN services s ON s.id = oi.service_id
          WHERE oi.order_id = $1`,
         [orderId],
       );
@@ -862,11 +1056,13 @@ export class OrderService {
       }
 
       // Persist customer-type tags for the owner's reports (handbook §8). MEMBER /
-      // VOUCHER apply to a wash order; NEW_MEMBER / RENEWAL / BUY_VOUCHER_PACK are
-      // tagged by the Sell Pack flows on their own orders.
+      // VOUCHER come from the wash itself; NEW_MEMBER / BUY_VOUCHER_PACK come from
+      // a pack sold on this same order — the counter upsell the owner wants to
+      // see. (RENEWAL is still tagged by the renewal flow, which extends an
+      // existing membership rather than putting a plan line on the order.)
       persistedTags = assignCustomerTags({
-        hasVoucherPackPurchase: false,
-        hasNewMembership: false,
+        hasVoucherPackPurchase: itemRows.some((i) => i.item_type === 'voucher_pack'),
+        hasNewMembership: itemRows.some((i) => i.item_type === 'membership_plan'),
         hasMembershipRenewal: false,
         hasVoucherRedemption: voucherApplied,
         hasMemberBenefitsApplied: consumeMembership,

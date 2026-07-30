@@ -33,6 +33,7 @@ interface OrderRow {
   voucher_discount?: string;
   promo_discount?: string;
   payment_method?: string | null;
+  is_member?: boolean;
 }
 
 /**
@@ -117,7 +118,8 @@ export class OrderListService {
         o.tax::text,
         o.voucher_discount::text,
         o.promo_discount::text,
-        o.payment_method
+        o.payment_method,
+        (o.membership_id IS NOT NULL) AS is_member
       FROM orders o
       JOIN users u ON o.operator_id = u.id
       ${whereClause}
@@ -169,6 +171,7 @@ export class OrderListService {
       voucherDiscount: row.voucher_discount != null ? parseFloat(row.voucher_discount) : 0,
       promoDiscount: row.promo_discount != null ? parseFloat(row.promo_discount) : 0,
       paymentMethod: row.payment_method ?? null,
+      isMember: row.is_member === true,
       total: parseFloat(row.total),
       createdAt: row.created_at,
     }));
@@ -219,6 +222,21 @@ export class OrderListService {
       );
       queryParams.push(searchPattern, platePattern);
       paramIdx += 2;
+    }
+
+    // Payment-method filter. Filtered here rather than client-side so `total`
+    // and the pager stay consistent with what the table shows.
+    if (params.paymentMethod) {
+      conditions.push(`o.payment_method = $${paramIdx}`);
+      queryParams.push(params.paymentMethod);
+      paramIdx++;
+    }
+
+    // Member / non-member filter — per-order (membership attached at checkout).
+    if (params.memberFilter === 'member') {
+      conditions.push(`o.membership_id IS NOT NULL`);
+    } else if (params.memberFilter === 'non_member') {
+      conditions.push(`o.membership_id IS NULL`);
     }
 
     // Date range - from

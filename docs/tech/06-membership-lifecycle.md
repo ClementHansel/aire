@@ -64,15 +64,24 @@ Every meaningful transition appends a `membership_events` row (`activated`, `ren
 
 ---
 
-## 2. Selling a membership (Sell Pack)
+## 2. Selling a membership
 
-At the POS **Sell Pack → Membership** tab:
+Since 2026-07-30 the POS sells a plan from the **New Order → Membership & Vouchers** tab, on the
+same order as the wash. `POST /api/orders` takes `membershipPlanId` and, in one transaction, adds
+a `membership_plan` line (migration 089), creates the **`status='pending'`** membership snapshotting
+the plan's `max_uses` / `daily_limit` against that `order_id`, and points the order at it. Only
+**one membership plan per order** is allowed.
+
+**Counter upsell:** when the same order also has `car_wash` lines, those lines are zeroed and
+flagged as member pricing, so the customer's wash that day is free and payment consumes one usage.
+The order is tagged `new_member` (plus `member`), which is what makes the upsell legible in reports.
+
+`POST /api/memberships/sell` still exists for callers that mint their own fee order (CRM, portal):
 
 1. **`POST /api/memberships/sell`** — in one transaction: upsert the customer, create a **pending
    fee order** for the plan price (tagged `Membership: <plan>`), and insert a
    **`status='pending'`** membership snapshotting the plan's `max_uses` / `daily_limit`, tied to
-   that `order_id`. Only **one membership plan per order** is allowed. Returns
-   `{ order, membershipId, maxPlates, planName }`.
+   that `order_id`. Returns `{ order, membershipId, maxPlates, planName }`.
 2. **Pay** the fee order through the normal POS payment flow (cash / QRIS / EDC / transfer).
 3. **`POST /api/memberships/:id/activate`** — requires **at least one vehicle plate** (up to the
    plan's `max_plates`, default 3). It sets `start_date = today`,
@@ -135,7 +144,7 @@ This two-phase design means an unpaid renewal never silently extends a membershi
 only happens once money is confirmed.
 
 ### Where renewal is initiated
-- **POS Sell Pack → Renew existing member** — look up by plate/phone/number → pick membership →
+- **POS New Order → Find member → Renew & pay** — look up by plate/phone/number → pick the plan →
   renew → pay → apply.
 - **CRM → Renew** modal — same, with in-modal payment collection.
 - **Customer portal → Renew** — online: `POST /portal/renew` creates the fee order + a **QRIS**

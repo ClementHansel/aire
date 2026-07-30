@@ -389,13 +389,28 @@ what's already been filed.
 
 - **Overview** (`/dashboard`) — headline KPIs, revenue forecast vs target, AI proposals, and quick
   links, with a branch filter.
-- **Reports** (`/dashboard/reports`) — consolidated metrics (KPIs, AIRE/LEAD split, payment methods,
-  top services, daily sales, per-shift cash) with **PDF/CSV export**.
+- **Reports** (`/dashboard/reports`) — four tabs over one set of filters (date range, business unit,
+  branch):
+  - **Reports** — consolidated metrics (KPIs, AIRE/LEAD split, payment methods, top services, daily
+    sales, per-shift cash) with **PDF/CSV export**.
+  - **Daily operations** — one row per day, laid out like the sheet an outlet keeps by hand: revenue
+    split per payment method **and business unit** (QRIS/debit/card each split AIRE vs LEAD, cash and
+    transfer whole), then the day's transactions, member vs non-member, items sold by category,
+    memberships **sold new and renewed by plan length**, and voucher packs. Revenue is what you
+    charged — QRIS/EDC fees are not deducted.
+  - **Sales per agent** — an item × agent matrix: new memberships and renewals (by plan length),
+    voucher packs, and each product/service, counted per salesperson. It follows the **salesperson
+    credited on the order**, not the cashier, and orders with nobody credited sit in a final
+    "Tanpa agent" column so the totals still add up.
+  - **Report Designer** — layout/branding for printed reports.
+
+  Both operational tabs export to CSV.
 
   ![Reports — consolidated metrics with export.](images/owner-reports.png)
 
 - **Transactions** (`/dashboard/transactions`) — charts plus the orders table (view / edit / void),
-  with **Excel + PDF export**.
+  with **Excel + PDF export**. The orders table shows the **payment method** and a **Member** badge,
+  and can be filtered by either.
 
   ![Transactions — orders table with charts and export.](images/owner-transactions.png)
 

@@ -21,7 +21,23 @@ interface Membership {
   startDate: string; endDate: string; usesCount: number; maxUses: number; suspendedReason: string | null;
   membershipNumber: string | null;
 }
-interface MembershipEvent { id: string; eventType: string; payload: Record<string, unknown> | null; actor: string | null; createdAt: string }
+interface MembershipEvent {
+  id: string; eventType: string; payload: Record<string, unknown> | null;
+  actor: string | null;
+  /** Resolved user name for `actor` — "who did this" (Samuel 2026-07-30). */
+  actorName?: string;
+  createdAt: string;
+}
+interface VehicleBrand { id: string; name: string; types: { id: string; name: string }[] }
+
+/** Colour per history entry kind, so plate edits stand out from lifecycle events. */
+const EVENT_BADGE: Record<string, string> = {
+  purchased: 'bg-primary-50 text-primary-700',
+  plate_added: 'bg-emerald-50 text-emerald-700',
+  plate_updated: 'bg-sky-50 text-sky-700',
+  plate_removed: 'bg-rose-50 text-rose-700',
+  plates_released: 'bg-rose-50 text-rose-700',
+};
 
 const MS_BADGE: Record<string, string> = {
   active: 'bg-green-50 text-green-700', grace: 'bg-orange-50 text-orange-700', revoked: 'bg-rose-50 text-rose-700',
@@ -161,6 +177,13 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
   const [plateRows, setPlateRows] = useState<PlateRow[]>([emptyPlateRow()]);
   const [plateError, setPlateError] = useState('');
   const [platesSaving, setPlatesSaving] = useState(false);
+  // Brand → type picklists, same source the POS uses. These fields were plain
+  // free text here, so the dashboard could store a brand the catalog doesn't
+  // know while the POS could not ("belum dropdown kaya di POS" — Samuel).
+  const [vehicleBrands, setVehicleBrands] = useState<VehicleBrand[]>([]);
+  useEffect(() => {
+    api.get<VehicleBrand[]>('/vehicle-brands').then(setVehicleBrands).catch(() => setVehicleBrands([]));
+  }, []);
 
   useEffect(() => {
     setEvents(null);
@@ -312,8 +335,14 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
                       onChange={(v) => updatePlateRow(i, 'plate', v)}
                       testId={`member-edit-plate-input-${i}`}
                     />
-                    <input className="input-field" placeholder={t('dash.members.brand', 'Brand')} value={r.brand} onChange={(e) => updatePlateRow(i, 'brand', e.target.value)} />
-                    <input className="input-field" placeholder={t('dash.members.model', 'Model')} value={r.model} onChange={(e) => updatePlateRow(i, 'model', e.target.value)} />
+                    {/* Datalist, not a bare input: same brand → type picker as
+                        the POS, scoped per row so the type list follows THAT
+                        row's brand. Still free-typeable, so an unlisted vehicle
+                        is never a dead end. */}
+                    <input className="input-field" placeholder={t('dash.members.brand', 'Brand')} list={`member-veh-brands-${i}`} value={r.brand} onChange={(e) => updatePlateRow(i, 'brand', e.target.value)} />
+                    <datalist id={`member-veh-brands-${i}`}>{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
+                    <input className="input-field" placeholder={t('dash.members.model', 'Model')} list={`member-veh-types-${i}`} value={r.model} onChange={(e) => updatePlateRow(i, 'model', e.target.value)} />
+                    <datalist id={`member-veh-types-${i}`}>{(vehicleBrands.find((b) => b.name === r.brand)?.types ?? []).map((ty) => <option key={ty.id} value={ty.name} />)}</datalist>
                   </div>
                   {plateRows.length > 1 && <button onClick={() => removePlateRow(i)} className="w-9 h-9 rounded bg-surface-sunken text-text-secondary shrink-0">✕</button>}
                 </div>
@@ -347,18 +376,33 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
           ) : events.length === 0 ? (
             <p className="text-sm text-text-muted">{t('dash.members.noEvents', 'No events recorded yet.')}</p>
           ) : (
-            <ul className="space-y-2 max-h-56 overflow-auto">
-              {events.map((ev) => (
-                <li key={ev.id} className="flex items-start gap-3 text-sm">
-                  <span className="badge bg-surface-sunken text-text-secondary capitalize shrink-0">{ev.eventType.replace(/_/g, ' ')}</span>
-                  <div className="min-w-0">
-                    <p className="text-xs text-text-muted">{new Date(ev.createdAt).toLocaleString()}</p>
-                    {ev.payload && Object.keys(ev.payload).length > 0 && (
-                      <p className="text-xs text-text-secondary truncate">{Object.entries(ev.payload).map(([k, v]) => `${k}: ${String(v)}`).join(' · ')}</p>
-                    )}
-                  </div>
-                </li>
-              ))}
+            <ul className="space-y-2 max-h-56 overflow-auto" data-testid="member-history">
+              {events.map((ev) => {
+                // Who did it: a resolved user name, else the raw actor label
+                // ('pos', 'system'). Plate changes and the original sale are the
+                // entries this matters most for.
+                const who = ev.actorName ?? (ev.actor && !ev.actor.includes('-') ? ev.actor : null);
+                const detail = ev.payload
+                  ? Object.entries(ev.payload)
+                      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+                      .map(([k, v]) => `${k}: ${String(v)}`)
+                      .join(' · ')
+                  : '';
+                return (
+                  <li key={ev.id} className="flex items-start gap-3 text-sm" data-testid={`member-history-${ev.eventType}`}>
+                    <span className={`badge capitalize shrink-0 ${EVENT_BADGE[ev.eventType] ?? 'bg-surface-sunken text-text-secondary'}`}>
+                      {ev.eventType.replace(/_/g, ' ')}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-text-muted">
+                        {new Date(ev.createdAt).toLocaleString()}
+                        {who && <> · <span className="text-text-secondary font-medium">{who}</span></>}
+                      </p>
+                      {detail && <p className="text-xs text-text-secondary truncate" title={detail}>{detail}</p>}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

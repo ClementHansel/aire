@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import BranchFilter from '@/components/dashboard/BranchFilter';
@@ -9,7 +9,9 @@ import { memberBadge } from '@/lib/memberStatus';
 import { Bot } from 'lucide-react';
 
 interface SeriesPoint { period: string; revenue: number; orders: number }
-interface ServiceRow { serviceId: string; name: string; quantity: number; revenue: number }
+/** One row of the product mix. `kind` distinguishes a service from a membership
+ *  plan / voucher pack — all three are ordinary order lines server-side now. */
+interface ServiceRow { serviceId: string; name: string; kind?: 'service' | 'membership_plan' | 'voucher_pack'; quantity: number; revenue: number }
 interface Summary {
   totalOrders: number; revenue: number; paidCount: number; cancelledCount: number;
   byBusinessUnit: Record<string, { revenue: number; count: number }>;
@@ -19,7 +21,11 @@ interface Summary {
 interface OrderCard {
   id: string; orderNumber: string; customerName: string; customerPhone: string;
   status: string; total: number; createdAt: string; operatorName: string;
+  paymentMethod: string | null; isMember: boolean;
 }
+/** Settlement methods offered by the POS — same set the payment modal writes. */
+const PAYMENT_METHODS = ['cash', 'qris_dynamic', 'qris_static', 'edc', 'cc', 'transfer'] as const;
+type MemberFilter = '' | 'member' | 'non_member';
 // Membership row from GET /memberships/manage — plan sales (AIRIN-133).
 // purchaseDate is the linked fee order's created_at (null only for the rare
 // membership with no order_id); price is joined in from GET /membership-plans
@@ -33,28 +39,60 @@ interface PlanPrice { id: string; name: string; price: number }
 // shareable ticket codes at one unit price.
 interface VoucherBookRow {
   id: string; buyerName: string; buyerPhone: string; quantity: number;
-  benefitType: string; unitPrice: number; outletId: string; outletName: string; redeemed: number; createdAt: string;
+  benefitType: string; benefitName: string | null; unitPrice: number;
+  outletId: string; outletName: string; redeemed: number; createdAt: string;
 }
+/** One line of the product-mix chart: a service, a membership plan, or a voucher pack. */
+type ProductKind = 'service' | 'membership' | 'voucher';
+interface ProductRow { name: string; quantity: number; revenue: number; kind: ProductKind }
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 function today(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function daysAgo(n: number): string { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 
-function Bars({ data }: { data: { label: string; value: number }[] }) {
+// Bar fill per product kind, so a membership/voucher line is readable at a
+// glance against the ordinary service lines it now shares the chart with.
+const KIND_BAR: Record<ProductKind, string> = {
+  service: 'bg-primary-500',
+  membership: 'bg-violet-500',
+  voucher: 'bg-amber-500',
+};
+
+interface BarDatum { label: string; value: number; kind?: ProductKind; quantity?: number }
+
+function Bars({ data }: { data: BarDatum[] }) {
   const { t } = useI18n();
   const max = Math.max(1, ...data.map((d) => d.value));
   return (
     <div className="space-y-1.5">
       {data.length === 0 ? <p className="text-sm text-text-muted italic">{t('dash.transactions.noData', 'No data.')}</p> : data.map((d, i) => (
-        <div key={i} className="flex items-center gap-2 text-xs">
-          <span className="w-24 shrink-0 text-text-muted truncate">{d.label}</span>
+        <div key={i} className="flex items-center gap-2 text-xs" title={d.quantity != null ? `${d.label} — ${d.quantity} ${t('dash.transactions.sold', 'sold')}` : d.label}>
+          <span className="w-32 shrink-0 text-text-muted truncate">{d.label}</span>
           <div className="flex-1 bg-surface-sunken rounded h-5 overflow-hidden">
-            <div className="h-full bg-primary-500 rounded" style={{ width: `${(d.value / max) * 100}%` }} />
+            <div className={`h-full rounded ${KIND_BAR[d.kind ?? 'service']}`} style={{ width: `${(d.value / max) * 100}%` }} />
           </div>
           <span className="w-28 text-right font-mono text-text-secondary">{fmt(d.value)}</span>
         </div>
       ))}
     </div>
+  );
+}
+
+/** Toggle button for the transaction-table quick filters. */
+function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+        active
+          ? 'bg-primary-500 border-primary-500 text-white'
+          : 'bg-surface border-border text-text-secondary hover:text-text-primary'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -72,6 +110,9 @@ export default function TransactionsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [todayOnly, setTodayOnly] = useState(false);
+  // Transaction-table filters (server-side, so `total` and the pager stay honest).
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [memberFilter, setMemberFilter] = useState<MemberFilter>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [insights, setInsights] = useState<string[]>([]);
@@ -113,10 +154,12 @@ export default function TransactionsPage() {
     try {
       const df = todayOnly ? today() : dateFrom;
       const dt = todayOnly ? today() : dateTo;
-      const res = await api.get<{ orders: OrderCard[]; total: number }>(`/orders?dateFrom=${df}&dateTo=${dt}&page=${page}&pageSize=${pageSize}${branchQs}`);
+      const pmQs = paymentMethod ? `&paymentMethod=${paymentMethod}` : '';
+      const memberQs = memberFilter ? `&member=${memberFilter}` : '';
+      const res = await api.get<{ orders: OrderCard[]; total: number }>(`/orders?dateFrom=${df}&dateTo=${dt}&page=${page}&pageSize=${pageSize}${branchQs}${pmQs}${memberQs}`);
       setOrders(res.orders); setTotal(res.total);
     } catch (err) { setError(err instanceof Error ? err.message : t('dash.transactions.failLoadOrders', 'Failed to load orders')); }
-  }, [dateFrom, dateTo, page, pageSize, todayOnly, branchQs, rangeInvalid]);
+  }, [dateFrom, dateTo, page, pageSize, todayOnly, branchQs, rangeInvalid, paymentMethod, memberFilter]);
 
   // Membership-plan and voucher-pack sales (AIRIN-133). Both endpoints now
   // accept dateFrom/dateTo/outletId server-side (dates filter by purchase
@@ -148,9 +191,30 @@ export default function TransactionsPage() {
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { loadPurchases(); }, [loadPurchases]);
 
+  const paymentLabel = (m: string) => ({
+    cash: t('dash.transactions.pmCash', 'Cash'),
+    qris_static: t('dash.transactions.pmQrisStatic', 'QRIS (static)'),
+    qris_dynamic: t('dash.transactions.pmQrisDynamic', 'QRIS'),
+    edc: t('dash.transactions.pmEdc', 'EDC / Debit'),
+    cc: t('dash.transactions.pmCc', 'Credit card'),
+    transfer: t('dash.transactions.pmTransfer', 'Bank transfer'),
+  }[m] ?? m);
+
   const planPrice = (planName: string) => plans.find((p) => p.name === planName)?.price ?? 0;
   const membershipRevenue = membershipSales.reduce((a, m) => a + planPrice(m.planName), 0);
   const voucherRevenue = voucherBooks.reduce((a, b) => a + b.quantity * b.unitPrice, 0);
+
+  // Product mix comes from the server as ONE list: services, membership plans
+  // and voucher packs are all ordinary order lines since the POS merge, and
+  // /reports/summary also folds in pre-merge pack orders (which carried no line
+  // items). Merging any of it here again would double-count (Samuel 2026-07-30).
+  const productRows: ProductRow[] = (summary?.byService ?? []).map((s) => ({
+    name: s.name,
+    quantity: s.quantity,
+    revenue: s.revenue,
+    kind: s.kind === 'membership_plan' ? 'membership' : s.kind === 'voucher_pack' ? 'voucher' : 'service',
+  }));
+  const productTotal = productRows.reduce((a, r) => a + r.revenue, 0);
 
   const computeInsights = (s: SeriesPoint[], sum: Summary) => {
     const out: string[] = [];
@@ -175,8 +239,8 @@ export default function TransactionsPage() {
   };
 
   const exportExcel = () => {
-    const rows = orders.map((o) => `<tr><td>${o.orderNumber}</td><td>${new Date(o.createdAt).toLocaleString()}</td><td>${o.customerName}</td><td>${o.customerPhone}</td><td>${o.status}</td><td>${o.total}</td></tr>`).join('');
-    const html = `<table border="1"><thead><tr><th>${t('dash.transactions.order', 'Order')}</th><th>${t('dash.transactions.date', 'Date')}</th><th>${t('dash.transactions.customer', 'Customer')}</th><th>${t('dash.transactions.phone', 'Phone')}</th><th>${t('dash.transactions.status', 'Status')}</th><th>${t('dash.transactions.total', 'Total')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const rows = orders.map((o) => `<tr><td>${o.orderNumber}</td><td>${new Date(o.createdAt).toLocaleString()}</td><td>${o.customerName}</td><td>${o.customerPhone}</td><td>${o.isMember ? t('dash.transactions.memberOnly', 'Member') : t('dash.transactions.nonMemberOnly', 'Non-member')}</td><td>${o.paymentMethod ? paymentLabel(o.paymentMethod) : ''}</td><td>${o.status}</td><td>${o.total}</td></tr>`).join('');
+    const html = `<table border="1"><thead><tr><th>${t('dash.transactions.order', 'Order')}</th><th>${t('dash.transactions.date', 'Date')}</th><th>${t('dash.transactions.customer', 'Customer')}</th><th>${t('dash.transactions.phone', 'Phone')}</th><th>${t('dash.transactions.customerType', 'Customer type')}</th><th>${t('dash.transactions.paymentMethod', 'Payment')}</th><th>${t('dash.transactions.status', 'Status')}</th><th>${t('dash.transactions.total', 'Total')}</th></tr></thead><tbody>${rows}</tbody></table>`;
     const blob = new Blob([`\ufeff<html><head><meta charset="utf-8"></head><body>${html}</body></html>`], { type: 'application/vnd.ms-excel' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `transactions-${dateFrom}-to-${dateTo}.xls`; a.click(); URL.revokeObjectURL(a.href);
   };
@@ -184,7 +248,8 @@ export default function TransactionsPage() {
   const exportPdf = () => {
     if (!summary) return;
     const insHtml = insights.map((i) => `<li>${i}</li>`).join('');
-    const svcRows = summary.byService.map((s) => `<tr><td>${s.name}</td><td style="text-align:right">${s.quantity}</td><td style="text-align:right">${fmt(s.revenue)}</td></tr>`).join('');
+    // Same merged list the on-screen chart uses — memberships and voucher packs included.
+    const svcRows = productRows.map((s) => `<tr><td>${s.name}</td><td style="text-align:right">${s.quantity}</td><td style="text-align:right">${fmt(s.revenue)}</td></tr>`).join('');
     const w = window.open('', '_blank'); if (!w) return;
     w.document.write(`<!doctype html><html><head><title>${t('dash.transactions.executiveReport', 'Executive Report')}</title><style>
       body{font-family:Geist,Arial,sans-serif;color:#0A0A0A;padding:40px;max-width:800px;margin:auto}
@@ -219,7 +284,7 @@ export default function TransactionsPage() {
   };
 
   const revenueBars = series.map((p) => ({ label: p.period, value: p.revenue }));
-  const productBars = (summary?.byService ?? []).map((s) => ({ label: s.name, value: s.revenue }));
+  const productBars = productRows.map((r) => ({ label: r.name, value: r.revenue, kind: r.kind, quantity: r.quantity }));
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
@@ -266,7 +331,53 @@ export default function TransactionsPage() {
 
       <div className="grid lg:grid-cols-2 gap-6 mb-6">
         <div className="card"><h2 className="section-title mb-3">{t('dash.transactions.revenue', 'Revenue')} ({granularity})</h2><Bars data={revenueBars} /></div>
-        <div className="card"><h2 className="section-title mb-3">{t('dash.transactions.salesPerProduct', 'Sales per product')}</h2><Bars data={productBars} /></div>
+        <div className="card">
+          <h2 className="section-title mb-1">{t('dash.transactions.salesPerProduct', 'Sales per product')}</h2>
+          <p className="text-xs text-text-muted mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-primary-500" />{t('dash.transactions.legendService', 'Service')}</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-violet-500" />{t('dash.transactions.legendMembership', 'Membership')}</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-500" />{t('dash.transactions.legendVoucher', 'Voucher pack')}</span>
+          </p>
+          <Bars data={productBars} />
+
+          {/* The bars answer "which is biggest"; the owner also wants the actual
+              numbers readable at a glance, the way the old report showed them. */}
+          {productRows.length > 0 && (
+            <div className="mt-4 -mx-5 -mb-5 border-t border-border overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-surface-sunken/50 text-xs uppercase text-text-secondary">
+                    <th className="text-left px-5 py-2 font-medium">{t('dash.transactions.product', 'Product')}</th>
+                    <th className="text-right px-3 py-2 font-medium">{t('dash.transactions.qty', 'Qty')}</th>
+                    <th className="text-right px-3 py-2 font-medium">{t('dash.transactions.revenue', 'Revenue')}</th>
+                    <th className="text-right px-5 py-2 font-medium">{t('dash.transactions.share', 'Share')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {productRows.map((r, i) => (
+                    <tr key={i}>
+                      <td className="px-5 py-2">
+                        <span className={`inline-block w-2 h-2 rounded-sm mr-2 align-middle ${KIND_BAR[r.kind]}`} />
+                        {r.name}
+                      </td>
+                      <td className="px-3 py-2 text-right text-text-secondary">{r.quantity}</td>
+                      <td className="px-3 py-2 text-right font-mono">{fmt(r.revenue)}</td>
+                      <td className="px-5 py-2 text-right text-text-muted">{productTotal > 0 ? `${Math.round((r.revenue / productTotal) * 100)}%` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-border bg-surface-sunken/30 font-medium">
+                    <td className="px-5 py-2">{t('dash.transactions.total', 'Total')}</td>
+                    <td className="px-3 py-2 text-right">{productRows.reduce((a, r) => a + r.quantity, 0)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmt(productTotal)}</td>
+                    <td className="px-5 py-2" />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* AI Analysis */}
@@ -356,19 +467,44 @@ export default function TransactionsPage() {
             </select>
           </div>
         </div>
+
+        {/* Quick filters — payment method and member/non-member. Applied
+            server-side, so the count above and the pager match the rows. */}
+        <div className="px-5 py-3 border-b border-border flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="transactions-filters">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-text-muted mr-1">{t('dash.transactions.paymentMethod', 'Payment')}</span>
+            <FilterChip active={paymentMethod === ''} onClick={() => { setPaymentMethod(''); setPage(1); }}>{t('dash.transactions.all', 'All')}</FilterChip>
+            {PAYMENT_METHODS.map((m) => (
+              <FilterChip key={m} active={paymentMethod === m} onClick={() => { setPaymentMethod(m); setPage(1); }}>{paymentLabel(m)}</FilterChip>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-text-muted mr-1">{t('dash.transactions.customerType', 'Customer')}</span>
+            <FilterChip active={memberFilter === ''} onClick={() => { setMemberFilter(''); setPage(1); }}>{t('dash.transactions.all', 'All')}</FilterChip>
+            <FilterChip active={memberFilter === 'member'} onClick={() => { setMemberFilter('member'); setPage(1); }}>{t('dash.transactions.memberOnly', 'Member')}</FilterChip>
+            <FilterChip active={memberFilter === 'non_member'} onClick={() => { setMemberFilter('non_member'); setPage(1); }}>{t('dash.transactions.nonMemberOnly', 'Non-member')}</FilterChip>
+          </div>
+        </div>
         <table className="w-full">
           <thead><tr className="border-b border-border bg-surface-sunken/50">
             <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.order', 'Order')}</th>
             <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.customer', 'Customer')}</th>
+            <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.paymentMethod', 'Payment')}</th>
             <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.status', 'Status')}</th>
             <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.total', 'Total')}</th>
             <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.transactions.actions', 'Actions')}</th>
           </tr></thead>
           <tbody className="divide-y divide-border">
-            {orders.length === 0 ? <tr><td colSpan={5} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.transactions.noTransactions', 'No transactions.')}</td></tr> : orders.map((o) => (
+            {orders.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.transactions.noTransactions', 'No transactions.')}</td></tr> : orders.map((o) => (
               <tr key={o.id}>
                 <td className="px-5 py-3 text-sm font-medium">{o.orderNumber}<div className="text-xs text-text-muted">{new Date(o.createdAt).toLocaleString()}</div></td>
-                <td className="px-5 py-3 text-sm">{o.customerName}<div className="text-xs text-text-muted">{o.customerPhone}</div></td>
+                <td className="px-5 py-3 text-sm">
+                  {o.customerName}
+                  {o.isMember && <span className="ml-1.5 badge bg-violet-50 text-violet-700">{t('dash.transactions.memberOnly', 'Member')}</span>}
+                  <div className="text-xs text-text-muted">{o.customerPhone}</div>
+                </td>
+                {/* Unpaid orders have no method yet — show a dash, not a blank cell. */}
+                <td className="px-5 py-3 text-sm text-text-secondary">{o.paymentMethod ? paymentLabel(o.paymentMethod) : <span className="text-text-muted">—</span>}</td>
                 <td className="px-5 py-3"><span className={`badge ${o.status === 'cancelled' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>{o.status}</span></td>
                 <td className="px-5 py-3 text-sm text-right font-mono">{fmt(o.total)}</td>
                 <td className="px-5 py-3 text-right whitespace-nowrap">
@@ -397,6 +533,8 @@ export default function TransactionsPage() {
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.customer', 'Customer')}</span><span>{detail.customerName}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.phone', 'Phone')}</span><span>{detail.customerPhone}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.operator', 'Operator')}</span><span>{detail.operatorName}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.paymentMethod', 'Payment')}</span><span>{detail.paymentMethod ? paymentLabel(detail.paymentMethod) : '—'}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.customerType', 'Customer type')}</span><span>{detail.isMember ? t('dash.transactions.memberOnly', 'Member') : t('dash.transactions.nonMemberOnly', 'Non-member')}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.status', 'Status')}</span><span className="capitalize">{detail.status}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.total', 'Total')}</span><span className="font-medium">{fmt(detail.total)}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.date', 'Date')}</span><span>{new Date(detail.createdAt).toLocaleString()}</span></div>

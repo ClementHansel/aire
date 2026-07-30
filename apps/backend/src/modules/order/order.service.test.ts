@@ -264,6 +264,98 @@ describe('OrderService', () => {
     });
 
     /**
+     * Samuel 2026-07-30: selling a membership plan on the SAME order as a wash
+     * (the counter upsell that replaced the separate Sell Pack page) must make
+     * that day's wash free, keep add-ons charged, and still record the plan sale.
+     */
+    describe('membership plan sold on the order (counter upsell)', () => {
+      const plan = {
+        id: 'plan-1', name: 'Membership Bulanan', price: '300000.00',
+        duration_months: 1, max_uses: 8, daily_limit: 1, max_plates: 2,
+      };
+
+      const setupUpsell = () => {
+        mockPool.query.mockResolvedValueOnce({ rows: mockServices });      // lookupServices
+        mockPool.query.mockResolvedValueOnce({ rows: [plan] });            // resolvePackLines
+        mockPool.query.mockResolvedValueOnce({ rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }] });
+        mockPool.query.mockResolvedValueOnce({ rows: [] });                // promotions
+        mockPool.query.mockResolvedValueOnce({ rows: [{ count: '1' }] });  // order number
+        currentOrderRow = {
+          id: 'order-123', order_number: 'ORD-1', status: 'ordered',
+          customer_name: 'John Doe', customer_phone: '081234567890',
+          license_plate: 'B1234ABC', vehicle_brand: null, vehicle_model: null,
+          subtotal: '350000.00', service_charge: '0.00', tax: '0.00',
+          voucher_discount: '0.00', promo_discount: '0.00', total: '350000.00',
+          note: null, membership_id: null, created_at: new Date(),
+        };
+      };
+
+      const itemInserts = () =>
+        mockClient.query.mock.calls
+          .filter(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO order_items'))
+          .map(([sql, params]) => ({ sql: String(sql), params: params as unknown[] }));
+
+      it('frees the wash, keeps the add-on charged, and adds a plan line', async () => {
+        setupUpsell();
+
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 1 }, { serviceId: 'svc-2', quantity: 1 }], membershipPlanId: 'plan-1' },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+
+        const inserts = itemInserts();
+        // (order_id, service_id, item_name, quantity, unit_price, discount, subtotal, is_member_pricing, …)
+        const wash = inserts.find((i) => i.params[1] === 'svc-1')!;
+        expect(wash.params[5]).toBe(50000); // discounted by its full price
+        expect(wash.params[6]).toBe(0);     // …so the line is free
+        expect(wash.params[7]).toBe(true);  // member pricing → payment consumes one usage
+
+        // The add-on is not "cuci reguler" and stays payable.
+        const addOn = inserts.find((i) => i.params[1] === 'svc-2')!;
+        expect(addOn.params[5]).toBe(0);
+        expect(addOn.params[6]).toBe(25000);
+
+        // The plan itself is a real line, so it shows on the receipt and in the
+        // per-product report instead of hiding in a second order.
+        const planLine = inserts.find((i) => i.params[1] === 'membership_plan' || i.params.includes('plan-1'))!;
+        expect(planLine).toBeDefined();
+        expect(planLine.params).toContain('Membership Bulanan');
+      });
+
+      it('creates the membership pending and points the order at it', async () => {
+        setupUpsell();
+
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 1 }], membershipPlanId: 'plan-1' },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+
+        const sqls = mockClient.query.mock.calls.map(([s]) => String(s));
+        const memInsert = sqls.find((s) => s.includes('INSERT INTO memberships'));
+        expect(memInsert).toBeDefined();
+        expect(memInsert).toContain("'pending'");
+        // The order must carry the new membership, otherwise payment has nothing
+        // to consume the free wash against.
+        expect(sqls.some((s) => s.includes('UPDATE orders SET membership_id'))).toBe(true);
+      });
+
+      it('rejects a plan that is not sellable', async () => {
+        mockPool.query.mockResolvedValueOnce({ rows: mockServices });
+        mockPool.query.mockResolvedValueOnce({ rows: [] }); // inactive / other tenant
+
+        await expect(
+          orderService.createOrder(
+            { ...validRequest, membershipPlanId: 'plan-gone' },
+            mockUser,
+            { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+          ),
+        ).rejects.toThrow(BadRequestException);
+      });
+    });
+
+    /**
      * AIRIN-121: a manual discount is a per-item permission from the dashboard.
      * The POS hides the field for items that never opted in, but the server is
      * the authority — a hand-rolled request must not be able to discount an
@@ -275,11 +367,11 @@ describe('OrderService', () => {
           .filter(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO order_items'))
           .map(([, params]) => params as unknown[]);
 
-      /** order_items params: (order_id, service_id, quantity, unit_price, discount, …) */
+      /** order_items params: (order_id, service_id, item_name, quantity, unit_price, discount, …) */
       const discountFor = (serviceId: string) => {
         const row = orderItemInserts().find((p) => p[1] === serviceId);
         expect(row, `no order_items row for ${serviceId}`).toBeDefined();
-        return row![4];
+        return row![5];
       };
 
       it('ignores a discount on an item that has not opted in', async () => {

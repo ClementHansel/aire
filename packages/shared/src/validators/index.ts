@@ -23,6 +23,13 @@ export interface OrderValidationInput {
   orderSubtotal?: number;
   memberPlates?: string[];
   selectedPlate?: string;
+  /**
+   * The order also sells a membership plan / voucher pack. Such an order is a
+   * complete sale on its own — buying a plan without a wash is exactly what the
+   * old Sell Pack page did — so the "cart must hold a main wash service" rules
+   * do not apply to it.
+   */
+  sellsPack?: boolean;
 }
 
 export interface ValidationError {
@@ -78,8 +85,9 @@ export function validateOrder(input: OrderValidationInput): OrderValidationResul
     });
   }
 
-  // Rule 3: Cart must not be empty
-  if (!input.items || input.items.length === 0) {
+  // Rule 3: Cart must not be empty — unless the order is selling a pack, which
+  // is a sale in its own right (see sellsPack).
+  if ((!input.items || input.items.length === 0) && !input.sellsPack) {
     errors.push({
       code: ERR_ORDER_CART_EMPTY,
       message: 'Add at least one service',
@@ -87,8 +95,9 @@ export function validateOrder(input: OrderValidationInput): OrderValidationResul
     });
   }
 
-  // Rule 4: Cart must contain at least one main service
-  if (input.items && input.items.length > 0) {
+  // Rule 4: Cart must contain at least one main service. A pack sale can be
+  // accompanied by add-ons only (or nothing), so it is exempt too.
+  if (input.items && input.items.length > 0 && !input.sellsPack) {
     const hasMainService = input.items.some((item) => item.isMainService);
     if (!hasMainService) {
       errors.push({

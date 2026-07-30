@@ -146,6 +146,43 @@ export class ReportController {
   }
 
   /**
+   * GET /api/reports/daily-operations — the owner's daily operations sheet:
+   * revenue per payment rail plus the day's volume, membership and voucher
+   * counts. One row per day.
+   */
+  @Get('daily-operations')
+  async getDailyOperations(
+    @CurrentUser() user: JWTPayload,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('outletId') outletId?: string,
+    @Query('businessUnit') businessUnit?: string,
+  ) {
+    if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
+    if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
+    return this.reportService.getDailyOperations(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit });
+  }
+
+  /**
+   * GET /api/reports/agent-performance — item × agent matrix (what each
+   * salesperson sold in the period).
+   */
+  @Get('agent-performance')
+  async getAgentPerformance(
+    @CurrentUser() user: JWTPayload,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('outletId') outletId?: string,
+    @Query('businessUnit') businessUnit?: string,
+  ) {
+    if (!dateFrom || !dateTo) throw new BadRequestException('dateFrom and dateTo are required.');
+    if (isNaN(Date.parse(dateFrom)) || isNaN(Date.parse(dateTo))) throw new BadRequestException('Invalid date format.');
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
+    return this.reportService.getAgentPerformance(user.tenant_id, { dateFrom, dateTo, outletIds, businessUnit });
+  }
+
+  /**
    * GET /api/reports/shifts — shift-by-shift sales + cash reconciliation.
    */
   @Get('shifts')

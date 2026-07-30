@@ -19,7 +19,15 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
+/** The visitor's OWN choice. Written only when they hit the toggle. */
 const STORAGE_KEY = 'aire-theme';
+/**
+ * Cache of the tenant's `default_theme`, so the root layout's pre-paint script
+ * can honour a dark default on the very first paint. Branding is fetched after
+ * hydration, so without this hint a dark-default tenant would paint light and
+ * then flip. Not a preference — it is overwritten from branding on every load.
+ */
+const DEFAULT_HINT_KEY = 'aire-theme-default';
 
 const DEFAULT_THEME_CONFIG: ThemeConfig = {
   dark_mode_enabled: true,
@@ -46,15 +54,31 @@ function resolveRealTheme(config: ThemeConfig): Theme {
 /** Applies a resolved theme straight to the DOM + localStorage. Called from
  * effects/handlers only (never bound to a `theme`-keyed effect that could
  * fire once with a stale default) so it never stomps the theme-init script's
- * pre-paint class with a momentarily-wrong value. */
-function applyTheme(theme: Theme, persist: boolean) {
+ * pre-paint class with a momentarily-wrong value.
+ *
+ * `persist` must be true ONLY for an explicit user choice. Persisting the
+ * resolved theme on mount used to pin whatever the default happened to be on a
+ * visitor's very first page view, after which the stored value always beat the
+ * tenant's `default_theme` — so switching the tenant default to dark changed
+ * nothing for anyone who had ever loaded the app (Samuel 2026-07-30). */
+function applyTheme(theme: Theme, choice: 'save' | 'clear' | 'leave') {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
   root.classList.remove('light', 'dark');
   root.classList.add(theme);
   try {
-    if (persist) localStorage.setItem(STORAGE_KEY, theme);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (choice === 'save') localStorage.setItem(STORAGE_KEY, theme);
+    else if (choice === 'clear') localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Cache the tenant default for the next load's pre-paint script. */
+function rememberDefault(theme: Theme, darkModeEnabled: boolean) {
+  try {
+    if (darkModeEnabled) localStorage.setItem(DEFAULT_HINT_KEY, theme);
+    else localStorage.removeItem(DEFAULT_HINT_KEY);
   } catch {
     /* ignore */
   }
@@ -88,23 +112,29 @@ export function ThemeProvider({
   configRef.current = config;
 
   useEffect(() => {
-    const real = resolveRealTheme(configRef.current);
+    const cfg = configRef.current;
+    const real = resolveRealTheme(cfg);
     setThemeState((prev) => (prev === real ? prev : real));
-    applyTheme(real, configRef.current.dark_mode_enabled);
+    // 'leave' — reconciling on mount is not a user choice, so the visitor's own
+    // preference (if any) is neither written nor erased. When the tenant forces
+    // a theme we clear it instead: a stale preference must not outlive the
+    // policy that allowed it.
+    applyTheme(real, cfg.dark_mode_enabled ? 'leave' : 'clear');
+    rememberDefault(cfg.default_theme, cfg.dark_mode_enabled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.dark_mode_enabled, config.forced_theme, config.default_theme]);
 
   const setTheme = (next: Theme) => {
     if (!canToggleTheme) return;
     setThemeState(next);
-    applyTheme(next, true);
+    applyTheme(next, 'save');
   };
 
   const toggleTheme = () => {
     if (!canToggleTheme) return;
     setThemeState((t) => {
       const next: Theme = t === 'dark' ? 'light' : 'dark';
-      applyTheme(next, true);
+      applyTheme(next, 'save');
       return next;
     });
   };

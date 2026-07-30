@@ -6,8 +6,9 @@ import { useI18n } from '@/lib/i18n';
 import BranchFilter, { canFilterBranches } from '@/components/dashboard/BranchFilter';
 import { getUser } from '@/lib/auth';
 import { DocumentDesigner } from '@/components/dashboard/DocumentDesigner';
+import { DailyOperationsReport, AgentPerformanceReportTable } from '@/components/dashboard/OperationalReports';
 
-type ReportsTab = 'reports' | 'designer';
+type ReportsTab = 'reports' | 'daily' | 'agent' | 'designer';
 
 interface SummaryResponse {
   totalOrders: number;
@@ -49,7 +50,7 @@ export default function ReportsPage() {
   // Deep-link support: /dashboard/reports?tab=designer
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('tab');
-    if (q === 'designer' || q === 'reports') setTab(q);
+    if (q === 'designer' || q === 'reports' || q === 'daily' || q === 'agent') setTab(q);
     setUserRole(getUser()?.role);
   }, []);
 
@@ -131,6 +132,9 @@ export default function ReportsPage() {
 
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
   const paymentMethods = data ? Object.entries(data.byPaymentMethod) : [];
+  // The filter bar is shared by every data tab, so the query string is built
+  // once here rather than per report.
+  const qs = `dateFrom=${dateFrom}&dateTo=${dateTo}${businessUnit ? `&businessUnit=${businessUnit}` : ''}${branch ? `&outletId=${branch}` : ''}`;
 
   return (
     <div data-testid="reports-page">
@@ -139,6 +143,8 @@ export default function ReportsPage() {
       <div className="flex gap-1 border-b border-border mb-6">
         {([
           { key: 'reports' as const, label: t('dash.reports.tabReports', 'Reports') },
+          { key: 'daily' as const, label: t('dash.reports.tabDaily', 'Daily operations') },
+          { key: 'agent' as const, label: t('dash.reports.tabAgent', 'Sales per agent') },
           { key: 'designer' as const, label: t('dash.reports.tabDesigner', 'Report Designer') },
         ]).map((tb) => (
           <button
@@ -211,7 +217,7 @@ export default function ReportsPage() {
           <button className="btn-primary" onClick={() => loadReport()} disabled={loading}>
             {loading ? t('dash.reports.loading', 'Loading…') : t('dash.reports.generateReport', 'Generate Report')}
           </button>
-          {data && (
+          {data && tab === 'reports' && (
             <>
               <button type="button" className="btn-primary" onClick={exportPdf} disabled={exportingPdf}>
                 {exportingPdf ? t('dash.reports.preparingPdf', 'Preparing PDF…') : `⭳ ${t('dash.reports.exportPdf', 'Export PDF')}`}
@@ -223,7 +229,11 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {!data ? (
+      {tab === 'daily' ? (
+        <DailyOperationsReport qs={qs} dateFrom={dateFrom} dateTo={dateTo} />
+      ) : tab === 'agent' ? (
+        <AgentPerformanceReportTable qs={qs} dateFrom={dateFrom} dateTo={dateTo} />
+      ) : !data ? (
         <div className="card text-sm text-text-muted">{t('dash.reports.selectPrompt', 'Select a date range and click "Generate Report" to view metrics.')}</div>
       ) : (
         <>

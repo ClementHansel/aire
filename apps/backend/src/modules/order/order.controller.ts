@@ -21,6 +21,7 @@ import {
   Role,
   CreateOrderRequest,
   PayOrderRequest,
+  PaymentMethod,
   PromoPreviewRequest,
 } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
@@ -50,7 +51,11 @@ export class OrderController {
     @CurrentUser() user: JWTPayload,
     @Body() body: CreateOrderRequest,
   ) {
-    if (!body.customer?.name || !body.customer?.phone || !body.items?.length) {
+    // A pack-only order (membership plan / voucher pack, no wash) is a complete
+    // sale — that is what the retired Sell Pack page did — so an empty cart is
+    // valid exactly when the order sells one.
+    const sellsPack = Boolean(body.membershipPlanId || body.voucherPackTemplateId);
+    if (!body.customer?.name || !body.customer?.phone || (!body.items?.length && !sellsPack)) {
       throw new BadRequestException('customer name, phone, and at least one item are required');
     }
     return this.orderService.createOrder(body, user);
@@ -106,6 +111,8 @@ export class OrderController {
    *   dateFrom - ISO date for start of range
    *   dateTo   - ISO date for end of range
    *   outletId - filter by specific outlet (Tenant_Owner use case)
+   *   paymentMethod - filter by settlement method (cash/qris_static/…)
+   *   member   - 'member' | 'non_member' (order rung up against a membership or not)
    *   page     - page number (default 1)
    *   pageSize - page size (default 20, max 100)
    *
@@ -121,12 +128,26 @@ export class OrderController {
     @Query('outletId') outletId?: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
+    // Appended last on purpose: the parameters are positional for direct
+    // (non-HTTP) callers such as the controller unit tests.
+    @Query('paymentMethod') paymentMethod?: string,
+    @Query('member') member?: string,
   ): Promise<OrderListResponse> {
     // Validate status if provided
     if (status && !VALID_ORDER_STATUSES.includes(status as OrderStatus)) {
       throw new BadRequestException(
         `Invalid status. Must be one of: ${VALID_ORDER_STATUSES.join(', ')}`,
       );
+    }
+
+    const validMethods = Object.values(PaymentMethod) as string[];
+    if (paymentMethod && !validMethods.includes(paymentMethod)) {
+      throw new BadRequestException(
+        `Invalid paymentMethod. Must be one of: ${validMethods.join(', ')}`,
+      );
+    }
+    if (member && member !== 'member' && member !== 'non_member') {
+      throw new BadRequestException("Invalid member filter. Must be 'member' or 'non_member'.");
     }
 
     // Validate date formats if provided
@@ -159,6 +180,8 @@ export class OrderController {
       dateFrom,
       dateTo,
       outletIds,
+      paymentMethod,
+      memberFilter: member as 'member' | 'non_member' | undefined,
       // A cashier must always find the orders they rang up, even if the shift
       // booked them to a branch outside their assigned set (AIRIN-110).
       alwaysVisibleOperatorId: user.sub,

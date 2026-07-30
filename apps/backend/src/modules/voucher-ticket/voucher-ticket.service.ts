@@ -317,20 +317,24 @@ export class VoucherTicketService {
     if (dateTo) { filter += ` AND b.created_at < ($${qp.length + 1}::date + INTERVAL '1 day')`; qp.push(dateTo); }
 
     const res = await this.pool.query(
+      // benefit_service_id is only set for benefit_type = 'service'; the joined
+      // name lets the dashboard label a pack by what it actually grants
+      // ("Voucher Cuci Mobil") instead of the raw benefit type.
       `SELECT b.id, b.buyer_name, b.buyer_phone, b.quantity, b.benefit_type, b.unit_price, b.created_at,
-              b.outlet_id, o.name AS outlet_name,
+              b.outlet_id, o.name AS outlet_name, bs.name AS benefit_name,
               COUNT(t.id) FILTER (WHERE t.status = 'redeemed')::int AS redeemed
        FROM voucher_books b
        JOIN outlets o ON o.id = b.outlet_id
+       LEFT JOIN services bs ON bs.id = b.benefit_service_id
        LEFT JOIN voucher_tickets t ON t.book_id = b.id
        WHERE b.tenant_id = $1 ${filter}
-       GROUP BY b.id, o.name
+       GROUP BY b.id, o.name, bs.name
        ORDER BY b.created_at DESC LIMIT 200`,
       qp,
     );
     return res.rows.map((b) => ({
       id: b.id, buyerName: b.buyer_name, buyerPhone: b.buyer_phone, quantity: b.quantity,
-      benefitType: b.benefit_type, unitPrice: parseFloat(b.unit_price),
+      benefitType: b.benefit_type, benefitName: b.benefit_name ?? null, unitPrice: parseFloat(b.unit_price),
       outletId: b.outlet_id, outletName: b.outlet_name,
       redeemed: b.redeemed, createdAt: b.created_at,
     }));

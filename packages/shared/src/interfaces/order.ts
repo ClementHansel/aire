@@ -36,6 +36,17 @@ export interface CreateOrderRequest {
   voucherCodes?: string[];
   membershipId?: string;
   /**
+   * Membership plan SOLD on this order (a counter upsell), as opposed to
+   * `membershipId`, which is an EXISTING membership being used to price the
+   * wash. Selling a plan here adds a plan line to the order, creates the
+   * membership (pending until payment + plate registration), and makes the
+   * order's car-wash lines free — the "beli langganan sambil cuci" case that
+   * used to need a second order on the separate Sell Pack page.
+   */
+  membershipPlanId?: string;
+  /** Voucher pack sold on this order — same one-transaction rule as membershipPlanId. */
+  voucherPackTemplateId?: string;
+  /**
    * Promotions the cashier explicitly chose to apply. Promotions are NO LONGER
    * auto-applied — checkout only applies the ids listed here, and each is
    * re-validated server-side (active, in-window, quota, outlet, service trigger,
@@ -150,6 +161,15 @@ export interface OrderQueryParams {
    * the whole branch.
    */
   alwaysVisibleOperatorId?: string;
+  /** Settlement method filter (cash/qris_static/qris_dynamic/edc/cc/transfer). */
+  paymentMethod?: string;
+  /**
+   * Member filter. 'member' = the order was rung up against a membership
+   * (orders.membership_id set at checkout); 'non_member' = it was not. This is
+   * per-ORDER, not per-customer: a member who pays for an extra wash without
+   * attaching their membership counts as non_member for that order.
+   */
+  memberFilter?: 'member' | 'non_member';
   page?: number;
   pageSize?: number;
 }
@@ -184,6 +204,8 @@ export interface OrderCard {
   promoDiscount: number;
   /** Settlement method once paid (cash/qris_static/qris_dynamic/edc/cc/transfer); null while unpaid. */
   paymentMethod?: string | null;
+  /** True when the order was rung up against a membership (see OrderQueryParams.memberFilter). */
+  isMember?: boolean;
   total: number;
   createdAt: string;
 }

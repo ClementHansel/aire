@@ -90,7 +90,7 @@ It is the single web client for every surface: the management **dashboard**, the
 |-------------|---------|
 | `/hub` | Post-login launcher (Dashboard / POS / Kiosk tiles + Platform-Admin tile for super/owner) |
 | `/dashboard/*` | Management (see table below) |
-| `/pos/[outletAgentId]/*` | Point of sale (tabs: New Order, Orders, Sell Pack, Queue, Summary, Shift) |
+| `/pos/[outletAgentId]/*` | Point of sale (tabs: New Order, Orders, Queue, Summary, Shift) |
 | `/queue-board/[outletId]` | Full-screen TV queue display |
 | `/admin/*` | Platform admin (platform-super-admin only) |
 
@@ -153,18 +153,46 @@ the `[id]` segment accepts a slug or UUID, resolved server-side) · `monitoring`
 4. **Member detect** — a present plate auto-calls `/members/lookup?plate=`; "Find member" accepts
    a 12-char number, phone, or plate. Member pricing (`membershipId`) attaches **only for a truly
    active membership**; a soft-pop alert covers expiring-soon / grace / revoked / suspended with a
-   "Go to Sell Pack" renew CTA.
+   "Renew now" CTA that starts the renewal in place.
 5. **Vouchers** — validated against cart + subtotal; valid codes added as removable chips.
 6. **Place order** → `POST /orders` (returns computed totals).
 7. **Payment** — method buttons; cash shows change; **dynamic QRIS** renders a QR and polls
    `GET /orders/:id` every 3 s until `paid`; success shows a receipt; state resets for the next
    order.
 
-### Sell Pack (`/pos/[outletAgentId]/sell-pack`)
-Two tabs. **New membership:** `sell → pay → register plates → activate`. **Voucher pack:**
-`sell → pay → auto issue` (parent + child codes, WhatsApp delivered). **Renew existing member:**
-look up → pick membership → `renew → pay → apply-renewal` (applied only after the fee order is
-paid). Same cash/QRIS-poll machinery as New Order.
+### Packs on the New Order screen (the retired `/sell-pack` route)
+There is no separate Sell Pack page: `PackCatalog` is a second tab of the New Order catalog, and a
+selected pack is sent as `membershipPlanId` / `voucherPackTemplateId` on `POST /orders`, so the
+wash and the plan settle as **one order and one payment** (migration 089 made a pack an ordinary
+`order_items` row). Selling a plan alongside a wash zeroes the `car_wash` lines server-side — the
+counter upsell — while the plan line keeps the sale visible in the product mix.
+
+After payment, `runPostPaymentSteps` finishes whatever the pack still needs:
+**new membership** → `PlateRegistrationModal` → `POST /memberships/:id/activate` (first plate
+pre-filled from the order); **voucher pack** → `POST /voucher-packs/issue` → `VoucherCodesModal`
+(codes shown once, WhatsApp delivered); **renewal** → `POST /memberships/apply-renewal`.
+Renewal and member management (plates / cancel) are reached from **Find member** in the order
+panel.
+
+### Reports (`/dashboard/reports`)
+Four tabs sharing one filter bar (date range, business unit, branch): **Reports**
+(summary KPIs + shifts), **Daily operations**, **Sales per agent**, and the
+**Report Designer**. The two operational tabs rebuild the spreadsheets the
+outlet keeps by hand — `GET /reports/daily-operations` (revenue per payment rail
+× business unit, then volume / member split / items by category / memberships
+new vs renewed by plan length / voucher packs) and `GET /reports/agent-performance`
+(item × salesperson matrix). Both pivot whatever keys the API returns rather than
+assuming fixed columns, and both export CSV client-side.
+
+### Theme
+`ThemeProvider` (contexts/ThemeContext.tsx) resolves: tenant `forced_theme` when
+dark mode is disabled, else the visitor's stored choice, else the tenant's
+`default_theme`. Only an explicit toggle writes `aire-theme` — reconciling on
+mount does NOT, so changing a tenant's default actually reaches existing
+visitors. The tenant default is mirrored to `aire-theme-default` for the root
+layout's pre-paint script, so a dark-default tenant paints dark on first frame.
+`components/shared/ThemeToggle.tsx` is the single toggle used by the login page,
+hub, admin shell, dashboard sidebar/header and POS nav.
 
 ### Kiosk self-order (`/kiosk/[tenantId]/order`)
 Device-authorized (`?kioskToken=` → `x-kiosk-token`). Steps **identify → products → details →

@@ -10,9 +10,13 @@ import PovBanner from '@/components/PovBanner';
 // flash) and the server/client hydration pass agree (no React #418). Any
 // ThemeProvider on the page reconciles its own state against this right
 // after mount — see contexts/ThemeContext.tsx.
+// Falls back to the cached tenant default ('aire-theme-default', written by
+// ThemeProvider once branding loads) when the visitor has never picked a theme
+// themselves — otherwise a tenant whose default is dark painted light on every
+// first load and only flipped after hydration (Samuel 2026-07-30).
 const THEME_INIT_SCRIPT = `
   try {
-    var t = localStorage.getItem('aire-theme');
+    var t = localStorage.getItem('aire-theme') || localStorage.getItem('aire-theme-default');
     if (t === 'dark' || t === 'light') document.documentElement.classList.add(t);
   } catch (e) {}
 `;

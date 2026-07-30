@@ -15,7 +15,10 @@ export interface MembershipEvent {
   id: string;
   eventType: string;
   payload: Record<string, unknown> | null;
+  /** User id, or a system label ('pos', 'system') for non-user actors. */
   actor: string | null;
+  /** Display name for `actor` when it resolved to a real user (see history()). */
+  actorName?: string;
   createdAt: string;
 }
 
@@ -212,21 +215,113 @@ export class MembershipLifecycleService implements OnModuleInit {
     );
   }
 
-  /** Event history for a membership (newest first). */
+  /**
+   * Event history for a membership (newest first).
+   *
+   * Three sources are merged into one timeline, because the owner asked to see
+   * "siapa yang registerin platnya" and "pembelian kapan, siapa agent yang
+   * awalnya sales" in the same place (Samuel 2026-07-30):
+   *
+   * 1. `membership_events` — lifecycle transitions (activated, renewed, …).
+   * 2. `audit_logs` — plate add / edit / remove. These were already recorded
+   *    with the operator, but only in the audit log, so the member's own history
+   *    never showed them. Reading them here (rather than double-writing a
+   *    membership_events row going forward) means the history is complete for
+   *    plates changed BEFORE this change too.
+   * 3. The linked fee order — a synthetic `purchased` entry carrying the order
+   *    number, the cashier who rang it up and the salesperson credited.
+   *
+   * Actor ids are resolved to names in one pass; an actor that is not a user
+   * row (system jobs, 'pos') is passed through as-is.
+   */
   async history(tenantId: string, membershipId: string): Promise<MembershipEvent[]> {
-    const res = await this.pool.query(
-      `SELECT id, event_type, payload, actor, created_at
-       FROM membership_events
-       WHERE tenant_id = $1 AND membership_id = $2
-       ORDER BY created_at DESC LIMIT 200`,
-      [tenantId, membershipId],
-    );
-    return res.rows.map((r: any) => ({
+    const [lifecycle, plateOps, purchase] = await Promise.all([
+      this.pool.query(
+        `SELECT id, event_type, payload, actor, created_at
+         FROM membership_events
+         WHERE tenant_id = $1 AND membership_id = $2
+         ORDER BY created_at DESC LIMIT 200`,
+        [tenantId, membershipId],
+      ),
+      this.pool.query(
+        `SELECT id, operation, before_value, after_value, user_id, created_at
+         FROM audit_logs
+         WHERE tenant_id = $1 AND entity_type = 'membership_plate' AND entity_id = $2
+         ORDER BY created_at DESC LIMIT 200`,
+        [tenantId, membershipId],
+      ),
+      this.pool.query(
+        `SELECT o.id, o.order_number, o.created_at, o.total, o.salesperson_name,
+                u.name AS operator_name
+         FROM memberships m
+         JOIN orders o ON o.id = m.order_id
+         LEFT JOIN users u ON u.id = o.operator_id
+         WHERE m.id = $1 AND m.tenant_id = $2`,
+        [membershipId, tenantId],
+      ),
+    ]);
+
+    const events: MembershipEvent[] = lifecycle.rows.map((r: any) => ({
       id: r.id,
       eventType: r.event_type,
       payload: r.payload ?? null,
       actor: r.actor ?? null,
       createdAt: r.created_at,
     }));
+
+    for (const r of plateOps.rows as any[]) {
+      const before = r.before_value ?? null;
+      const after = r.after_value ?? null;
+      events.push({
+        id: r.id,
+        // 'plate_added' | 'plate_updated' | 'plate_removed' | 'plates_released'
+        eventType: r.operation,
+        payload: {
+          plate: after?.plate ?? before?.plate ?? null,
+          ...(r.operation === 'plate_updated' && before?.plate ? { from: before.plate } : {}),
+          ...(after?.brand || after?.model
+            ? { vehicle: [after.brand, after.model].filter(Boolean).join(' ') }
+            : {}),
+        },
+        actor: r.user_id ?? null,
+        createdAt: r.created_at,
+      });
+    }
+
+    const order = (purchase.rows as any[])[0];
+    if (order) {
+      events.push({
+        id: `purchase-${order.id}`,
+        eventType: 'purchased',
+        payload: {
+          orderNumber: order.order_number,
+          amount: order.total != null ? parseFloat(order.total) : null,
+          // The agent credited with the sale, which is not always the cashier
+          // who operated the till.
+          agent: order.salesperson_name ?? order.operator_name ?? null,
+          cashier: order.operator_name ?? null,
+        },
+        actor: null,
+        createdAt: order.created_at,
+      });
+    }
+
+    events.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return this.resolveActorNames(events);
+  }
+
+  /** Replace actor ids with user names where the actor is a real user row. */
+  private async resolveActorNames(events: MembershipEvent[]): Promise<MembershipEvent[]> {
+    const ids = [...new Set(events.map((e) => e.actor).filter((a): a is string => UUID_RE.test(a ?? '')))];
+    if (ids.length === 0) return events;
+    const res = await this.pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM users WHERE id = ANY($1::uuid[])`,
+      [ids],
+    );
+    const names = new Map(res.rows.map((r) => [r.id, r.name]));
+    return events.map((e) => (e.actor && names.has(e.actor) ? { ...e, actorName: names.get(e.actor)! } : e));
   }
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

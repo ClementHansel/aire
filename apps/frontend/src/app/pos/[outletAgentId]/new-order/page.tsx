@@ -9,6 +9,9 @@ import { PosNav } from '@/components/pos/PosNav';
 import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
 import { PlateInput } from '@/components/shared/PlateInput';
 import { LprSuggestions } from '@/components/pos/LprSuggestions';
+import { PackCatalog, type MembershipPlanDTO, type VoucherTemplateDTO } from '@/components/pos/PackCatalog';
+import { PlateRegistrationModal, VoucherCodesModal, type IssuedPack } from '@/components/pos/PackFollowUpModals';
+import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { useI18n } from '@/lib/i18n';
 import { filterOfferableDetections, upsertDetection } from '@/lib/lprSuggestions';
 import { normalizePlate, maxLineDiscount, LPR_DETECTED_EVENT, type DynamicDiscountRule, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
@@ -48,6 +51,8 @@ interface CreatedOrder {
   serviceCharge: number;
   tax: number;
   voucherDiscount: number;
+  /** Membership created by a plan sold on this order (pending until activation). */
+  membershipId?: string | null;
   /** Set when a member's benefit was withheld (daily/lifetime quota hit) and the
    *  order was charged at normal price — surfaced so the cashier can explain it. */
   membershipQuotaWarning?: string;
@@ -167,6 +172,27 @@ export default function NewOrderPage() {
   const [lprTick, setLprTick] = useState(0);
   const [lprBusyId, setLprBusyId] = useState<string | null>(null);
   const [showQueuePicker, setShowQueuePicker] = useState(false);
+  // ── Packs sold from this same screen (the retired /sell-pack page) ──────────
+  // A selected pack rides along on THIS order: one payment for "cuci + langganan".
+  const [catalogTab, setCatalogTab] = useState<'services' | 'packs'>('services');
+  const [plans, setPlans] = useState<MembershipPlanDTO[]>([]);
+  const [voucherTemplates, setVoucherTemplates] = useState<VoucherTemplateDTO[]>([]);
+  const [sellPlan, setSellPlan] = useState<MembershipPlanDTO | null>(null);
+  const [sellVoucherTpl, setSellVoucherTpl] = useState<VoucherTemplateDTO | null>(null);
+  // Post-payment steps: a paid plan still needs its plates before it activates,
+  // and a paid voucher pack still needs its codes generated.
+  const [activation, setActivation] = useState<{ membershipId: string; planName: string; maxPlates: number; plate?: string; brand?: string; model?: string } | null>(null);
+  const [issuing, setIssuing] = useState(false);
+  const [issued, setIssued] = useState<IssuedPack | null>(null);
+  const [showIssuedModal, setShowIssuedModal] = useState(false);
+  // Renewal + plate/cancel management for an existing member, also folded in
+  // from sell-pack. A renewal is its own fee order (it extends a membership
+  // rather than putting a plan line on this cart), so it reuses the same
+  // PaymentModal through `order` with this flag saying what to do on success.
+  const [pendingRenewalId, setPendingRenewalId] = useState<string | null>(null);
+  const [showMemberPanel, setShowMemberPanel] = useState(false);
+  const [renewPlanId, setRenewPlanId] = useState('');
+  const [memberLookup, setMemberLookup] = useState<MemberLookupResponse | null>(null);
   const [findInput, setFindInput] = useState('');
   const [finding, setFinding] = useState(false);
   const [vehicleBrands, setVehicleBrands] = useState<{ id: string; name: string; types: { id: string; name: string }[] }[]>([]);
@@ -237,6 +263,11 @@ export default function NewOrderPage() {
     api.get<{ enabled: boolean; scanAddsToCart: boolean }>('/barcode/config')
       .then((c) => setBarcodeCfg({ enabled: !!c.enabled, scanAddsToCart: c.scanAddsToCart !== false }))
       .catch(() => setBarcodeCfg({ enabled: false, scanAddsToCart: false }));
+    // Sellable packs. Neither is branch-scoped, so they load once regardless of
+    // which branch the shift is on. Failures leave the Packs tab empty rather
+    // than blocking the wash catalog.
+    api.get<MembershipPlanDTO[]>('/membership-plans').then(setPlans).catch(() => setPlans([]));
+    api.get<VoucherTemplateDTO[]>('/voucher-packs/catalog').then(setVoucherTemplates).catch(() => setVoucherTemplates([]));
   }, []);
 
   useEffect(() => {
@@ -347,6 +378,9 @@ export default function NewOrderPage() {
   // genuinely active membership; non-active ones still show the advisory soft-pop.
   const applyMember = (m: MemberLookupResponse, plateUsed?: string) => {
     if (!m?.customer) return;
+    // Kept whole for the member-management panel (plates / cancel), which needs
+    // the full lookup, not just the membership picked for pricing.
+    setMemberLookup(m);
     setName(m.customer.name);
     setPhone(m.customer.phone);
     // memberships arrive most-actionable first; prefer the active one for pricing.
@@ -438,6 +472,34 @@ export default function NewOrderPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.new.noMemberFound', 'No member found'));
     } finally { setFinding(false); }
+  };
+
+  /**
+   * Renew the member found above. A renewal EXTENDS an existing membership
+   * rather than selling a plan line, so the backend mints its own fee order —
+   * it reuses this page's PaymentModal, and `pendingRenewalId` tells the
+   * post-payment step to apply the renewal instead of activating a new plan.
+   * (Ported from the retired Sell Pack page.)
+   */
+  const startRenewal = async (membershipId: string) => {
+    const planId = renewPlanId || plans[0]?.id;
+    if (!planId) { setError(t('pos.sellpack.selectPlanRenew', 'Select a plan to renew on.')); return; }
+    setPlacing(true); setError('');
+    try {
+      const r = await api.post<{ order: { id: string; orderNumber: string; total: number } }>(
+        `/memberships/${membershipId}/renew`, { planId },
+      );
+      setPendingRenewalId(membershipId);
+      setOrder({
+        id: r.order.id, orderNumber: r.order.orderNumber, total: r.order.total,
+        subtotal: r.order.total, serviceCharge: 0, tax: 0, voucherDiscount: 0,
+      });
+      setAmountReceived(String(r.order.total));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('pos.sellpack.failedStartRenewal', 'Failed to start renewal'));
+    } finally {
+      setPlacing(false);
+    }
   };
 
   // Vehicle brand/type catalog for the brand → type dropdowns.
@@ -626,6 +688,18 @@ export default function NewOrderPage() {
   const promoDiscount = promoOptions
     .filter((p) => selectedPromoIds.includes(p.id))
     .reduce((sum, p) => sum + p.amount, 0);
+  // Cart-side mirror of the server's upsell rule (order.service.ts step 6c):
+  // selling a plan on this order frees the car_wash lines — add-ons and products
+  // stay payable — and the pack fee itself rides on top, untaxed.
+  const washSubtotal = cart.reduce(
+    (sum, l) => (services.find((s) => s.id === l.serviceId)?.category === 'car_wash'
+      ? sum + Math.max(0, l.price * l.qty - (l.manualDiscount ?? 0))
+      : sum),
+    0,
+  );
+  const packSubtotal = (sellPlan?.price ?? 0) + (sellVoucherTpl?.salePrice ?? 0);
+  const estimatedTotal = Math.max(0, subtotal - (sellPlan ? washSubtotal : 0) - promoDiscount) + packSubtotal;
+
   const hasNonStackableSelected = selectedPromoIds.length > 1 &&
     promoOptions.some((p) => selectedPromoIds.includes(p.id) && !p.stackable);
 
@@ -635,7 +709,10 @@ export default function NewOrderPage() {
       setError(t('pos.new.openShiftBeforeOrders', 'Open a shift before taking orders (Shift tab).'));
       return;
     }
-    if (!name.trim() || !phone.trim() || cart.length === 0) {
+    // A pack on its own is a complete sale (that is all the old Sell Pack page
+    // ever did), so an empty cart is only an error when nothing is being sold.
+    const sellsPack = Boolean(sellPlan || sellVoucherTpl);
+    if (!name.trim() || !phone.trim() || (cart.length === 0 && !sellsPack)) {
       setError(t('pos.new.enterCustomerService', 'Enter customer name, phone, and add at least one service.'));
       return;
     }
@@ -654,6 +731,10 @@ export default function NewOrderPage() {
         promotionIds: selectedPromoIds.length ? selectedPromoIds : undefined,
         operatingOutletId: operatingOutletId ?? undefined,
         membershipId: membershipId ?? undefined,
+        // Distinct from membershipId above: that prices the wash for an EXISTING
+        // member, this SELLS a new plan on this order (and frees the wash).
+        membershipPlanId: sellPlan?.id,
+        voucherPackTemplateId: sellVoucherTpl?.id,
         selectedPlate: selectedPlate ?? undefined,
         queueEntryId: queueEntryId ?? undefined,
       });
@@ -690,11 +771,52 @@ export default function NewOrderPage() {
         referenceNumber: (payMethod === 'edc' || payMethod === 'cc' || payMethod === 'transfer') ? referenceNumber.trim() : undefined,
       });
       const change = payMethod === 'cash' ? Math.max(0, Number(amountReceived) - order.total) : 0;
+      await runPostPaymentSteps(order);
       finishSale(order.orderNumber, order.total, change, order.membershipQuotaWarning);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.new.paymentFailed', 'Payment failed'));
     } finally {
       setPaying(false);
+    }
+  };
+
+  /**
+   * What a paid order still owes its customer when it sold a pack: a renewal
+   * must be applied, a new plan must be activated against its plates, and a
+   * voucher pack must have its codes generated. Runs BEFORE finishSale, which
+   * clears the selections these steps read.
+   *
+   * Each step is independent and non-fatal — the money is already taken, so a
+   * failure here must surface as an error the cashier can retry, never as a
+   * blocked screen.
+   */
+  const runPostPaymentSteps = async (paid: CreatedOrder) => {
+    if (pendingRenewalId) {
+      try {
+        await api.post('/memberships/apply-renewal', { orderId: paid.id });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t('pos.sellpack.failedApplyRenewal', 'Failed to apply renewal'));
+      }
+      return;
+    }
+    if (sellPlan && paid.membershipId) {
+      setActivation({
+        membershipId: paid.membershipId,
+        planName: sellPlan.name,
+        maxPlates: sellPlan.maxPlates,
+        plate, brand, model,
+      });
+    }
+    if (sellVoucherTpl) {
+      setIssuing(true);
+      setShowIssuedModal(true);
+      try {
+        setIssued(await api.post<IssuedPack>('/voucher-packs/issue', { orderId: paid.id, templateId: sellVoucherTpl.id }));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t('pos.sellpack.failedIssueVouchers', 'Failed to issue voucher codes'));
+      } finally {
+        setIssuing(false);
+      }
     }
   };
 
@@ -709,6 +831,8 @@ export default function NewOrderPage() {
     setMemberExpiry(null); setMemberAlert(null); setFindInput('');
     setMemberDetail(null); setMemberPlateOptions([]);
     setReferenceNumber(''); setPayMethod('cash');
+    setSellPlan(null); setSellVoucherTpl(null); setPendingRenewalId(null);
+    setCatalogTab('services');
   };
 
   // Poll order status while waiting for QRIS gateway confirmation
@@ -719,6 +843,7 @@ export default function NewOrderPage() {
         const o = await api.get<{ status: string; orderNumber: string; total: number }>(`/orders/${order.id}`);
         if (o.status === 'paid') {
           clearInterval(id);
+          await runPostPaymentSteps(order);
           finishSale(o.orderNumber, o.total, 0, order.membershipQuotaWarning);
         }
       } catch { /* keep polling */ }
@@ -766,6 +891,32 @@ export default function NewOrderPage() {
       <div className="flex-1 grid lg:grid-cols-3 gap-5 p-5 min-h-0">
         {/* Service grid */}
         <div className="lg:col-span-2">
+          {/* Services vs packs. Both sell into the SAME order — there is no
+              separate Sell Pack page any more (Samuel 2026-07-30). */}
+          <div className="inline-flex rounded-lg bg-surface-sunken p-1 mb-3">
+            {(['services', 'packs'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setCatalogTab(tab)}
+                data-testid={`catalog-tab-${tab}`}
+                className={`px-4 py-1.5 text-sm rounded-md ${catalogTab === tab ? 'bg-surface-raised shadow-sm font-medium text-text-primary' : 'text-text-secondary'}`}
+              >
+                {tab === 'services' ? t('pos.new.services', 'Services') : t('pos.new.packsTab', 'Membership & Vouchers')}
+              </button>
+            ))}
+          </div>
+
+          {catalogTab === 'packs' ? (
+            <PackCatalog
+              plans={plans}
+              templates={voucherTemplates}
+              selectedPlanId={sellPlan?.id ?? null}
+              selectedTemplateId={sellVoucherTpl?.id ?? null}
+              onPickPlan={setSellPlan}
+              onPickTemplate={setSellVoucherTpl}
+            />
+          ) : (
+          <>
           <div className="flex items-center justify-between mb-3">
             <h2 className="section-title">{t('pos.new.services', 'Services')}</h2>
             {/* Business unit switch — AIRE car wash vs LEAD detailing */}
@@ -813,6 +964,8 @@ export default function NewOrderPage() {
               ))}
             </div>
           )}
+          </>
+          )}
         </div>
 
         {/* Cart */}
@@ -843,6 +996,28 @@ export default function NewOrderPage() {
             )}
             {memberExpiry && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800">⏳ {memberExpiry}</div>
+            )}
+            {/* Renew / manage the found member without leaving this screen —
+                both used to live on the Sell Pack page. */}
+            {memberLookup && (memberLookup.memberships?.length ?? 0) > 0 && (
+              <div className="flex flex-wrap items-end gap-2 rounded-lg bg-surface-sunken p-2">
+                <div className="flex-1 min-w-[8rem]">
+                  <label className="block text-[11px] text-text-muted mb-1">{t('pos.sellpack.renewOnPlan', 'Renew on plan')}</label>
+                  <select className="input-field py-1 text-xs" aria-label={t('pos.sellpack.renewOnPlan', 'Renew on plan')} value={renewPlanId} onChange={(e) => setRenewPlanId(e.target.value)}>
+                    {plans.map((p) => <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>)}
+                  </select>
+                </div>
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={() => { const first = memberLookup.memberships[0]; if (first) startRenewal(first.id); }}
+                  disabled={placing}
+                >
+                  {t('pos.sellpack.renewPay', 'Renew & pay')}
+                </button>
+                <button className="btn-ghost text-xs" onClick={() => setShowMemberPanel(true)}>
+                  {t('pos.new.manageMember', 'Manage member')}
+                </button>
+              </div>
             )}
             {queueEntryId && !memberBanner && (
               <div className="rounded-lg bg-sky-50 border border-sky-200 p-2 text-xs text-sky-800">
@@ -906,7 +1081,38 @@ export default function NewOrderPage() {
           </div>
 
           <div className="flex-1 overflow-auto border-t border-border pt-3 space-y-2 min-h-[120px]">
-            {cart.length === 0 ? (
+            {/* Pack lines sit above the services: the plan is what makes the
+                wash below it free, and the cashier reads the cart top-down. */}
+            {sellPlan && (
+              <div className="rounded-lg border border-violet-200 bg-violet-50 p-2" data-testid="cart-plan-line">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-violet-900 truncate">{sellPlan.name}</p>
+                    <p className="text-xs text-violet-700">{t('pos.new.membershipLine', 'New membership')}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-sm font-semibold text-violet-900">{fmt(sellPlan.price)}</span>
+                    <button onClick={() => setSellPlan(null)} aria-label={t('pos.new.removePack', 'Remove pack')} className="w-6 h-6 rounded bg-white/70 text-violet-700">✕</button>
+                  </div>
+                </div>
+                {cart.length > 0 && (
+                  <p className="mt-1 text-[11px] text-violet-700">{t('pos.new.freeWashNote', "Today's wash is free with this plan — it still records as an upsell.")}</p>
+                )}
+              </div>
+            )}
+            {sellVoucherTpl && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 flex items-start justify-between gap-2" data-testid="cart-voucher-line">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-amber-900 truncate">{sellVoucherTpl.name}</p>
+                  <p className="text-xs text-amber-700">{t('pos.new.voucherPackLine', 'Voucher pack')}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-semibold text-amber-900">{fmt(sellVoucherTpl.salePrice)}</span>
+                  <button onClick={() => setSellVoucherTpl(null)} aria-label={t('pos.new.removePack', 'Remove pack')} className="w-6 h-6 rounded bg-white/70 text-amber-700">✕</button>
+                </div>
+              </div>
+            )}
+            {cart.length === 0 && !sellPlan && !sellVoucherTpl ? (
               <p className="text-sm text-text-muted italic">{t('pos.new.tapServices', 'Tap services to add them to the order.')}</p>
             ) : cart.map((l) => (
               <div key={l.serviceId} className="space-y-1">
@@ -1085,9 +1291,17 @@ export default function NewOrderPage() {
             {promoDiscount > 0 && (
               <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.promoSectionTitle', 'Promo')}</span><span className="font-medium text-green-600">−{fmt(promoDiscount)}</span></div>
             )}
-            <div className="flex justify-between text-sm font-semibold mb-1"><span>{t('pos.new.estimatedTotal', 'Estimated total')}</span><span className="text-primary-600">{fmt(Math.max(0, subtotal - promoDiscount))}</span></div>
+            {/* A plan makes the wash free, so the estimate must not keep showing
+                the wash price the customer will not be charged. */}
+            {sellPlan && cart.length > 0 && (
+              <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.freeWashLine', 'Wash (free with plan)')}</span><span className="font-medium text-green-600">−{fmt(washSubtotal)}</span></div>
+            )}
+            {packSubtotal > 0 && (
+              <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.packsLine', 'Membership / voucher pack')}</span><span className="font-medium">{fmt(packSubtotal)}</span></div>
+            )}
+            <div className="flex justify-between text-sm font-semibold mb-1"><span>{t('pos.new.estimatedTotal', 'Estimated total')}</span><span className="text-primary-600">{fmt(estimatedTotal)}</span></div>
             <p className="text-xs text-text-muted mb-3">{t('pos.new.serviceChargeTaxNote', 'Service charge & tax calculated at order time.')}</p>
-            <button onClick={placeOrder} disabled={placing || cart.length === 0 || !openShift} className="btn-primary w-full">
+            <button onClick={placeOrder} disabled={placing || (cart.length === 0 && !sellPlan && !sellVoucherTpl) || !openShift} className="btn-primary w-full">
               {placing ? t('pos.new.placing', 'Placing…') : !openShift ? t('pos.new.openShiftFirst', 'Open a shift first') : t('pos.new.placeOrder', 'Place Order')}
             </button>
           </div>
@@ -1144,8 +1358,15 @@ export default function NewOrderPage() {
             <p className="text-sm text-text-secondary mt-3">{memberAlert.body}</p>
             <div className="flex gap-2 justify-end mt-5">
               <button className="btn-secondary" onClick={() => setMemberAlert(null)}>{t('pos.new.mAlertContinue', 'Continue order')}</button>
-              {memberAlert.canRenew && (
-                <a href={`/pos/${params.outletAgentId as string}/sell-pack`} className="btn-primary">{t('pos.new.mAlertRenew', 'Go to Sell Pack')}</a>
+              {/* Renewal happens right here now — there is no Sell Pack page to
+                  send the cashier to any more. */}
+              {memberAlert.canRenew && memberDetail && (
+                <button
+                  className="btn-primary"
+                  onClick={() => { setMemberAlert(null); startRenewal(memberDetail.id); }}
+                >
+                  {t('pos.new.mAlertRenew', 'Renew now')}
+                </button>
               )}
             </div>
           </div>
@@ -1169,6 +1390,38 @@ export default function NewOrderPage() {
               </div>
             )}
             <button className="btn-primary w-full mt-5" onClick={() => setReceipt(null)}>{t('pos.new.newOrder', 'New Order')}</button>
+          </div>
+        </div>
+      )}
+
+      {/* A paid plan is still 'pending' until its plates are registered. */}
+      {activation && (
+        <PlateRegistrationModal
+          membershipId={activation.membershipId}
+          planName={activation.planName}
+          maxPlates={activation.maxPlates}
+          prefill={{ plate: activation.plate, brand: activation.brand, model: activation.model }}
+          vehicleBrands={vehicleBrands}
+          onDone={() => setActivation(null)}
+        />
+      )}
+
+      {/* Codes for a paid voucher pack — shown once. */}
+      {showIssuedModal && (
+        <VoucherCodesModal
+          issued={issued}
+          issuing={issuing}
+          error={error}
+          onClose={() => { setShowIssuedModal(false); setIssued(null); }}
+        />
+      )}
+
+      {/* Member management (plates / cancel), moved here from Sell Pack. */}
+      {showMemberPanel && memberLookup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowMemberPanel(false)}>
+          <div className="w-full max-w-lg max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <MemberManagementPanel member={memberLookup} onChanged={() => findMember()} />
+            <button className="btn-secondary w-full mt-3" onClick={() => setShowMemberPanel(false)}>{t('pos.sellpack.close', 'Close')}</button>
           </div>
         </div>
       )}

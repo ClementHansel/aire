@@ -46,11 +46,13 @@ describe('ReportService', () => {
         ],
       });
 
-      // Service breakdown query
+      // Product-mix breakdown query — services AND packs (migration 089), keyed
+      // by item_id with the line's kind alongside it.
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { service_id: 'svc-1', name: 'Premium Wash', total_quantity: '15', total_revenue: '3000000.00' },
-          { service_id: 'svc-2', name: 'Basic Wash', total_quantity: '10', total_revenue: '1000000.00' },
+          { item_id: 'svc-1', name: 'Premium Wash', kind: 'service', total_quantity: '15', total_revenue: '3000000.00' },
+          { item_id: 'plan-1', name: 'Membership Bulanan', kind: 'membership_plan', total_quantity: '2', total_revenue: '2000000.00' },
+          { item_id: 'svc-2', name: 'Basic Wash', kind: 'service', total_quantity: '10', total_revenue: '1000000.00' },
         ],
       });
 
@@ -79,8 +81,9 @@ describe('ReportService', () => {
         LEAD: { revenue: 1000000, count: 2 },
       });
       expect(result.byService).toEqual([
-        { serviceId: 'svc-1', name: 'Premium Wash', quantity: 15, revenue: 3000000 },
-        { serviceId: 'svc-2', name: 'Basic Wash', quantity: 10, revenue: 1000000 },
+        { serviceId: 'svc-1', name: 'Premium Wash', kind: 'service', quantity: 15, revenue: 3000000 },
+        { serviceId: 'plan-1', name: 'Membership Bulanan', kind: 'membership_plan', quantity: 2, revenue: 2000000 },
+        { serviceId: 'svc-2', name: 'Basic Wash', kind: 'service', quantity: 10, revenue: 1000000 },
       ]);
     });
 
@@ -323,4 +326,129 @@ describe('ReportService', () => {
       expect(params).toContainEqual(['outlet-456']);
     });
   });
+
+  /**
+   * The two reports rebuilt from the owner's manual spreadsheet (Samuel
+   * 2026-07-30). Both fan out several grouped queries and stitch the rows into
+   * one table, so the stitching is what's worth pinning down.
+   */
+  describe('getDailyOperations', () => {
+    /** The six queries fire via Promise.all in a fixed order. */
+    const setup = (over: Partial<Record<'payments' | 'volume' | 'categories' | 'newMembers' | 'renewals' | 'vouchers', any[]>> = {}) => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: over.payments ?? [] })
+        .mockResolvedValueOnce({ rows: over.volume ?? [] })
+        .mockResolvedValueOnce({ rows: over.categories ?? [] })
+        .mockResolvedValueOnce({ rows: over.newMembers ?? [] })
+        .mockResolvedValueOnce({ rows: over.renewals ?? [] })
+        .mockResolvedValueOnce({ rows: over.vouchers ?? [] });
+    };
+
+    it('splits card/QRIS revenue per business unit but keeps cash whole', async () => {
+      setup({
+        payments: [
+          { day: '2026-01-01', method: 'cash', channel: 'AIRE', revenue: '60000' },
+          { day: '2026-01-01', method: 'qris_dynamic', channel: 'AIRE', revenue: '540000' },
+          { day: '2026-01-01', method: 'qris_dynamic', channel: 'LEAD', revenue: '1179000' },
+        ],
+      });
+
+      const [row] = await reportService.getDailyOperations('tenant-1', { dateFrom: '2026-01-01', dateTo: '2026-01-01' });
+
+      // Cash is one column in their sheet; the QRIS rail is split by unit.
+      expect(row!.payments).toEqual({
+        cash: 60000,
+        'qris_dynamic|AIRE': 540000,
+        'qris_dynamic|LEAD': 1179000,
+      });
+      expect(row!.revenue).toBe(1779000);
+    });
+
+    it('derives the non-member count and keys memberships by plan length', async () => {
+      setup({
+        volume: [{ day: '2026-01-01', orders: '57', member: '34' }],
+        newMembers: [{ day: '2026-01-01', months: 1, n: '2' }],
+        renewals: [{ day: '2026-01-01', months: 3, n: '5' }],
+        vouchers: [{ day: '2026-01-01', n: '1' }],
+        categories: [{ day: '2026-01-01', category: 'car_wash', qty: '65' }],
+      });
+
+      const [row] = await reportService.getDailyOperations('tenant-1', { dateFrom: '2026-01-01', dateTo: '2026-01-01' });
+
+      expect(row!.memberOrders).toBe(34);
+      expect(row!.nonMemberOrders).toBe(23);
+      expect(row!.newMemberships).toEqual({ '1': 2 });
+      expect(row!.renewals).toEqual({ '3': 5 });
+      expect(row!.voucherPacks).toBe(1);
+      expect(row!.itemsByCategory).toEqual({ car_wash: 65 });
+    });
+
+    it('returns one row per day, oldest first', async () => {
+      setup({
+        volume: [
+          { day: '2026-01-02', orders: '5', member: '1' },
+          { day: '2026-01-01', orders: '3', member: '0' },
+        ],
+      });
+
+      const rows = await reportService.getDailyOperations('tenant-1', { dateFrom: '2026-01-01', dateTo: '2026-01-02' });
+      expect(rows.map((r) => r.date)).toEqual(['2026-01-01', '2026-01-02']);
+    });
+  });
+
+  describe('getAgentPerformance', () => {
+    const setup = (newMembers: any[], renewals: any[], vouchers: any[], items: any[]) => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: newMembers })
+        .mockResolvedValueOnce({ rows: renewals })
+        .mockResolvedValueOnce({ rows: vouchers })
+        .mockResolvedValueOnce({ rows: items });
+    };
+
+    it('builds an item x agent matrix with totals', async () => {
+      setup(
+        [{ agent: 'FITRI', months: 1, n: '18' }, { agent: 'ADEL', months: 1, n: '9' }],
+        [{ agent: 'FITRI', months: 3, n: '9' }],
+        [{ agent: 'FITRI', n: '26' }],
+        [{ agent: 'ADEL', name: 'Microfiber', kind: 'service', qty: '2' }],
+      );
+
+      const report = await reportService.getAgentPerformance('tenant-1', { dateFrom: '2026-01-01', dateTo: '2026-01-31' });
+
+      expect(report.agents).toEqual(['ADEL', 'FITRI']);
+      const newMbr = report.rows.find((r) => r.item === 'NEW MBR (1mth)')!;
+      expect(newMbr.byAgent).toEqual({ FITRI: 18, ADEL: 9 });
+      expect(newMbr.total).toBe(27);
+      expect(report.rows.find((r) => r.item === 'BELI PAKET VOU')!.total).toBe(26);
+      expect(report.rows.find((r) => r.item === 'Microfiber')!.total).toBe(2);
+    });
+
+    it('does not double-count pack lines already counted from their own tables', async () => {
+      setup(
+        [{ agent: 'FITRI', months: 1, n: '1' }],
+        [],
+        [],
+        // The merged POS writes the plan as an order line too — counting it here
+        // as well would report the sale twice.
+        [{ agent: 'FITRI', name: 'Unlimited 1 Month', kind: 'membership_plan', qty: '1' }],
+      );
+
+      const report = await reportService.getAgentPerformance('tenant-1', { dateFrom: '2026-01-01', dateTo: '2026-01-31' });
+
+      expect(report.rows.map((r) => r.item)).toEqual(['NEW MBR (1mth)']);
+    });
+
+    it('groups orders with no salesperson under a single trailing column', async () => {
+      setup([], [], [], [
+        { agent: 'FITRI', name: 'Cuci Reguler', kind: 'service', qty: '3' },
+        { agent: '—', name: 'Cuci Reguler', kind: 'service', qty: '7' },
+      ]);
+
+      const report = await reportService.getAgentPerformance('tenant-1', { dateFrom: '2026-01-01', dateTo: '2026-01-31' });
+
+      expect(report.agents[report.agents.length - 1]).toBe('—');
+      expect(report.rows[0]!.total).toBe(10);
+    });
+  });
+
 });

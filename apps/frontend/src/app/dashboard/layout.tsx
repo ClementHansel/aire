@@ -9,6 +9,7 @@ import { useTenantModules, moduleEnabled } from '@/lib/useModules';
 import { isHeld, isHeldRoute } from '@aire/shared';
 import { usePermissions, hasPermission } from '@/lib/usePermissions';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
+import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import AnnouncementsBanner from '@/components/dashboard/AnnouncementsBanner';
@@ -306,7 +307,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               <p className="text-xs text-text-muted truncate capitalize">{user?.role?.replace(/_/g, ' ') ?? ''}</p>
             </div>
           </div>
-          <div className="mb-2"><LanguageToggle /></div>
+          <div className="mb-2 flex items-center gap-2"><LanguageToggle /><ThemeToggle className="h-7 w-7" /></div>
           <button onClick={logout} className="btn-ghost w-full text-xs justify-start inline-flex items-center gap-2">
             <LogOut className="w-4 h-4" strokeWidth={1.75} /> {t('common.signOut', 'Sign out')}
           </button>
@@ -328,7 +329,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             )}
             <span className="font-semibold text-sm text-text-primary font-display">{companyName}</span>
           </Link>
-          <div className="flex items-center gap-2"><LanguageToggle /><button onClick={logout} className="text-xs text-text-secondary">{t('common.signOut', 'Sign out')}</button></div>
+          <div className="flex items-center gap-2"><LanguageToggle /><ThemeToggle className="h-8 w-8" /><button onClick={logout} className="text-xs text-text-secondary">{t('common.signOut', 'Sign out')}</button></div>
         </header>
 
         {/* Page content — the single vertical scroll container */}

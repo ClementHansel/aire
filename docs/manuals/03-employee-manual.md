@@ -20,7 +20,7 @@ the **arrival queue**, sell memberships and vouchers, manage stock, or handle HR
 3. [The POS at a glance](#3-the-pos-at-a-glance)
 4. [Take a sale (New Order)](#4-take-a-sale-new-order)
 5. [The arrival queue](#5-the-arrival-queue)
-6. [Sell Pack — memberships & voucher packs](#6-sell-pack--memberships--voucher-packs)
+6. [Memberships & voucher packs (same New Order screen)](#6-memberships--voucher-packs-same-new-order-screen)
 7. [Orders & the day summary](#7-orders--the-day-summary)
 8. [Close your shift](#8-close-your-shift)
 9. [Inventory & stock (Outlet Admin)](#9-inventory--stock-outlet-admin)
@@ -70,13 +70,14 @@ While the shift is open, everything you sell belongs to it.
 
 ## 3. The POS at a glance
 
-Across the top of the POS are six tabs:
+Across the top of the POS are five tabs:
 
-**New Order · Orders · Sell Pack · Queue · Summary · Shift**
+**New Order · Orders · Queue · Summary · Shift**
 
-- **New Order** — ring up a sale.
+- **New Order** — ring up a sale, and sell/renew memberships and voucher packs. There is no
+  separate Sell Pack tab any more: a plan sold while a customer is paying for a wash goes on the
+  **same order**, so it is one transaction (see §6).
 - **Orders** — browse/search today's orders.
-- **Sell Pack** — sell or renew memberships, and sell voucher packs.
 - **Queue** — the arrival board (cars waiting).
 - **Summary** — today's totals.
 - **Shift** — open/close the register.
@@ -96,8 +97,8 @@ Across the top of the POS are six tabs:
    **Find member** box (or scan the card) and click **Find**:
    - If they're an **active** member, member pricing applies automatically and their card can show.
    - If their membership is **expiring soon, in grace, revoked, or suspended**, you'll see an alert
-     with a **"Go to Sell Pack"** button to renew. Grace/revoked members get **no** benefits until
-     renewed.
+     with a **"Renew now"** button that starts the renewal right there. Grace/revoked members get
+     **no** benefits until renewed.
 5. **Voucher code** *(optional)* — type a code and click **Apply**; valid ones appear as removable
    chips.
 6. Click **Place Order** (the button reads **"Open a shift first"** until you've opened a shift —
@@ -139,26 +140,41 @@ the waiting area.
 
 ---
 
-## 6. Sell Pack — memberships & voucher packs
+## 6. Memberships & voucher packs (same New Order screen)
 
-**Sell Pack tab.** Two sub-tabs: **Membership Plans** and **Voucher Packs**.
+**New Order → the "Membership & Vouchers" tab**, next to **Services**. Whatever you pick there
+joins the order you are already ringing up, so the customer pays **once**.
 
-![Sell Pack → Membership Plans — pick a plan to sell, or use "Renew existing member" at the top to find and renew someone.](images/pos-05-sell-pack.png)
+![New Order → Membership & Vouchers — pick a plan or a voucher pack; it lands in the same cart as the wash.](images/pos-05-sell-pack.png)
 
-### Sell a new membership
-1. On **Membership Plans**, click a plan → this creates a **fee order** → take payment.
-2. **Register the customer's vehicle plate(s)** (up to the plan's limit) → click **Activate**.
-3. The membership is now active; the member number is issued and a WhatsApp welcome may be sent.
+### Sell a membership (including the upsell at the counter)
+1. Ring up the wash as usual, then open the **Membership & Vouchers** tab and tap a **plan**.
+   It appears in the cart above the services.
+2. If the customer is having a wash on this same order, **that wash becomes free** — the cart
+   shows it, and the total is just the plan price. The sale still records as an upsell, so it
+   shows up in the owner's reports as a new member (not as a discount).
+3. Click **Place Order** → take payment as normal.
+4. **Register the customer's vehicle plate(s)** (up to the plan's limit) → **Save & Activate**.
+   The first plate is pre-filled from the plate you already typed on the order.
+5. The membership is now active; the member number is issued and a WhatsApp welcome may be sent.
+
+> The free wash uses **one** of the member's washes for the day, so their remaining quota reflects
+> the wash they just had.
 
 ### Renew an existing member
-1. At the top of the same tab, use **Renew existing member** — **Find** them by plate/phone/number.
-2. Pick their membership → **Renew** → take payment.
+1. Use **Find member** in the order panel — by plate, phone, or 12-character number.
+2. Pick the plan to renew on, then click **Renew & pay** → take payment.
 3. The renewal takes effect **only after** the fee is paid (this is automatic). **Active/grace**
    members are **extended**; **revoked** members get a **new** membership.
 
+### Manage a member (plates, cancellation)
+After **Find member**, click **Manage member** to view/edit their registered plates or cancel the
+membership.
+
 ### Sell a voucher pack
-1. On **Voucher Packs**, pick a pack template → take payment.
-2. The codes are generated and **sent to the buyer over WhatsApp** automatically.
+1. On the **Membership & Vouchers** tab, pick a **voucher pack** → **Place Order** → take payment.
+2. The codes are generated and **sent to the buyer over WhatsApp** automatically, and shown on
+   screen once.
 
 ---
 
@@ -251,8 +267,8 @@ Across the top are tabs:
 | Take payment for a queued car | POS → **Queue** → **Proses Bayar** |
 | Add a walk-in to the queue | POS → **Queue** → **Log Arrival → + Add to queue** |
 | Find a member's details/pricing | POS → **New Order** → **Find member** |
-| Sell or renew a membership | POS → **Sell Pack → Membership Plans** |
-| Sell a voucher pack | POS → **Sell Pack → Voucher Packs** |
+| Sell or renew a membership | POS → **New Order → Membership & Vouchers** |
+| Sell a voucher pack | POS → **New Order → Membership & Vouchers** |
 | See today's totals | POS → **Summary** |
 | Edit or void an order (Outlet Admin) | POS → **Orders** |
 | Receive stock (Outlet Admin) | Dashboard → **Procurement** |

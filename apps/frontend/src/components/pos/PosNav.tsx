@@ -1,10 +1,14 @@
 /**
  * PosNav — shared POS top navigation/header bar.
  *
- * Renders the brand mark, the consistent set of POS tab links (Hub, New Order,
- * Orders, Sell Pack, Queue, Summary, Shift), and the signed-in user + sign-out
- * control. Centralising this keeps every POS page's navigation identical so no
- * sub-route becomes orphaned.
+ * Renders the brand mark, the consistent set of POS tab links (New Order,
+ * Orders, Queue, Summary, Shift), and the signed-in user + sign-out control.
+ * Centralising this keeps every POS page's navigation identical so no sub-route
+ * becomes orphaned.
+ *
+ * There is deliberately no "Sell Pack" tab: membership plans and voucher packs
+ * are sold from the New Order screen, on the same order as the wash (Samuel
+ * 2026-07-30 — "supaya jadinya ga ada halaman jual paket, semua di satu halaman").
  */
 'use client';
 
@@ -13,13 +17,13 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { getUser, clearSession } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
+import { ThemeToggle } from '@/components/shared/ThemeToggle';
 
-export type PosTab = 'new-order' | 'orders' | 'sell-pack' | 'queue' | 'summary' | 'shift';
+export type PosTab = 'new-order' | 'orders' | 'queue' | 'summary' | 'shift';
 
 const TABS: { id: PosTab; label: string; key: string }[] = [
   { id: 'new-order', label: 'New Order', key: 'pos.newOrder' },
   { id: 'orders', label: 'Orders', key: 'pos.orders' },
-  { id: 'sell-pack', label: 'Sell Pack', key: 'pos.sellPack' },
   { id: 'queue', label: 'Queue', key: 'pos.queue' },
   { id: 'summary', label: 'Summary', key: 'pos.summary' },
   { id: 'shift', label: 'Shift', key: 'pos.shift' },
@@ -69,9 +73,11 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
     <header className="bg-surface-raised border-b border-border px-5 py-3 flex items-center justify-between">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
-            <span className="text-sm font-bold text-white">A</span>
-          </div>
+          {/* Official Airin mark (brand kit, 2026-07-30) — replaces the
+              hand-drawn "A" box. The gradient variant carries its own colours,
+              so it reads correctly on both themes. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/airin-icon-gradient.svg" alt="Airin" className="w-8 h-8 object-contain" />
           <div>
             <p className="font-semibold text-text-primary text-sm">{title ?? activeLabel}</p>
             {resolvedSubtitle && <p className="text-xs text-text-muted">{resolvedSubtitle}</p>}
@@ -95,6 +101,7 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
       </div>
       <div className="flex items-center gap-3">
         <LanguageToggle />
+        <ThemeToggle className="h-8 w-8" />
         <span className="text-xs text-text-secondary">{user?.name}</span>
         {/* Sign out the cashier but keep the terminal registered — the POS shell
             guard then shows the cashier sign-in for the next operator. */}
