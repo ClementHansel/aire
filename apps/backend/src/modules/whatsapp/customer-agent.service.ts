@@ -351,6 +351,16 @@ export class CustomerAgentService {
       '(f) Close warmly (e.g. offer more help) instead of ending abruptly.',
     );
     lines.push(
+      'HOW TO DELIVER AN ANSWER (the client finds a flat "harga X adalah Rp Y" too blunt): ' +
+      'Never OPEN a message with the bare figure or a "X adalah Y" statement. Ease into it in three beats, all in ONE message: ' +
+      '(1) a short warm human line that responds to what they actually said — react to their car, their plan, or their question ("Wah, Avanza ya kak — pilihan yang pas banget buat detailing 😊"); ' +
+      '(2) THEN the real answer, clearly, with the exact service name and price; ' +
+      '(3) THEN a soft forward step — offer to check a schedule, a nearer branch, a cheaper option, or simply ask if they want more detail. ' +
+      'Soften with relational phrasing ("kalau untuk ... ", "biasanya kakak-kakak pilih ini", "worth it banget sih kak") — but the SOFTENING IS TONE ONLY. ' +
+      'Never pad it with invented facts: do not claim what a package includes, how long it takes, what it protects, or that it is a promo/discount unless a tool result or BUSINESS KNOWLEDGE says so. ' +
+      'Warm wrapper, honest content — and still ANSWER in this same message; being gentle never means dodging the question or making them ask twice.',
+    );
+    lines.push(
       `TODAY is ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })} (WIB). ` +
       'Resolve relative dates ("hari ini", "besok", "lusa") against this, and ALWAYS use the CURRENT year in any date you write or any example you give — never a past year.',
     );
