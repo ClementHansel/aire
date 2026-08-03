@@ -12,6 +12,32 @@ import { toolsForRole, roleAllowsTool, type CustomerToolName } from './customer-
 
 export interface CustomerAgentPersona { name: string; role: AgentRole; prompt: string | null }
 
+/** Address terms that commonly ride along with a bare greeting ("halo kak"). */
+const ADDRESS = 'kak|kaka|kakak|bang|bro|sis|mas|mbak|pak|bu|min|admin|irene';
+const GREETING_WORD =
+  `halo+|hallo+|hai+|hi+|hello+|helo+|hey+|yo|assalamualaikum|assalamu'?alaikum|` +
+  `selamat\\s+(?:pagi|siang|sore|malam)|pagi|siang|sore|malam|` +
+  `good\\s+(?:morning|afternoon|evening|day)`;
+const PURE_GREETING = new RegExp(
+  `^(?:\\s*(?:${GREETING_WORD}|${ADDRESS})\\b[\\s,.!?~-]*[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\\s]*)+$`,
+  'iu',
+);
+
+/**
+ * True when a message is NOTHING but a social greeting ("Halo", "Selamat sore
+ * kak") — no question, no topic riding along.
+ *
+ * Deliberately narrower than `detectIntent`'s `greeting` bucket, which also
+ * absorbs thanks and self-introductions: this one answers only "did the
+ * customer just say hello and nothing else?", which is what decides whether
+ * greeting them back is the whole point of the reply.
+ */
+export function isPureGreeting(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (!t || t.length > 40) return false;
+  return PURE_GREETING.test(t);
+}
+
 export interface CustomerReply {
   text: string;
   /** True when the agent decided the conversation needs a human. */
@@ -111,7 +137,15 @@ export class CustomerAgentService {
     // Deterministic safety net for the greeting: even with the turn-aware prompt,
     // qwen sometimes re-opens follow-up replies with "Halo kak, aku Irene…". On
     // any non-first turn, strip a leading greeting so we never repeat it.
-    const text = isFirstTurn ? loop.reply : this.stripLeadingGreeting(loop.reply);
+    //
+    // BUT NOT when the customer themselves just said hello ("Halo", "Selamat
+    // sore"): there the greeting IS the answer, and cutting it left a bare,
+    // curt fragment — "Mau tanya harga, lokasi, membership…?" with no hello at
+    // all, which is exactly what read as rude (Samuel 2026-08-03). Greeting a
+    // greeting back is warm; only an unprompted re-introduction is noise.
+    const text = isFirstTurn || isPureGreeting(params.text)
+      ? loop.reply
+      : this.stripLeadingGreeting(loop.reply);
     return { text, escalate, toolsUsed: loop.toolsUsed, bookingSummary };
   }
 
@@ -301,7 +335,17 @@ export class CustomerAgentService {
     }
     if (p.persona?.prompt) lines.push(p.persona.prompt);
     if (p.basePrompt) lines.push(p.basePrompt);
-    lines.push("Reply in the customer's language (Bahasa Indonesia by default). Be warm, friendly and natural — like a cheerful, helpful person, not a stiff bot. Keep messages short and WhatsApp-friendly. Format money as Rp.");
+    lines.push("Reply in the customer's language (Bahasa Indonesia by default). Keep messages short and WhatsApp-friendly. Format money as Rp.");
+    lines.push(
+      'TONE (very important — the client has called earlier replies "judes"/curt): ' +
+      'You are warm, friendly and flowing, like a cheerful Indonesian CS who genuinely enjoys helping — never cold, clipped, or robotic. Concretely: ' +
+      '(a) Always acknowledge what the customer just said before you answer it — never open with a bare question or a bare list. ' +
+      '(b) Say "kak"/"kakak", and use their name when you know it. ' +
+      '(c) Vary your wording — never send the same sentence twice in one chat; if you already offered the same menu of help, phrase it differently or skip it. ' +
+      '(d) One or two friendly emoji per message, not more. ' +
+      '(e) Mirror the customer: casual and playful when they are casual, a little more polite when they are formal — but ALWAYS polite and never stiff or formal-corporate. ' +
+      '(f) Close warmly (e.g. offer more help) instead of ending abruptly.',
+    );
     lines.push(
       `TODAY is ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })} (WIB). ` +
       'Resolve relative dates ("hari ini", "besok", "lusa") against this, and ALWAYS use the CURRENT year in any date you write or any example you give — never a past year.',
@@ -312,7 +356,9 @@ export class CustomerAgentService {
     lines.push(
       p.isFirstTurn
         ? 'GREETING: This is the FIRST message of the chat — open with a warm, slightly longer introduction that (1) greets the customer, (2) introduces yourself by name and role, and (3) invites what they need. Follow this example closely: "Halo kak! 😊 Aku Irene, CS-nya AIRE. Ada yang bisa Irene bantu hari ini? Mau tanya harga, lokasi, membership, atau mau booking cuci mobil? 🚗✨". Do not answer with a bare one-liner.'
-        : 'GREETING: This is a FOLLOW-UP in an ongoing chat — do NOT greet again and do NOT re-introduce yourself. Answer the question directly and warmly. Never begin with "Halo kak", "Hai", or "Aku Irene" — repeating the greeting on every message feels robotic.',
+        : 'GREETING: This is a FOLLOW-UP in an ongoing chat — do NOT re-introduce yourself and do not repeat your opening menu word-for-word. Answer warmly and directly. ' +
+          'EXCEPTION — if the customer simply greets you again ("Halo", "Selamat sore"), greet them back like a friendly human would: mirror their greeting ("Selamat sore juga kak! 😊"), then ask warmly what you can help with, in DIFFERENT words from your first message. ' +
+          'Never reply to a greeting with just a bare question or a bare list of topics — that reads as cold.',
     );
     lines.push(
       'STRICT RULES: You may ONLY use the provided tools to look things up. ' +

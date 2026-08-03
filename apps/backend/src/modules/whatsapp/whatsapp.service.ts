@@ -128,7 +128,7 @@ export class WhatsappService implements OnModuleInit {
     try {
       const expired = await this.pendingBooking.sweepExpired();
       for (const e of expired) {
-        const text = `Mohon maaf, permintaan booking Anda (${e.summary}) belum sempat kami konfirmasi dan telah kedaluwarsa. Silakan hubungi kami untuk menjadwalkan ulang. 🙏`;
+        const text = `Halo kak, maaf banget ya 🙏 Booking kakak (${e.summary}) belum sempat tim kami konfirmasi jadi otomatis kedaluwarsa. Kalau masih mau dijadwalkan, chat Irene aja ya — nanti Irene bantu atur ulang 😊`;
         const conv = await this.upsertConversation(e.tenantId, e.customerPhone);
         await this.addMessage(e.tenantId, conv.id, 'outbound', text, true, 'Booking');
         await this.sendText(e.tenantId, e.customerPhone, text);

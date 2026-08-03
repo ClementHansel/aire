@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CustomerAgentService } from './customer-agent.service';
+import { CustomerAgentService, isPureGreeting } from './customer-agent.service';
 import type { CustomerContextService, ResolvedCustomer } from './customer-context.service';
 import type { PendingBookingService } from './pending-booking.service';
 import { toolsForRole, roleAllowsTool, CUSTOMER_TOOLS } from './customer-tools';
@@ -119,5 +119,59 @@ describe('runCustomerTool scoping', () => {
     expect(propose).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: TENANT, serviceName: 'Cuci Premium', customer: CUSTOMER,
     }));
+  });
+});
+
+/**
+ * Greeting tone. A customer saying "Halo" mid-chat used to get the warm opener
+ * surgically removed by the follow-up greeting stripper, leaving a bare
+ * "Mau tanya harga, lokasi, membership…?" — which the client read as curt
+ * ("judes banget", Samuel 2026-08-03).
+ */
+describe('greeting handling', () => {
+  it('recognises a bare social greeting, but not a greeting carrying a question', () => {
+    for (const t of ['Halo', 'halo kak', 'Selamat sore', 'selamat sore kak', 'Hai!', 'Hi', 'Pagi', 'Good morning', 'Halo 😊']) {
+      expect(isPureGreeting(t), t).toBe(true);
+    }
+    for (const t of ['Halo, mau tanya harga cuci mobil', 'selamat sore, booking besok bisa?', 'berapa harga cuci?', '']) {
+      expect(isPureGreeting(t), t).toBe(false);
+    }
+  });
+
+  it('keeps the whole warm greeting when the customer just said hello mid-chat', async () => {
+    const full = 'Halo kak! 😊 Aku Irene, CS-nya AIRE. Ada yang bisa Irene bantu hari ini? Mau tanya harga, lokasi, membership, atau mau booking cuci mobil? 🚗✨';
+    const { svc } = makeService();
+    const llm = { chat: vi.fn().mockResolvedValue({ content: full }) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (svc as any).llm = llm;
+
+    const reply = await svc.reply({
+      tenantId: TENANT, fromPhone: '628111', text: 'Selamat sore',
+      basePrompt: null, knowledge: null,
+      // A prior assistant message makes this a FOLLOW-UP turn — the case that used to be mangled.
+      history: [{ role: 'user', content: 'Halo' }, { role: 'assistant', content: 'Halo kak!' }],
+      persona: null, customer: null,
+      pub: { services: [], plans: [], promotions: [] } as never,
+    });
+
+    expect(reply?.text).toBe(full);
+    expect(reply?.text.startsWith('Mau tanya harga')).toBe(false);
+  });
+
+  it('still strips a redundant re-introduction when the customer asked a real question', async () => {
+    const { svc } = makeService();
+    const llm = { chat: vi.fn().mockResolvedValue({ content: 'Halo kak! Aku Irene, ada yang bisa Irene bantu? Cuci Premium harganya Rp 50.000 ya kak 😊' }) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (svc as any).llm = llm;
+
+    const reply = await svc.reply({
+      tenantId: TENANT, fromPhone: '628111', text: 'berapa harga cuci premium?',
+      basePrompt: null, knowledge: null,
+      history: [{ role: 'user', content: 'Halo' }, { role: 'assistant', content: 'Halo kak!' }],
+      persona: null, customer: null,
+      pub: { services: [], plans: [], promotions: [] } as never,
+    });
+
+    expect(reply?.text).toBe('Cuci Premium harganya Rp 50.000 ya kak 😊');
   });
 });

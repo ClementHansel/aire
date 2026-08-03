@@ -162,52 +162,57 @@ export class AgentRuntimeService {
     const who = customer?.name ?? displayName;
     const hi = who ? `Halo kak ${who}!` : 'Halo kak!';
 
+    // These templates only run when the LLM is off or errored, so they are the
+    // customer's whole impression of the bot in that window. They are written in
+    // Irene's warm casual voice — "kakak", not the formal "Anda", and never a
+    // bare fact with no friendly wrapper (Samuel 2026-08-03: "judes banget").
+
     switch (intent) {
       case 'greeting':
-        return { text: `${hi} 😊 Aku Irene, CS-nya Aire. Ada yang bisa Irene bantu? (info cuci, harga, membership, status pesanan, atau booking)`, escalate: false };
+        return { text: `${hi} 😊 Aku Irene, CS-nya Aire. Ada yang bisa Irene bantu hari ini? Mau tanya harga, lokasi, membership, voucher, atau mau booking cuci mobil? 🚗✨`, escalate: false };
 
       case 'status': {
-        if (ctx?.activeQueue) return { text: `${hi} Pesanan ${ctx.activeQueue.orderNumber} Anda saat ini ${ctx.activeQueue.status === 'in_progress' ? 'sedang dikerjakan' : `mengantri di posisi ${ctx.activeQueue.position}`}.`, escalate: false };
-        if (ctx?.recentOrders.length) { const o = ctx.recentOrders[0]!; return { text: `${hi} Pesanan terakhir Anda ${o.orderNumber} berstatus "${o.status}" (${fmt(o.total)}).`, escalate: false }; }
-        return { text: `${hi} Kami belum menemukan pesanan aktif atas nomor ini. Jika baru saja transaksi, mohon tunggu sebentar.`, escalate: false };
+        if (ctx?.activeQueue) return { text: `${hi} 😊 Irene cek ya — pesanan ${ctx.activeQueue.orderNumber} kakak ${ctx.activeQueue.status === 'in_progress' ? 'lagi dikerjakan sekarang' : `masih mengantri di posisi ${ctx.activeQueue.position}`}. Ditunggu sebentar ya kak 🚗`, escalate: false };
+        if (ctx?.recentOrders.length) { const o = ctx.recentOrders[0]!; return { text: `${hi} 😊 Pesanan terakhir kakak ${o.orderNumber} statusnya "${o.status}" (${fmt(o.total)}). Ada yang mau Irene bantu cek lagi?`, escalate: false }; }
+        return { text: `${hi} 😊 Irene belum nemu pesanan aktif dari nomor ini nih. Kalau kakak baru saja transaksi, tunggu sebentar ya — biasanya cepat kok masuknya 🙏`, escalate: false };
       }
 
       case 'membership': {
         if (ctx?.memberships.length) {
           const m = ctx.memberships[0]!;
-          return { text: `${hi} Membership Anda: ${m.plan} — status ${m.status}, berlaku s/d ${m.endDate}${m.usesLeft != null ? `, sisa ${m.usesLeft} cuci` : ''}.`, escalate: false };
+          return { text: `${hi} 😊 Membership kakak: ${m.plan} — status ${m.status}, berlaku sampai ${m.endDate}${m.usesLeft != null ? `, sisa ${m.usesLeft} cuci` : ''}. Ada lagi yang mau ditanyakan kak?`, escalate: false };
         }
-        if (pub.plans.length) return { text: `${hi} Paket membership kami:\n${pub.plans.map((m) => `• ${m.name}: ${fmt(m.price)} (${m.durationMonths} bln)`).join('\n')}`, escalate: false };
-        return { text: `${hi} Saat ini belum ada paket membership aktif.`, escalate: false };
+        if (pub.plans.length) return { text: `${hi} 😊 Ini paket membership kami ya kak:\n${pub.plans.map((m) => `• ${m.name}: ${fmt(m.price)} (${m.durationMonths} bln)`).join('\n')}\n\nKalau kakak mau tahu detailnya, tinggal bilang aja ya 🚗`, escalate: false };
+        return { text: `${hi} 😊 Untuk saat ini belum ada paket membership yang aktif kak. Tapi Irene bisa bantu info harga cuci atau voucher — mau?`, escalate: false };
       }
 
       case 'price': {
         if (pub.services.length) {
           const top = pub.services.slice(0, 12).map((s) => `• [${s.unit}] ${s.name}: ${fmt(s.price)}`).join('\n');
-          return { text: `${hi} Berikut sebagian daftar layanan & harga kami:\n${top}\n\nUntuk daftar lengkap, silakan tanyakan layanan tertentu.`, escalate: false };
+          return { text: `${hi} 😊 Ini sebagian layanan & harga kami ya kak:\n${top}\n\nKalau kakak mau harga layanan tertentu, sebut aja namanya — Irene bantu cek 🚗`, escalate: false };
         }
-        return { text: `${hi} Daftar harga sedang kami siapkan. Mohon hubungi kami kembali.`, escalate: false };
+        return { text: `${hi} 😊 Daftar harganya lagi Irene siapkan nih kak. Boleh chat Irene lagi sebentar lagi ya 🙏`, escalate: false };
       }
 
       case 'voucher': {
-        if (ctx?.voucherPacks.length) return { text: `${hi} Anda memiliki ${ctx.voucherPacks.length} paket voucher. Tunjukkan kode voucher Anda di kasir untuk digunakan.`, escalate: false };
-        return { text: `${hi} Anda belum memiliki voucher. Kami menjual paket voucher cuci hemat — silakan tanyakan ke kami.`, escalate: false };
+        if (ctx?.voucherPacks.length) return { text: `${hi} 😊 Kakak punya ${ctx.voucherPacks.length} paket voucher. Tinggal tunjukkan kode vouchernya ke kasir ya kak, nanti langsung dipotong 🎫`, escalate: false };
+        return { text: `${hi} 😊 Kakak belum punya voucher nih. Kami ada paket voucher cuci hemat lho — mau Irene ceritakan?`, escalate: false };
       }
 
       case 'booking': {
-        if (ctx?.bookings.length) { const b = ctx.bookings[0]!; return { text: `${hi} Booking Anda berikutnya: ${b.service ?? 'layanan'} pada ${b.scheduledAt} (${b.status}).`, escalate: false }; }
-        return { text: `${hi} Untuk membuat janji/booking, mohon informasikan tanggal, jam, dan layanan yang diinginkan. Tim kami akan membantu menjadwalkan.`, escalate: false };
+        if (ctx?.bookings.length) { const b = ctx.bookings[0]!; return { text: `${hi} 😊 Booking kakak berikutnya: ${b.service ?? 'layanan'} pada ${b.scheduledAt} (${b.status}). Sampai ketemu di outlet ya kak 🚗`, escalate: false }; }
+        return { text: `${hi} 😊 Boleh banget kak! Kakak mau booking untuk tanggal & jam berapa, dan layanan apa? Nanti Irene bantu jadwalkan ya 🚗`, escalate: false };
       }
 
       case 'hours':
-        return { text: basePrompt?.trim() ? basePrompt.split('\n')[0]! : `${hi} Kami buka setiap hari. Untuk jam & lokasi cabang terdekat, mohon sebutkan area Anda.`, escalate: false };
+        return { text: basePrompt?.trim() ? basePrompt.split('\n')[0]! : `${hi} 😊 Kami buka setiap hari kok kak. Boleh sebutkan area kakak? Nanti Irene kasih tahu jam & cabang terdekat 📍`, escalate: false };
 
       default:
         // Unknown (but not an explicit human/complaint request) → a friendly Irene
         // prompt that steers to what she can do, rather than dumping to a human on
         // a first "hello". Genuine human requests are caught earlier as intent 'human'.
         return {
-          text: `${hi} 😊 Aku Irene, CS-nya Aire. Aku bisa bantu info harga & layanan, membership, voucher, status pesanan, atau booking. Ada yang bisa Irene bantu?`,
+          text: `${hi} 😊 Aku Irene, CS-nya Aire. Irene bisa bantu info harga & layanan, membership, voucher, status pesanan, atau booking. Kakak lagi butuh yang mana?`,
           escalate: false,
         };
     }
