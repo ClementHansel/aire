@@ -112,7 +112,11 @@ export class CustomerAgentService {
       outletId: params.outletId ?? null,
       messages,
       temperature: 0.4,
-      maxTokens: 500,
+      // 500 guillotined a full price-list answer mid-word ("Window Cleaning
+      // (S-M" — live test 2026-08-03). The LENGTH rule in systemPrompt() is the
+      // real fix (don't dump the whole catalog); this is the safety margin so a
+      // legitimately long answer still finishes its sentence.
+      maxTokens: 900,
       fallbackReply: 'Hehe maaf kak, Irene kurang nangkep maksudnya 😊 Irene bisa bantu soal harga, lokasi, membership, voucher, atau booking cuci mobil — boleh diulangi kakak mau yang mana?',
       execute: async (tool, toolParams) => {
         const result = await this.runCustomerTool({
@@ -349,6 +353,12 @@ export class CustomerAgentService {
     lines.push(
       `TODAY is ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })} (WIB). ` +
       'Resolve relative dates ("hari ini", "besok", "lusa") against this, and ALWAYS use the CURRENT year in any date you write or any example you give — never a past year.',
+    );
+    lines.push(
+      'LENGTH (important): This is a WhatsApp chat, not a catalogue. Keep replies SHORT — a few lines, ideally under ~8 lines. ' +
+      'When a tool returns a long list (prices, services, plans), do NOT paste all of it. ' +
+      'Ask ONE friendly narrowing question first ("mobilnya tipe apa kak?" / "mau yang cuci biasa atau detailing?"), or give only the few most relevant entries and offer the rest: "mau Irene kirimin daftar lengkapnya kak?". ' +
+      'Never end a message mid-sentence or mid-list — if it is getting long, cut the list, not the sentence.',
     );
     lines.push(
       'FORMATTING: This is WhatsApp, NOT Markdown. For bold use a SINGLE asterisk like *ini tebal* — never double asterisks (**salah**). Do not use Markdown headings (#) or Markdown links [teks](url); just write the URL plainly.',
