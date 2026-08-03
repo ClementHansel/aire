@@ -51,3 +51,20 @@ describe('formatForWhatsApp', () => {
     expect(formatForWhatsApp('')).toBe('');
   });
 });
+
+describe('flirty emoji are stripped deterministically', () => {
+  it('removes romantic emoji but keeps warm-professional ones', () => {
+    expect(formatForWhatsApp('Irene siap bantu! 💕🙏')).toBe('Irene siap bantu! 🙏');
+    expect(formatForWhatsApp('Makasih kak ❤️')).toBe('Makasih kak');
+    expect(formatForWhatsApp('Halo kak! 😊 🚗✨')).toBe('Halo kak! 😊 🚗✨');
+  });
+
+  it('never eats question marks or ordinary punctuation', () => {
+    expect(formatForWhatsApp('Mau yang mana kak? 💕')).toBe('Mau yang mana kak?');
+    expect(formatForWhatsApp('Berapa? Kenapa? Kok bisa?')).toBe('Berapa? Kenapa? Kok bisa?');
+  });
+
+  it('leaves prices and bold intact while stripping hearts', () => {
+    expect(formatForWhatsApp('**Standard Car Wash**: Rp 60.000 💖')).toBe('*Standard Car Wash*: Rp 60.000');
+  });
+});

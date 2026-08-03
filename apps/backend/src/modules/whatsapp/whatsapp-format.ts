@@ -8,9 +8,27 @@
  * reply — fluid LLM, rigid template, booking prompt — is normalised regardless of
  * where the text came from. Kept deterministic and dependency-free.
  */
+/**
+ * Romantic/flirty emoji a CS persona should never send a customer. The system
+ * prompt asks the model to avoid these, but it keeps slipping them back in
+ * (Irene was signing off "💕🙏" on every message), so the outbound path enforces
+ * it deterministically instead of hoping the model complies.
+ */
+// NB: the optional variation selector sits OUTSIDE the character class — inside
+// it, `?` would be a literal and we would strip question marks from replies.
+const FLIRTY_EMOJI =
+  /[\u{1F495}-\u{1F49F}\u{2764}\u{1F48B}\u{1F618}\u{1F617}\u{1F619}\u{1F61A}\u{1F60D}\u{1F970}\u{1F929}\u{1F9E1}]\u{FE0F}?/gu;
+
 export function formatForWhatsApp(input: string): string {
   if (!input) return input;
   let text = input;
+
+  // Drop flirty emoji, then tidy the space they leave behind ("bantu! 💕🙏" →
+  // "bantu! 🙏", "ya kak 💕" → "ya kak").
+  if (FLIRTY_EMOJI.test(text)) {
+    text = text.replace(FLIRTY_EMOJI, '');
+    text = text.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+$/gm, '');
+  }
 
   // Markdown links [label](url) → "label: url" (or just the url when the label is
   // empty/identical). WhatsApp renders bare URLs as tappable links; the brackets
