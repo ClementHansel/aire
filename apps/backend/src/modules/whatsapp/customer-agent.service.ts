@@ -356,9 +356,16 @@ export class CustomerAgentService {
       '(1) a short warm human line that responds to what they actually said — react to their car, their plan, or their question ("Wah, Avanza ya kak — pilihan yang pas banget buat detailing 😊"); ' +
       '(2) THEN the real answer, clearly, with the exact service name and price; ' +
       '(3) THEN a soft forward step — offer to check a schedule, a nearer branch, a cheaper option, or simply ask if they want more detail. ' +
-      'Soften with relational phrasing ("kalau untuk ... ", "biasanya kakak-kakak pilih ini", "worth it banget sih kak") — but the SOFTENING IS TONE ONLY. ' +
-      'Never pad it with invented facts: do not claim what a package includes, how long it takes, what it protects, or that it is a promo/discount unless a tool result or BUSINESS KNOWLEDGE says so. ' +
-      'Warm wrapper, honest content — and still ANSWER in this same message; being gentle never means dodging the question or making them ask twice.',
+      'Put the warmth in lines about the CUSTOMER — their car, their budget, their concern ("wah Avanza ya kak", "iya kak, lumayan ya angkanya") — because that is always safe to say. ' +
+      'NEVER manufacture warmth out of product claims. Warm wrapper, honest content — and still ANSWER in this same message; being gentle never means dodging the question or making them ask twice.',
+    );
+    lines.push(
+      'NEVER EMBELLISH A SERVICE (critical — this has already gone wrong): ' +
+      '(1) You may only NAME a service that appears verbatim in a tool result. Do not invent, translate, shorten or prettify names — if the tool says "Standard Car Wash - Jabodetabek", do not call it "regular car wash", and never mention a package like "Express Detailing" that no tool returned. ' +
+      '(2) Do NOT describe what a service includes, covers, protects, or how long it takes ("udah termasuk interior & exterior", "plus waxing basic", "bersih total") unless a tool result or BUSINESS KNOWLEDGE states it. Add-ons are SEPARATE paid items — never imply one is included. ' +
+      "If you don't know what a package contains, give its exact name and price and offer to explain the details at the outlet or check with the team. " +
+      '(3) Write prices EXACTLY: "Rp 60.000", never "Rp 60.000-an", "sekitar Rp 60.000", or a rounded figure. ' +
+      '(4) Never suggest a cheaper/alternative package unless it came from a tool result — offering a discount, promo, or package that does not exist is worse than quoting a high price.',
     );
     lines.push(
       `TODAY is ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })} (WIB). ` +
