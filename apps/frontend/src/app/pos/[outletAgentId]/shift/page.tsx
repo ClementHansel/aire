@@ -13,6 +13,16 @@ import { isAuthenticated, getUser } from '@/lib/auth';
 import { getPosOutletId } from '@/lib/posDevice';
 import { PosNav } from '@/components/pos/PosNav';
 import { useI18n } from '@/lib/i18n';
+import { LEAN_MODE } from '@aire/shared';
+
+/**
+ * Whether shift-opening is roster-aware. HR (and therefore the scheduling UI)
+ * is held while lean mode is on, so no roster can exist — showing "you have no
+ * schedule today" and demanding an attendance reason was a leftover of a
+ * feature the tenant cannot reach (Samuel 2026-08-03). Mirrors the same skip in
+ * the backend's ShiftService.open.
+ */
+const SCHEDULES_ENABLED = !LEAN_MODE;
 
 interface Movement { id: string; type: string; amount: number; category: string | null; reason: string | null; at: string; }
 interface Issue { id: string; severity: string; description: string; at: string; }
@@ -81,20 +91,21 @@ export default function ShiftPage() {
         setOpenOutletId(defaultOutlet);
         const outletName = ctx?.branches?.find((b) => b.id === today)?.name ?? null;
         setRoster({ outletId: today, outletName, startTime: ctx?.todayStartTime ?? null, endTime: ctx?.todayEndTime ?? null });
-        setNoSchedule(today == null);
-        setOffSchedule(today == null || today !== defaultOutlet);
+        setNoSchedule(SCHEDULES_ENABLED && today == null);
+        setOffSchedule(SCHEDULES_ENABLED && (today == null || today !== defaultOutlet));
       })
       .catch(() => { setNoSchedule(false); setOffSchedule(false); });
   }, [load]);
 
   // Recompute the off-schedule flag when the operator overrides the branch.
   useEffect(() => {
-    if (roster === null) return;
+    if (roster === null || !SCHEDULES_ENABLED) return;
     setOffSchedule(roster.outletId == null || roster.outletId !== openOutletId);
   }, [openOutletId, roster]);
 
   // Soft warning: current local time is outside the rostered shift window.
   const timeMismatch = (() => {
+    if (!SCHEDULES_ENABLED) return null;
     if (!roster?.startTime || !roster?.endTime) return null;
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -150,17 +161,20 @@ export default function ShiftPage() {
             <h2 className="section-title mb-2">{t('pos.shift.openShift', 'Open shift')}</h2>
             <p className="text-sm text-text-muted mb-3">{t('pos.shift.openIntro', 'Start your register session with the opening cash float.')}</p>
 
-            {/* Today's roster (from HR schedule) */}
-            <div className={`mb-3 rounded-lg border p-3 text-sm ${roster?.outletId ? 'border-border bg-surface-sunken/40' : 'border-amber-200 bg-amber-50'}`}>
-              {roster?.outletId ? (
-                <>
-                  <p className="font-medium text-text-primary">{t('pos.shift.rosteredToday', 'Rostered today')}: {roster.outletName ?? '—'}</p>
-                  <p className="text-xs text-text-muted">{roster.startTime ? `${roster.startTime}–${roster.endTime ?? ''}` : t('pos.shift.noHoursSet', 'No shift hours set')}</p>
-                </>
-              ) : (
-                <p className="text-amber-700">{t('pos.shift.noScheduleToday', 'You have no schedule today.')}</p>
-              )}
-            </div>
+            {/* Today's roster (from HR schedule) — hidden entirely when
+                scheduling is off, so there is nothing to warn about. */}
+            {SCHEDULES_ENABLED && (
+              <div className={`mb-3 rounded-lg border p-3 text-sm ${roster?.outletId ? 'border-border bg-surface-sunken/40' : 'border-amber-200 bg-amber-50'}`}>
+                {roster?.outletId ? (
+                  <>
+                    <p className="font-medium text-text-primary">{t('pos.shift.rosteredToday', 'Rostered today')}: {roster.outletName ?? '—'}</p>
+                    <p className="text-xs text-text-muted">{roster.startTime ? `${roster.startTime}–${roster.endTime ?? ''}` : t('pos.shift.noHoursSet', 'No shift hours set')}</p>
+                  </>
+                ) : (
+                  <p className="text-amber-700">{t('pos.shift.noScheduleToday', 'You have no schedule today.')}</p>
+                )}
+              </div>
+            )}
 
             {timeMismatch && (
               <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700">

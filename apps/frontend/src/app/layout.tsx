@@ -39,6 +39,11 @@ export const metadata: Metadata = {
   title: 'Airin',
   description: 'Multi-tenant POS and operations management for car wash businesses',
 };
+// The browser-tab icon is the AIRIN favicon, wired via the app-router file
+// convention: src/app/favicon.ico (multi-size 16→256 ICO, built from
+// AIRIN-favicon.png) + src/app/apple-icon.png (180px, iOS home screen). Next
+// emits the <link> tags itself — deliberately no `metadata.icons` here, since
+// that would override the convention.
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

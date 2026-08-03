@@ -195,6 +195,11 @@ export default function NewOrderPage() {
   const [memberLookup, setMemberLookup] = useState<MemberLookupResponse | null>(null);
   const [findInput, setFindInput] = useState('');
   const [finding, setFinding] = useState(false);
+  // Member-search feedback lives NEXT TO the search box, not in the page-top
+  // error banner: cashiers never saw it up there and it stayed on screen until
+  // something else cleared it (Samuel 2026-08-03). It clears itself when the
+  // cashier edits the query or after a few seconds.
+  const [findMsg, setFindMsg] = useState('');
   const [vehicleBrands, setVehicleBrands] = useState<{ id: string; name: string; types: { id: string; name: string }[] }[]>([]);
   const [payMethods, setPayMethods] = useState<PaymentMethodDTO[]>([]);
   const [selectedPmId, setSelectedPmId] = useState<string | null>(null);
@@ -456,7 +461,7 @@ export default function NewOrderPage() {
   const findMember = async () => {
     const v = findInput.trim();
     if (!v) return;
-    setFinding(true); setError('');
+    setFinding(true); setError(''); setFindMsg('');
     // A 12-char alphanumeric value = membership number (scanned or typed);
     // digits-only = phone; otherwise a plate.
     const isNumber = /^[0-9A-Za-z]{12}$/.test(v);
@@ -468,9 +473,14 @@ export default function NewOrderPage() {
       // plate: uppercasing alone left the spaces in, so "B 8882 CST" and
       // "B8882CST" produced two different stored values (AIRIN-117).
       const canonicalPlate = key === 'plate' ? normalizePlate(v).normalized : undefined;
-      if (m?.customer) { applyMember(m, canonicalPlate); if (canonicalPlate) setPlate(canonicalPlate); }
+      if (m?.customer) {
+        applyMember(m, canonicalPlate);
+        if (canonicalPlate) setPlate(canonicalPlate);
+      } else {
+        setFindMsg(t('pos.new.noMemberFound', 'No member found'));
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('pos.new.noMemberFound', 'No member found'));
+      setFindMsg(e instanceof Error ? e.message : t('pos.new.noMemberFound', 'No member found'));
     } finally { setFinding(false); }
   };
 
@@ -501,6 +511,14 @@ export default function NewOrderPage() {
       setPlacing(false);
     }
   };
+
+  // The search note is transient — it disappears on its own so the cashier is
+  // never left staring at a stale "not found" from two customers ago.
+  useEffect(() => {
+    if (!findMsg) return;
+    const id = setTimeout(() => setFindMsg(''), 6000);
+    return () => clearTimeout(id);
+  }, [findMsg]);
 
   // Vehicle brand/type catalog for the brand → type dropdowns.
   useEffect(() => {
@@ -716,13 +734,19 @@ export default function NewOrderPage() {
       setError(t('pos.new.enterCustomerService', 'Enter customer name, phone, and add at least one service.'));
       return;
     }
+    // Plate is mandatory: every order is a vehicle, and reports/queue/LPR/member
+    // matching all key off it (Samuel 2026-08-03).
+    if (!normalizePlate(plate).normalized) {
+      setError(t('pos.new.plateRequired', 'Enter the license plate.'));
+      return;
+    }
     setPlacing(true);
     try {
       const created = await api.post<CreatedOrder>('/orders', {
         // Plate is canonicalised here too, so a plate typed straight into the
         // field (never routed through member search) is stored in the same shape
         // as one that was — otherwise the two paths disagree (AIRIN-117).
-        customer: { name: name.trim(), phone: phone.trim(), licensePlate: normalizePlate(plate).normalized || undefined, brand: brand.trim() || undefined, model: model.trim() || undefined },
+        customer: { name: name.trim(), phone: phone.trim(), licensePlate: normalizePlate(plate).normalized, brand: brand.trim() || undefined, model: model.trim() || undefined },
         items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty, manualDiscount: l.manualDiscount || undefined })),
         businessUnit,
         salespersonName: salesperson.trim() || undefined,
@@ -982,13 +1006,27 @@ export default function NewOrderPage() {
                 className="input-field flex-1"
                 placeholder={t('pos.new.findMemberPlaceholder', 'Find member (plate, phone, or member #)')}
                 value={findInput}
-                onChange={(e) => setFindInput(e.target.value)}
+                onChange={(e) => { setFindInput(e.target.value); if (findMsg) setFindMsg(''); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); findMember(); } }}
               />
               <button type="button" className="btn-secondary" onClick={findMember} disabled={finding || !findInput.trim()}>
                 {finding ? '…' : t('pos.new.find', 'Find')}
               </button>
             </div>
+            {/* Search result note, right under the box it belongs to. */}
+            {findMsg && (
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800">
+                <span className="flex-1">{findMsg}</span>
+                <button
+                  type="button"
+                  aria-label={t('common.dismiss', 'Dismiss')}
+                  className="text-amber-700 hover:text-amber-900 leading-none"
+                  onClick={() => setFindMsg('')}
+                >
+                  ×
+                </button>
+              </div>
+            )}
             {memberBanner && (
               <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2 text-xs text-emerald-800">
                 ★ {t('pos.new.member', 'Member')} · <span className="font-semibold">{memberBanner}</span> {t('pos.new.detailsAutofilled', '— details auto-filled, member pricing applied.')}
@@ -1052,7 +1090,7 @@ export default function NewOrderPage() {
             <input className="input-field" placeholder={t('pos.new.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
             <input className="input-field" placeholder={t('pos.new.phone', 'Phone (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
             <PlateInput
-              placeholder={t('pos.new.licensePlate', 'License plate (optional)')}
+              placeholder={t('pos.new.licensePlate', 'License plate *')}
               value={plate}
               onChange={setPlate}
             />

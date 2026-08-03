@@ -4,6 +4,7 @@ import { JWTPayload } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { leanModeEnabled } from '../../common/lean';
 
 export interface OpenShiftDto { openingFloat?: number; outletId?: string; offScheduleReason?: string; }
 export interface CloseShiftDto { countedCash: number; notes?: string; }
@@ -40,17 +41,25 @@ export class ShiftService {
     // branch they're not scheduled at) or with no schedule today (e.g. late /
     // unscheduled login) must give a reason here — once, at login/shift start —
     // rather than being asked on every order in the POS.
-    const sched = await this.pool.query<{ today: string | null }>(
-      `SELECT es.outlet_id AS today
-       FROM employees e
-       LEFT JOIN employee_schedules es ON es.employee_id = e.id AND es.work_date = CURRENT_DATE
-       WHERE e.tenant_id = $1 AND e.user_id = $2 AND e.status = 'active'
-       LIMIT 1`,
-      [user.tenant_id, user.sub],
-    );
-    const scheduledToday = sched.rows[0]?.today ?? null;
+    //
+    // Skipped entirely while lean mode holds HR: with the scheduling UI hidden,
+    // NO employee can ever have a roster, so the gate degraded into a permanent
+    // "you have no schedule today" nag on every shift open (Samuel 2026-08-03).
+    // It comes back automatically with HR when LEAN_MODE flips off.
+    const scheduleGateOn = !leanModeEnabled();
+    const sched = scheduleGateOn
+      ? await this.pool.query<{ today: string | null }>(
+          `SELECT es.outlet_id AS today
+           FROM employees e
+           LEFT JOIN employee_schedules es ON es.employee_id = e.id AND es.work_date = CURRENT_DATE
+           WHERE e.tenant_id = $1 AND e.user_id = $2 AND e.status = 'active'
+           LIMIT 1`,
+          [user.tenant_id, user.sub],
+        )
+      : null;
+    const scheduledToday = sched?.rows[0]?.today ?? null;
     const noSchedule = scheduledToday == null;
-    const offSchedule = noSchedule || scheduledToday !== outletId;
+    const offSchedule = scheduleGateOn && (noSchedule || scheduledToday !== outletId);
     const reason = dto.offScheduleReason?.trim();
     if (offSchedule && !reason) {
       throw new BadRequestException(

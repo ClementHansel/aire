@@ -58,6 +58,7 @@ export const id: Record<string, string> = {
   'common.darkMode': 'Mode gelap',
   'common.lightMode': 'Mode terang',
   'common.selectAll': 'Pilih semua',
+  'common.dismiss': 'Tutup',
 
   // CCTV
   'dash.cctv.title': 'CCTV',
@@ -150,6 +151,7 @@ export const id: Record<string, string> = {
   'pos.new.expiresIn': 'Membership berakhir dalam',
   'pos.new.daysConsiderRenew': 'hari — pertimbangkan perpanjangan.',
   'pos.new.noMemberFound': 'Member tidak ditemukan',
+  'pos.new.plateRequired': 'Isi nomor plat kendaraan.',
   'pos.new.codeAlreadyAdded': 'Kode sudah ditambahkan',
   'pos.new.applied': 'Diterapkan:',
   'pos.new.voucherCannotApply': 'Voucher tidak dapat diterapkan',
@@ -191,7 +193,7 @@ export const id: Record<string, string> = {
   'pos.new.fromQueue': 'Dari antrian — masukkan nama & telepon untuk menyelesaikan pembayaran.',
   'pos.new.customerName': 'Nama pelanggan *',
   'pos.new.phone': 'Telepon (mis. 08123…) *',
-  'pos.new.licensePlate': 'Nomor plat (opsional)',
+  'pos.new.licensePlate': 'Nomor plat *',
   'pos.new.vehicleBrand': 'Merek kendaraan',
   'pos.new.vehicleType': 'Tipe kendaraan',
   'pos.new.salesperson': 'Sales (opsional)',
