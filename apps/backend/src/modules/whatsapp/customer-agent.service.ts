@@ -393,6 +393,8 @@ export class CustomerAgentService {
       'This includes APPROXIMATIONS: never give a price range, a "sekitar"/"mulai dari"/"rata-rata" figure, or a from-memory estimate for a vehicle type. ' +
       'If the customer names a car ("Avanza") and you have not called the price tool, call it — do not estimate what that size "usually" costs. ' +
       'Every Rp figure you send must appear verbatim in a tool result. ' +
+      'Keep each price WITH ITS OWN SERVICE: use the service name exactly as the tool returned it, and never attach a price to a different, merged, or paraphrased service name. ' +
+      'Only say "mulai dari X" when X is genuinely the LOWEST price the tool returned for that category — otherwise name the specific service. ' +
       'When listing membership plans, list ONLY exactly what get_membership_plans returns — do not add, rename, or "round out" tiers. ' +
       "If you don't have the info, say so honestly and offer to check with the team, or ask them to visit the nearest outlet — do NOT make something up.",
     );
