@@ -51,8 +51,11 @@ interface CreatedOrder {
   serviceCharge: number;
   tax: number;
   voucherDiscount: number;
-  /** Membership created by a plan sold on this order (pending until activation). */
+  /** Which membership PRICED this order (an existing member's), if any. */
   membershipId?: string | null;
+  /** Membership created by a plan SOLD on this order. Payment activates it
+   *  server-side; this id is only needed to offer extra vehicles afterwards. */
+  soldMembershipId?: string | null;
   /** Set when a member's benefit was withheld (daily/lifetime quota hit) and the
    *  order was charged at normal price — surfaced so the cashier can explain it. */
   membershipQuotaWarning?: string;
@@ -379,6 +382,26 @@ export default function NewOrderPage() {
     setModel(p.model ?? '');
   };
 
+  /**
+   * Wipe every trace of a previously resolved member. Without this, a lookup
+   * that finds nobody (or a non-member) left the PREVIOUS customer's membership
+   * banner, plan, plate picker and — worst of all — `membershipId` attached, so
+   * the next order could be priced against a member who was never in front of
+   * the cashier (AIRIN-144). Name/phone are deliberately left alone: the cashier
+   * may be mid-typing them for a walk-in.
+   */
+  const clearMemberState = () => {
+    setMemberLookup(null);
+    setMemberDetail(null);
+    setMemberBanner(null);
+    setMembershipId(null);
+    setMemberPlateOptions([]);
+    setSelectedPlate(null);
+    setMemberAlert(null);
+    setMemberExpiry(null);
+    setPendingRenewalId(null);
+  };
+
   // Apply a resolved member to the order panel. Member pricing attaches ONLY for a
   // genuinely active membership; non-active ones still show the advisory soft-pop.
   const applyMember = (m: MemberLookupResponse, plateUsed?: string) => {
@@ -425,6 +448,8 @@ export default function NewOrderPage() {
   // (AIRIN-25).
   const pickDetection = async (d: PlateDetection) => {
     const norm = normalizePlate(d.plateNormalized).normalized;
+    // A different car — whoever was resolved before does not own it (AIRIN-144).
+    clearMemberState();
     setPlate(norm);
     setLprBusyId(d.id);
     if (d.match) {
@@ -443,6 +468,8 @@ export default function NewOrderPage() {
 
   // Hydrate the panel from a queued car; resolve its plate to a member if any.
   const applyQueueEntry = (q: { id: string; plate?: string | null; brand?: string | null; model?: string | null; customerName?: string | null; customerPhone?: string | null; businessUnit?: string | null }) => {
+    // Pulling in a queued car replaces whoever the panel was showing (AIRIN-144).
+    clearMemberState();
     setQueueEntryId(q.id);
     if (q.plate) setPlate(q.plate);
     if (q.brand) setBrand(q.brand);
@@ -462,6 +489,9 @@ export default function NewOrderPage() {
     const v = findInput.trim();
     if (!v) return;
     setFinding(true); setError(''); setFindMsg('');
+    // Drop the previous result BEFORE the request, so a slow/failed lookup can
+    // never leave the last customer's membership attached to this order.
+    clearMemberState();
     // A 12-char alphanumeric value = membership number (scanned or typed);
     // digits-only = phone; otherwise a plate.
     const isNumber = /^[0-9A-Za-z]{12}$/.test(v);
@@ -823,9 +853,14 @@ export default function NewOrderPage() {
       }
       return;
     }
-    if (sellPlan && paid.membershipId) {
+    // Payment activates the membership server-side (MembershipActivationService),
+    // with the car on this order registered as its first vehicle — so there is
+    // nothing the cashier MUST do here. Offer the extra-vehicle step only when
+    // the plan actually covers more than one car; on a single-plate plan the
+    // membership is already complete.
+    if (sellPlan && paid.soldMembershipId && sellPlan.maxPlates > 1) {
       setActivation({
-        membershipId: paid.membershipId,
+        membershipId: paid.soldMembershipId,
         planName: sellPlan.name,
         maxPlates: sellPlan.maxPlates,
         plate, brand, model,

@@ -143,6 +143,9 @@ export interface CreatedOrderResponse {
   total: number;
   note: string | null;
   membershipId: string | null;
+  /** Id of a membership SOLD on this order (null when none was). Distinct from
+   *  membershipId, which is "the membership that priced this order". */
+  soldMembershipId?: string | null;
   items: Array<{
     id: string;
     serviceId: string;
@@ -655,6 +658,26 @@ export class OrderService {
           `UPDATE order_items SET membership_id = $1 WHERE order_id = $2 AND is_member_pricing = true`,
           [soldMembershipId, order.id],
         );
+        // The car being rung up IS the membership's first registered vehicle.
+        // Capturing it here (rather than waiting for the cashier to retype it in
+        // the post-payment plate modal) is what makes a first-time purchase carry
+        // its vehicle data at all — that modal was reachable only via a response
+        // field that was always null, so every new membership landed plateless
+        // (AIRIN-139). Plate is mandatory on the POS, so this is always present
+        // in practice; guard anyway for kiosk/portal callers.
+        if (plateNormalized) {
+          await client.query(
+            `INSERT INTO membership_plates (membership_id, plate, plate_normalized, brand, model)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              soldMembershipId,
+              rawPlate ?? plateNormalized,
+              plateNormalized,
+              request.customer.brand ?? null,
+              request.customer.model ?? null,
+            ],
+          );
+        }
       }
 
       // Record initial status log entry
@@ -834,7 +857,14 @@ export class OrderService {
         promoDiscount: parseFloat(order.promo_discount),
         total: parseFloat(order.total),
         note: order.note,
-        membershipId: order.membership_id,
+        // `order` is the row as first INSERTed, so its membership_id is still
+        // null when a plan was sold on this very order (the UPDATE above ran
+        // after it). Prefer the id we just minted.
+        membershipId: soldMembershipId ?? order.membership_id,
+        // Explicitly "a NEW membership was sold here", distinct from
+        // membershipId's "which membership priced this order". The POS keys its
+        // post-payment vehicle step off this.
+        soldMembershipId,
         items: orderItems,
         tags,
         createdAt: order.created_at,

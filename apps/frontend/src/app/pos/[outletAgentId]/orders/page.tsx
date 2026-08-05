@@ -325,7 +325,28 @@ export default function OrdersPage() {
               onCancel={() => { setVoidTarget(null); setVoidRequiresPin(false); setVoidErr(''); setPinRequestStatus('idle'); }}
               onRequestPin={requestVoidPin}
               pinRequestStatus={pinRequestStatus}
+              subject={`${voidTarget.orderNumber} · ${fmt(voidTarget.total)}`}
               labels={{
+                // Cancelling an unpaid order and voiding a paid one are different
+                // acts with different consequences; the dialog says which one
+                // this is instead of always saying "Void" (AIRIN-146).
+                title: isPaid(voidTarget.status)
+                  ? t('pos.orders.voidTitle', 'Void this paid order?')
+                  : t('pos.orders.cancelTitle', 'Cancel this order?'),
+                intro: isPaid(voidTarget.status)
+                  ? t('pos.orders.voidIntro', 'The sale is reversed and any membership usage it consumed is returned. The order stays on record as voided.')
+                  : t('pos.orders.cancelIntro', 'No payment was taken. The order stays on record as cancelled and cannot be reopened — ring up a new one instead.'),
+                reasonLabel: t('pos.orders.voidReason', 'Reason'),
+                reasonPlaceholder: isPaid(voidTarget.status)
+                  ? t('pos.orders.voidReasonPlaceholder', 'Why is this paid order being voided?')
+                  : t('pos.orders.cancelReasonPlaceholder', 'Why is this order being cancelled?'),
+                confirm: isPaid(voidTarget.status)
+                  ? t('pos.orders.voidConfirm', 'Void order')
+                  : t('pos.orders.cancelConfirm', 'Cancel order'),
+                dismiss: t('pos.orders.voidDismiss', 'Keep order'),
+                reasonRequired: t('pos.orders.voidReasonRequired', 'Enter a reason first.'),
+                pinRequired: t('pos.orders.voidPinRequired', 'Admin PIN is required.'),
+                pinInvalid: t('pos.orders.voidPinInvalid', 'The PIN must be exactly 6 digits.'),
                 requestPin: t('pos.orders.requestPin', 'Request Admin PIN'),
                 requestPinSending: t('pos.orders.requestPinSending', 'Sending…'),
                 requestPinSent: t('pos.orders.requestPinSent', 'PIN sent to owner’s email.'),

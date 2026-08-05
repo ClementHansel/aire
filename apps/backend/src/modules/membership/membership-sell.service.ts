@@ -151,28 +151,46 @@ export class MembershipSellService {
 
     const plan = planResult.rows[0];
 
-    // 3. Enforce max_plates limit
-    if (dto.plates.length > plan.max_plates) {
+    // 3. Enforce max_plates against what the membership will END UP with.
+    // The sale itself already registers the car being rung up, so counting only
+    // the incoming list would let a 1-plate plan reach two vehicles, while
+    // counting the incoming list as if the membership were empty would reject
+    // the POS's pre-filled (already-registered) plate on a 1-plate plan.
+    const alreadyRegistered = await this.pool.query<{ plate_normalized: string }>(
+      'SELECT plate_normalized FROM membership_plates WHERE membership_id = $1',
+      [membershipId],
+    );
+    const existing = new Set(alreadyRegistered.rows.map((r) => r.plate_normalized));
+    const newPlates = dto.plates.filter((p) => !existing.has(this.canonicalPlate(p.plate)));
+    if (existing.size + newPlates.length > plan.max_plates) {
       throw new BadRequestException(ERR_MEMBERSHIP_MAX_PLATES_EXCEEDED);
     }
 
-    // 4. Set activation date and calculate end date
+    // 4. Set activation date and calculate end date. Only a pending membership
+    // gets its term (re)stamped — this method is also the "add another vehicle"
+    // path once payment has already activated the membership, and re-running it
+    // must not silently restart a paid term from today.
+    const wasPending = membership.status === MembershipStatus.Pending;
     const today = new Date();
-    const startDate = this.formatDate(today);
-    const endDate = this.calculateEndDate(today, plan.duration_months);
+    const startDate = wasPending ? this.formatDate(today) : membership.start_date;
+    const endDate = wasPending
+      ? this.calculateEndDate(today, plan.duration_months)
+      : membership.end_date;
 
     // 5. Update membership to active
-    const updateResult = await this.pool.query<MembershipRow>(
-      `UPDATE memberships
-       SET status = $1, start_date = $2, end_date = $3, updated_at = NOW()
-       WHERE id = $4
-       RETURNING *`,
-      [MembershipStatus.Active, startDate, endDate, membershipId],
-    );
+    const updateResult = wasPending
+      ? await this.pool.query<MembershipRow>(
+          `UPDATE memberships
+           SET status = $1, start_date = $2, end_date = $3, updated_at = NOW()
+           WHERE id = $4
+           RETURNING *`,
+          [MembershipStatus.Active, startDate, endDate, membershipId],
+        )
+      : { rows: [membership] };
 
-    // 6. Register plates
-    if (dto.plates.length > 0) {
-      await this.registerPlates(membershipId, dto.plates);
+    // 6. Register only the plates the membership doesn't already carry.
+    if (newPlates.length > 0) {
+      await this.registerPlates(membershipId, newPlates);
     }
 
     // 6b. Issue the customer's membership number (registration branch = the
@@ -213,17 +231,22 @@ export class MembershipSellService {
           'membership',
           membershipId,
           JSON.stringify({ status: membership.status }),
-          JSON.stringify({ status: MembershipStatus.Active, startDate, endDate, plates: dto.plates.length }),
+          JSON.stringify({ status: MembershipStatus.Active, startDate, endDate, plates: newPlates.length }),
         ],
       );
     } catch { /* audit logging is best-effort */ }
 
-    void this.eventBus?.emit({
-      type: DomainEventType.MembershipActivated,
-      tenantId: membership.tenant_id,
-      actor: 'pos',
-      payload: { membershipId, planId: membership.plan_id, customerId: membership.customer_id, endDate, plates: dto.plates.length },
-    });
+    // Only the pending → active transition is an activation. Adding a second
+    // vehicle to an already-active membership must not re-fire the downstream
+    // subscribers (campaign bonus grants, welcome WhatsApp).
+    if (wasPending) {
+      void this.eventBus?.emit({
+        type: DomainEventType.MembershipActivated,
+        tenantId: membership.tenant_id,
+        actor: 'pos',
+        payload: { membershipId, planId: membership.plan_id, customerId: membership.customer_id, endDate, plates: existing.size + newPlates.length },
+      });
+    }
 
     return this.mapRowToEntity(updateResult.rows[0]!);
   }
@@ -238,8 +261,7 @@ export class MembershipSellService {
     const results: MembershipPlate[] = [];
 
     for (const plateDto of plates) {
-      const { normalized } = normalizePlate(plateDto.plate);
-      const plateNormalized = normalized || plateDto.plate.toUpperCase().replace(/\s/g, '');
+      const plateNormalized = this.canonicalPlate(plateDto.plate);
 
       const result = await this.pool.query<MembershipPlateRow>(
         `INSERT INTO membership_plates (membership_id, plate, plate_normalized, brand, model)
@@ -295,6 +317,16 @@ export class MembershipSellService {
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * The single spelling a plate is stored and compared under. Must match
+   * `orders.plate_normalized` / `membership_plates.plate_normalized`, or the
+   * dedupe above silently registers the same car twice.
+   */
+  private canonicalPlate(plate: string): string {
+    const { normalized } = normalizePlate(plate);
+    return normalized || plate.toUpperCase().replace(/\s/g, '');
+  }
 
   /**
    * Calculates end date by adding duration months to start date.

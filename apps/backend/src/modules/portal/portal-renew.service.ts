@@ -146,15 +146,20 @@ export class PortalRenewService {
     );
     const row = m.rows[0];
     if (!row) throw new ForbiddenException('That membership is not yours.');
-    if (row.status === 'active') return { alreadyActive: true };
     if (!row.order_status || !['paid', 'confirmed', 'completed'].includes(row.order_status)) {
       throw new BadRequestException('Payment is not completed yet.');
     }
     if (!Array.isArray(plates) || plates.length === 0) {
       throw new BadRequestException('At least one vehicle plate is required to activate the membership.');
     }
+    // Payment now activates the membership on its own, so by the time the
+    // customer submits this form it is usually ALREADY active. Returning early on
+    // that (as this used to) would silently discard the plates they just typed —
+    // so run the registration either way. activateMembership is idempotent: it
+    // adds only new plates and leaves an already-started term alone.
+    const alreadyActive = row.status === 'active';
     await this.sell.activateMembership(membershipId, { plates });
-    return { alreadyActive: false };
+    return { alreadyActive };
   }
 
   /** Poll a first-membership purchase order. */

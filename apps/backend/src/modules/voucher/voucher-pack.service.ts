@@ -108,7 +108,7 @@ export class VoucherPackService {
   async issuePack(user: JWTPayload, orderId: string, templateId: string): Promise<IssueVoucherPackResult> {
     // Verify the order is paid and belongs to the tenant.
     const orderRes = await this.pool.query(
-      `SELECT id, status, customer_id, customer_name, customer_phone
+      `SELECT id, status, customer_id, customer_name, customer_phone, outlet_id
        FROM orders WHERE id = $1 AND tenant_id = $2`,
       [orderId, user.tenant_id],
     );
@@ -125,7 +125,12 @@ export class VoucherPackService {
     }
 
     const template = await this.templates.getTemplate(user.tenant_id, templateId);
-    const prefix = await this.tenantPrefix(user.tenant_id);
+    // Codes are prefixed with the BRANCH that sold the pack, matching the
+    // shareable-ticket convention (BRANCH-MMYYYY-NNNNNN) so a code can be traced
+    // to an outlet on sight. It used to be the tenant slug, so every branch of a
+    // tenant minted identically-prefixed codes (AIRIN-145). Falls back to the
+    // tenant slug when the order carries no outlet.
+    const prefix = await this.codePrefix(user.tenant_id, order.outlet_id);
     const pack = generateVoucherPack({ tenantPrefix: prefix, packSize: template.max_uses });
 
     const expiryDate = this.computeExpiry(template.validity_days, template.expiry_date);
@@ -213,6 +218,24 @@ export class VoucherPackService {
       expiryDate,
       whatsappDelivered,
     };
+  }
+
+  /**
+   * Prefix for a pack's codes: the selling branch's own code (3 chars, e.g.
+   * `KCL`), which is what the shareable voucher tickets already use. A branch
+   * with no code set, or a pack sold without a branch, falls back to the tenant
+   * slug so codes are never prefixless.
+   */
+  private async codePrefix(tenantId: string, outletId: string | null): Promise<string> {
+    if (outletId) {
+      const res = await this.pool.query<{ code: string | null }>(
+        'SELECT code FROM outlets WHERE id = $1 AND tenant_id = $2',
+        [outletId, tenantId],
+      );
+      const branch = (res.rows[0]?.code ?? '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
+      if (branch) return branch;
+    }
+    return this.tenantPrefix(tenantId);
   }
 
   /** Tenant-prefix for codes (uppercased slug, fallback AIRE). */

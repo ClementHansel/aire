@@ -4,9 +4,11 @@
  * The two post-payment steps a pack sale needs, lifted out of the retired
  * /pos/*\/sell-pack page so the merged POS screen can host them unchanged:
  *
- * - PlateRegistrationModal: a paid membership is 'pending' until its plates are
- *   registered; this activates it. The first row pre-fills from the plate the
- *   cashier already typed on the order, so the usual upsell is one tap.
+ * - PlateRegistrationModal: registers ADDITIONAL vehicles on a membership that
+ *   payment already activated (with the order's own car as vehicle #1). Shown
+ *   only for multi-plate plans, and always skippable — the membership is valid
+ *   without it. The first row pre-fills from the order's plate, which the
+ *   backend dedupes, so re-submitting it is harmless.
  * - VoucherCodesModal: shows the codes generated for a paid voucher pack. They
  *   are displayed once, hence the explicit warning.
  */
@@ -69,8 +71,8 @@ export function PlateRegistrationModal({
       <div className="card w-full max-w-lg" data-testid="plate-registration-modal">
         <h3 className="section-title">{t('pos.sellpack.registerVehicles', 'Register Vehicles')}</h3>
         <p className="text-sm text-text-secondary mt-1">
-          {planName} — {t('pos.sellpack.paymentReceivedRegister', 'Payment received. Register up to')} {maxPlates}{' '}
-          {maxPlates > 1 ? t('pos.sellpack.plates', 'plates') : t('pos.sellpack.plate', 'plate')} {t('pos.sellpack.toActivate', 'to activate the membership.')}
+          {planName} — {t('pos.sellpack.membershipActiveAlready', 'Membership is active and the car on this order is already registered.')}{' '}
+          {t('pos.sellpack.coversUpTo', 'This plan covers up to')} {maxPlates} {t('pos.sellpack.platesTotal', 'vehicles in total — add the others now, or skip.')}
         </p>
         <div className="mt-4 space-y-3 max-h-[50vh] overflow-auto">
           {plates.map((p, i) => (
@@ -100,9 +102,14 @@ export function PlateRegistrationModal({
             + {t('pos.sellpack.addPlate', 'Add license plate')}
           </button>
         )}
-        <div className="flex justify-end mt-5">
+        <div className="flex justify-end gap-2 mt-5">
+          {/* Skippable by design: the membership is already active, so this step
+              must never look like a gate the cashier has to clear. */}
+          <button className="btn-secondary" onClick={onDone} disabled={activating}>
+            {t('pos.sellpack.skip', 'Skip')}
+          </button>
           <button className="btn-primary" onClick={activate} disabled={activating}>
-            {activating ? t('pos.sellpack.activating', 'Activating…') : t('pos.sellpack.saveActivate', 'Save & Activate')}
+            {activating ? t('pos.sellpack.savingPlates', 'Saving…') : t('pos.sellpack.saveVehicles', 'Save vehicles')}
           </button>
         </div>
       </div>

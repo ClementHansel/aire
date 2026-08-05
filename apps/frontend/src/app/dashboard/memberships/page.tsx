@@ -242,7 +242,7 @@ function PlanModal({
 
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.memberships.discountedServices', 'Discounted services')}</label>
-            <p className="text-xs text-text-muted mb-2">{t('dash.memberships.discountedHint', 'Services the member gets at a percentage discount.')}</p>
+            <p className="text-xs text-text-muted mb-2">{t('dash.memberships.discountedHint', 'Services the member gets cheaper — either a % off, or a fixed member price in Rupiah.')}</p>
             {form.discountedServices.length > 0 && (
               <div className="space-y-1 mb-2">
                 {form.discountedServices.map((d) => (

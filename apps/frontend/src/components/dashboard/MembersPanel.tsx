@@ -12,6 +12,7 @@ import {
   canAddPlateRow,
 } from '@/lib/membership-plates';
 import type { MemberLookupResponse } from '@aire/shared/interfaces/member';
+import { describeMembershipEvent, membershipEventLabel } from '@/lib/membership-history';
 import { MembershipCard, buildCardHtml, computeCardCode, type CardTemplate } from './MembershipCard';
 import { PlateInput } from '@/components/shared/PlateInput';
 
@@ -382,23 +383,21 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
                 // ('pos', 'system'). Plate changes and the original sale are the
                 // entries this matters most for.
                 const who = ev.actorName ?? (ev.actor && !ev.actor.includes('-') ? ev.actor : null);
-                const detail = ev.payload
-                  ? Object.entries(ev.payload)
-                      .filter(([, v]) => v !== null && v !== undefined && v !== '')
-                      .map(([k, v]) => `${k}: ${String(v)}`)
-                      .join(' · ')
-                  : '';
+                const detail = describeMembershipEvent(ev);
                 return (
                   <li key={ev.id} className="flex items-start gap-3 text-sm" data-testid={`member-history-${ev.eventType}`}>
-                    <span className={`badge capitalize shrink-0 ${EVENT_BADGE[ev.eventType] ?? 'bg-surface-sunken text-text-secondary'}`}>
-                      {ev.eventType.replace(/_/g, ' ')}
+                    <span className={`badge shrink-0 ${EVENT_BADGE[ev.eventType] ?? 'bg-surface-sunken text-text-secondary'}`}>
+                      {membershipEventLabel(ev.eventType)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="text-xs text-text-muted">
                         {new Date(ev.createdAt).toLocaleString()}
                         {who && <> · <span className="text-text-secondary font-medium">{who}</span></>}
                       </p>
-                      {detail && <p className="text-xs text-text-secondary truncate" title={detail}>{detail}</p>}
+                      {/* Wraps rather than truncates: this is the only place the
+                          order number / amount / who-sold-it is shown, so
+                          clipping it lost the very details it was there for. */}
+                      {detail && <p className="text-xs text-text-secondary break-words">{detail}</p>}
                     </div>
                   </li>
                 );

@@ -142,27 +142,59 @@ describe('MembershipSellService', () => {
   });
 
   describe('activateMembership', () => {
+    /**
+     * Route mocked queries by the SQL they run instead of by call order.
+     * Positional `mockResolvedValueOnce` chains broke en masse the moment
+     * activation grew one query in the middle (the existing-plate dedupe
+     * lookup), even though every assertion still held — routing by SQL means a
+     * new best-effort query can't invalidate the whole suite.
+     */
+    const routeQueries = (opts: {
+      membership?: MembershipRow | null;
+      plan?: { max_plates: number; duration_months: number } | null;
+      /** plate_normalized values already registered on the membership. */
+      existingPlates?: string[];
+    } = {}) => {
+      const membership = opts.membership === undefined ? mockMembershipRow : opts.membership;
+      const plan = opts.plan === undefined ? { max_plates: 3, duration_months: 3 } : opts.plan;
+      mockPool.query.mockImplementation((sql: string) => {
+        const s = String(sql);
+        if (s.includes('FROM memberships WHERE id')) {
+          return Promise.resolve({ rows: membership ? [membership] : [] });
+        }
+        if (s.includes('FROM membership_plans')) {
+          return Promise.resolve({ rows: plan ? [plan] : [] });
+        }
+        if (s.includes('FROM membership_plates')) {
+          return Promise.resolve({
+            rows: (opts.existingPlates ?? []).map((p) => ({ plate_normalized: p })),
+          });
+        }
+        if (s.includes('UPDATE memberships')) {
+          return Promise.resolve({ rows: [{ ...membership, status: MembershipStatus.Active }] });
+        }
+        if (s.includes('INSERT INTO membership_plates')) {
+          return Promise.resolve({
+            rows: [{
+              id: 'plate-x', membership_id: membershipId, plate: 'B 1234 ABC',
+              plate_normalized: 'B1234ABC', brand: null, model: null, created_at: new Date(),
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+    };
+
+    const sqlsRun = () => mockPool.query.mock.calls.map((c: unknown[]) => String(c[0]));
+    const plateInserts = () => mockPool.query.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes('INSERT INTO membership_plates'));
+    const todayStr = () => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
     it('should activate membership with start_date = today and register plates', async () => {
-      // Fetch membership
-      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
-      // Fetch plan
-      mockPool.query.mockResolvedValueOnce({ rows: [{ max_plates: 3, duration_months: 3 }] });
-      // Update membership to active
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ ...mockMembershipRow, status: MembershipStatus.Active }],
-      });
-      // Register plate 1
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'plate-1',
-          membership_id: membershipId,
-          plate: 'B 1234 ABC',
-          plate_normalized: 'B1234ABC',
-          brand: 'Toyota',
-          model: 'Avanza',
-          created_at: new Date(),
-        }],
-      });
+      routeQueries();
 
       const result = await service.activateMembership(membershipId, {
         plates: [{ plate: 'B 1234 ABC', brand: 'Toyota', model: 'Avanza' }],
@@ -170,18 +202,16 @@ describe('MembershipSellService', () => {
 
       expect(result.status).toBe(MembershipStatus.Active);
 
-      // Verify update query sets active status and dates
-      const updateCall = mockPool.query.mock.calls[2];
-      const updateParams = updateCall[1];
+      const updateCall = mockPool.query.mock.calls.find((c: unknown[]) =>
+        String(c[0]).includes('UPDATE memberships'))!;
+      const updateParams = updateCall[1] as unknown[];
       expect(updateParams[0]).toBe(MembershipStatus.Active);
-      // start_date should be today
-      const today = new Date();
-      const expectedStartDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      expect(updateParams[1]).toBe(expectedStartDate);
+      expect(updateParams[1]).toBe(todayStr());
+      expect(plateInserts()).toHaveLength(1);
     });
 
     it('should throw NotFoundException if membership does not exist', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      routeQueries({ membership: null });
 
       await expect(
         service.activateMembership('nonexistent', { plates: [] }),
@@ -189,10 +219,7 @@ describe('MembershipSellService', () => {
     });
 
     it('should throw BadRequestException if plates exceed max_plates', async () => {
-      // Fetch membership
-      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
-      // Plan max_plates = 2
-      mockPool.query.mockResolvedValueOnce({ rows: [{ max_plates: 2, duration_months: 3 }] });
+      routeQueries({ plan: { max_plates: 2, duration_months: 3 } });
 
       await expect(
         service.activateMembership(membershipId, {
@@ -205,27 +232,54 @@ describe('MembershipSellService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should allow registering exactly max_plates plates', async () => {
-      // Fetch membership
-      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
-      // Plan max_plates = 3
-      mockPool.query.mockResolvedValueOnce({ rows: [{ max_plates: 3, duration_months: 3 }] });
-      // Update membership
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ ...mockMembershipRow, status: MembershipStatus.Active }],
-      });
-      // Register 3 plates
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', membership_id: membershipId, plate: 'B 1111 AA', plate_normalized: 'B1111AA', brand: null, model: null, created_at: new Date() }],
-      });
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p2', membership_id: membershipId, plate: 'B 2222 BB', plate_normalized: 'B2222BB', brand: null, model: null, created_at: new Date() }],
-      });
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p3', membership_id: membershipId, plate: 'B 3333 CC', plate_normalized: 'B3333CC', brand: null, model: null, created_at: new Date() }],
+    it('should count plates already registered against max_plates', async () => {
+      // The sale registered the order's car; the plan allows two vehicles, so
+      // only ONE more may be added — asking for two must be rejected.
+      routeQueries({ plan: { max_plates: 2, duration_months: 3 }, existingPlates: ['B1111AA'] });
+
+      await expect(
+        service.activateMembership(membershipId, {
+          plates: [{ plate: 'B 2222 BB' }, { plate: 'B 3333 CC' }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should not re-register a plate the membership already carries', async () => {
+      // The POS pre-fills the order's plate, which the sale itself already
+      // recorded. Re-submitting it must be a no-op, not a duplicate row — and
+      // must not trip the max_plates limit on a single-plate plan.
+      routeQueries({ plan: { max_plates: 1, duration_months: 3 }, existingPlates: ['B1234ABC'] });
+
+      const result = await service.activateMembership(membershipId, {
+        plates: [{ plate: 'B 1234 ABC', brand: 'Toyota', model: 'Avanza' }],
       });
 
-      // Should not throw
+      expect(result.status).toBe(MembershipStatus.Active);
+      expect(plateInserts()).toHaveLength(0);
+    });
+
+    it('should keep an already-active membership term intact when adding a vehicle', async () => {
+      // Payment activates the membership; adding a second vehicle afterwards
+      // must not restart the paid term from today.
+      routeQueries({
+        membership: { ...mockMembershipRow, status: MembershipStatus.Active },
+        plan: { max_plates: 3, duration_months: 3 },
+        existingPlates: ['B1111AA'],
+      });
+
+      const result = await service.activateMembership(membershipId, {
+        plates: [{ plate: 'B 2222 BB' }],
+      });
+
+      expect(result.startDate).toBe(mockMembershipRow.start_date);
+      expect(result.endDate).toBe(mockMembershipRow.end_date);
+      expect(sqlsRun().some((s: string) => s.includes('UPDATE memberships'))).toBe(false);
+      expect(plateInserts()).toHaveLength(1);
+    });
+
+    it('should allow registering exactly max_plates plates', async () => {
+      routeQueries({ plan: { max_plates: 3, duration_months: 3 } });
+
       const result = await service.activateMembership(membershipId, {
         plates: [
           { plate: 'B 1111 AA' },
@@ -235,33 +289,23 @@ describe('MembershipSellService', () => {
       });
 
       expect(result.status).toBe(MembershipStatus.Active);
+      expect(plateInserts()).toHaveLength(3);
     });
 
     it('should activate without plates (empty plate list)', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
-      mockPool.query.mockResolvedValueOnce({ rows: [{ max_plates: 3, duration_months: 3 }] });
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ ...mockMembershipRow, status: MembershipStatus.Active }],
-      });
-      // 6b: membership-number issuance looks up the order's outlet (best-effort).
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-      // 6c: tag the fee order 'new_member'.
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      routeQueries();
 
       const result = await service.activateMembership(membershipId, { plates: [] });
 
       expect(result.status).toBe(MembershipStatus.Active);
-      // No plate INSERT should run: fetch, plan, update, order-outlet lookup,
-      // order-tag insert, activation audit-log insert = 6.
-      expect(mockPool.query).toHaveBeenCalledTimes(6);
-      const sqls = mockPool.query.mock.calls.map((c: unknown[]) => String(c[0]));
+      const sqls = sqlsRun();
       expect(sqls.some((s: string) => s.includes('INSERT INTO membership_plates'))).toBe(false);
-      expect(sqls.some((s: string) => s.includes("INSERT INTO order_tags"))).toBe(true);
+      expect(sqls.some((s: string) => s.includes('INSERT INTO order_tags'))).toBe(true);
       expect(sqls.some((s: string) => s.includes('INSERT INTO audit_logs'))).toBe(true);
     });
 
     it('should throw NotFoundException when tenantId is provided and does not match', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
+      routeQueries();
 
       await expect(
         service.activateMembership(membershipId, { plates: [] }, 'some-other-tenant'),
@@ -269,16 +313,7 @@ describe('MembershipSellService', () => {
     });
 
     it('should write an audit_logs row for the activation with operator + before/after', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
-      mockPool.query.mockResolvedValueOnce({ rows: [{ max_plates: 3, duration_months: 3 }] });
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ ...mockMembershipRow, status: MembershipStatus.Active }],
-      });
-      // audit_logs insert (this is what we're verifying)
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-      // 6b order-outlet lookup, 6c order-tag insert
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      routeQueries();
 
       await service.activateMembership(membershipId, { plates: [] }, tenantId, 'operator-999');
 

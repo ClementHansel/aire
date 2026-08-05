@@ -7,6 +7,7 @@ import { MembershipPlanService } from './membership-plan.service';
 import { MembershipPlateService } from './membership-plate.service';
 import { MembershipRenewalService } from './membership-renewal.service';
 import { MembershipSellService } from './membership-sell.service';
+import { MembershipActivationService } from './membership-activation.service';
 import { MembershipAdminService } from './membership-admin.service';
 import { MemberLookupService } from './member-lookup.service';
 import { MembershipLifecycleService } from './membership-lifecycle.service';
@@ -19,7 +20,7 @@ import { DatabasePoolProvider } from '../auth/database.provider';
 @Module({
   imports: [OrderModule, NotificationModule],
   controllers: [MembershipPlanController, MembershipSellController, MembershipAdminController, MemberLookupController],
-  providers: [MembershipPlanService, MembershipPlateService, MembershipRenewalService, MembershipSellService, MembershipAdminService, MemberLookupService, MembershipLifecycleService, MembershipIdentityService, MembershipWelcomeService, DatabasePoolProvider],
+  providers: [MembershipPlanService, MembershipPlateService, MembershipRenewalService, MembershipSellService, MembershipActivationService, MembershipAdminService, MemberLookupService, MembershipLifecycleService, MembershipIdentityService, MembershipWelcomeService, DatabasePoolProvider],
   exports: [MembershipPlanService, MembershipPlateService, MembershipRenewalService, MembershipSellService, MemberLookupService, MembershipLifecycleService, MembershipIdentityService],
 })
 export class MembershipModule {}

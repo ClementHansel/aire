@@ -121,10 +121,24 @@ export function ServiceModal({
   const { t } = useI18n();
   const isProduct = lockedCategory === 'product';
   const scope: 'service' | 'product' = isProduct ? 'product' : 'service';
-  // Only show labels meant for this item type (or shared 'both'), but never hide
-  // the value already saved on the item being edited.
-  const scopedBrands = brands.filter((b) => matchesScope(b, scope) || b.id === initial?.brandId);
-  const scopedCategories = categories.filter((c) => matchesScope(c, scope) || c.id === initial?.categoryId);
+  // Labels meant for this item type (or shared 'both') are offered first; the
+  // rest are still selectable under an "other scopes" group. Filtering them out
+  // entirely made a brand/category the owner had just created in Catalog appear
+  // nowhere at all, with nothing on screen explaining why (AIRIN-100) — a
+  // scoping hint must not look like data loss.
+  const inScope = <T extends { appliesTo?: AppliesTo }>(items: T[]) => items.filter((x) => matchesScope(x, scope));
+  const outOfScope = <T extends { appliesTo?: AppliesTo; id: string }>(items: T[], keep?: string | null) =>
+    items.filter((x) => !matchesScope(x, scope) && x.id !== keep);
+  const scopedBrands = inScope(brands);
+  const otherBrands = outOfScope(brands, initial?.brandId);
+  const scopedCategories = inScope(categories);
+  const otherCategories = outOfScope(categories, initial?.categoryId);
+  // The saved value must always be selectable, even if its scope changed since.
+  const editedBrand = brands.find((b) => b.id === initial?.brandId && !matchesScope(b, scope));
+  const editedCategory = categories.find((c) => c.id === initial?.categoryId && !matchesScope(c, scope));
+  const otherScopeLabel = isProduct
+    ? t('catalog.serviceOnlyLabels', 'Service-only labels')
+    : t('catalog.productOnlyLabels', 'Product-only labels');
   const [form, setForm] = useState<FormState>(
     initial
       ? {
@@ -237,6 +251,12 @@ export function ServiceModal({
               <select aria-label={t(BRAND_LABEL.key, BRAND_LABEL.fallback)} className="input-field" value={form.brandId} onChange={(e) => setForm({ ...form, brandId: e.target.value })}>
                 <option value="">{t('dash.services.none', '— None —')}</option>
                 {scopedBrands.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
+                {editedBrand && <option value={editedBrand.id}>{editedBrand.code} · {editedBrand.name}</option>}
+                {otherBrands.length > 0 && (
+                  <optgroup label={otherScopeLabel}>
+                    {otherBrands.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </div>
             <div>
@@ -244,6 +264,12 @@ export function ServiceModal({
               <select aria-label={t(CATALOG_LABEL.key, CATALOG_LABEL.fallback)} className="input-field" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
                 <option value="">{t('dash.services.none', '— None —')}</option>
                 {scopedCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {editedCategory && <option value={editedCategory.id}>{editedCategory.name}</option>}
+                {otherCategories.length > 0 && (
+                  <optgroup label={otherScopeLabel}>
+                    {otherCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </div>
           </div>
