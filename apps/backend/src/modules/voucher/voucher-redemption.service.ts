@@ -59,7 +59,16 @@ export class VoucherRedemptionService {
       return { status: 'parent_code', message: 'This is a voucher pack — present one of its individual codes' };
     }
 
-    const data = await this.lookup(tenantId, codeHash);
+    // Hashed pack code first (the legacy model), then the plaintext ticket model.
+    // Both must be accepted here: shareable BOOK codes are what campaign bonuses
+    // have issued since migration 086 and what pack purchases issue since
+    // AIRIN-145, and this endpoint only ever hashed the input and searched
+    // voucher_codes — so every book code came back "not found" and a cashier
+    // could not apply a voucher the customer had legitimately bought or been
+    // granted (AIRIN-149). The order pipeline already redeemed both models, so
+    // validation was the only step out of step.
+    const data = (await this.lookup(tenantId, codeHash))
+      ?? (await this.lookupTicket(tenantId, code));
     const state = evaluateVoucher(data, context);
 
     if (state.status === 'valid_applicable') {
@@ -115,6 +124,58 @@ export class VoucherRedemptionService {
       serviceIds: row.service_ids,
       minOrderAmount: parseFloat(row.min_order_amount),
       isActive: row.template_active && row.pack_status === 'active' && row.code_status === 'active',
+      isParentCode: false,
+    };
+  }
+
+  /**
+   * Look up a shareable BOOK ticket by its plaintext code and present it as
+   * VoucherData, so one evaluateVoucher() rule set covers both voucher models.
+   *
+   * The benefit is read off the book, which is the only place a book's worth is
+   * recorded. Two deliberate choices keep this in step with what the order
+   * pipeline (resolveDigitalVouchers) actually does at checkout, rather than
+   * inventing stricter rules that would let validation pass and the order fail,
+   * or vice versa:
+   *   - `outletIds: null` — a ticket is shareable and redeemable at any branch of
+   *     the tenant; the order path applies no branch filter either.
+   *   - `serviceIds` — only a service-typed benefit is tied to one service; a
+   *     fixed/percentage book applies to the whole cart.
+   */
+  private async lookupTicket(tenantId: string, code: string): Promise<VoucherData | null> {
+    const res = await this.pool.query<{
+      ticket_status: string;
+      ticket_expiry: string | null;
+      benefit_type: string;
+      benefit_value: string;
+      benefit_service_id: string | null;
+    }>(
+      `SELECT t.status AS ticket_status, COALESCE(t.expiry_date, b.expiry_date) AS ticket_expiry,
+              b.benefit_type, b.benefit_value::text AS benefit_value, b.benefit_service_id
+         FROM voucher_tickets t
+         JOIN voucher_books b ON b.id = t.book_id
+        WHERE t.tenant_id = $1 AND t.code = $2`,
+      [tenantId, code.trim().toUpperCase()],
+    );
+    const row = res.rows[0];
+    if (!row) return null;
+
+    // 'service' is the book model's spelling of a free service, which the voucher
+    // vocabulary calls 'service_pack'.
+    const type = (row.benefit_type === 'service' ? VoucherType.ServicePack : row.benefit_type) as VoucherType;
+
+    return {
+      type,
+      value: parseFloat(row.benefit_value),
+      maxUses: 1, // every ticket is single-use
+      currentUses: row.ticket_status === 'active' ? 0 : 1,
+      startDate: null, // books carry no start date — valid from issue
+      expiryDate: row.ticket_expiry,
+      outletIds: null,
+      brandScope: null,
+      serviceIds: row.benefit_service_id ? [row.benefit_service_id] : null,
+      minOrderAmount: 0,
+      isActive: row.ticket_status === 'active',
       isParentCode: false,
     };
   }
