@@ -54,6 +54,21 @@ import { OrderStateMachine, StatusLogEntry } from './order-state-machine';
 const DEFAULT_MAX_MANUAL_DISCOUNT_PCT = 0.3;
 
 /**
+ * What may be written to order_items.member_discount_value, which is
+ * DECIMAL(5,2) — a percentage-shaped column that cannot hold a Rupiah price.
+ * 'percentage' stores its 0-1 fraction and 'free' stores 1; a 'fixed' member
+ * price is left NULL because it would overflow (and is implied by the line's
+ * discount/subtotal).
+ */
+function memberDiscountValueFor(
+  kind: { type: 'free' | 'percentage' | 'fixed'; value: number } | undefined,
+): number | null {
+  if (!kind) return null;
+  if (kind.type === 'fixed') return null;
+  return Number.isFinite(kind.value) && Math.abs(kind.value) < 1000 ? kind.value : null;
+}
+
+/**
  * Database row shape for orders table.
  */
 interface OrderRow {
@@ -594,7 +609,13 @@ export class OrderService {
             isMemberPricing,
             isMemberPricing ? request.membershipId : null,
             isMemberPricing ? (memberPricingKind.get(cartItem.serviceId)?.type ?? null) : null,
-            isMemberPricing ? (memberPricingKind.get(cartItem.serviceId)?.value ?? null) : null,
+            // member_discount_value is DECIMAL(5,2) — a PERCENTAGE-shaped column
+            // (max 999.99). A 'fixed' benefit's value is a Rupiah member price, so
+            // writing it here overflows the column and fails the whole sale; the
+            // amount is recoverable from discount/subtotal anyway, and the badge
+            // for a fixed benefit needs no number. Only the fraction (percentage)
+            // and 1 (free) are stored.
+            isMemberPricing ? memberDiscountValueFor(memberPricingKind.get(cartItem.serviceId)) : null,
             i,
           ],
         );

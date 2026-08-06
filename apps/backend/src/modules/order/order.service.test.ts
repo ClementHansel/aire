@@ -440,6 +440,30 @@ describe('OrderService', () => {
         expect(discountFor('svc-1')).toBe(10000);
       });
 
+      it('never writes a Rupiah member price into the DECIMAL(5,2) percentage column', async () => {
+        // Regression: recording the member benefit KIND per line also wrote its
+        // value, and a 'fixed' benefit's value is a Rupiah price (e.g. 30000).
+        // member_discount_value is DECIMAL(5,2) — max 999.99 — so Postgres raised
+        // "numeric field overflow" and the whole sale failed. Only a fraction or 1
+        // may be stored; a fixed price is implied by discount/subtotal.
+        setupSuccessfulOrderCreation();
+
+        await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
+
+        const itemInserts = mockClient.query.mock.calls.filter(
+          (c: unknown[]) => String(c[0]).includes('INSERT INTO order_items'),
+        );
+        expect(itemInserts.length).toBeGreaterThan(0);
+        for (const call of itemInserts) {
+          const params = (call[1] as unknown[]) ?? [];
+          // member_discount_value is the 11th bind (index 10) on the service insert.
+          const memberValue = params[10];
+          if (typeof memberValue === 'number') {
+            expect(Math.abs(memberValue)).toBeLessThan(1000);
+          }
+        }
+      });
+
       it('honours an item cap ABOVE the legacy tenant-wide 30% default', async () => {
         // The item's own rule is authoritative; the hardcoded 30% outlet default
         // must not clamp it further. Every earlier case sat below 30%, so this
