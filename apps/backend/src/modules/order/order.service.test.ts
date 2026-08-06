@@ -439,6 +439,29 @@ describe('OrderService', () => {
         // 10% of 2 × 50 000 = 10 000.
         expect(discountFor('svc-1')).toBe(10000);
       });
+
+      it('honours an item cap ABOVE the legacy tenant-wide 30% default', async () => {
+        // The item's own rule is authoritative; the hardcoded 30% outlet default
+        // must not clamp it further. Every earlier case sat below 30%, so this
+        // stacked-cap bug survived a green suite and was only caught by driving a
+        // real 50%-configured item on production (AIRIN-122/123).
+        mockPool.query.mockReset();
+        mockPool.query.mockResolvedValueOnce({
+          rows: [{ ...mockServices[0], dynamic_discount_enabled: true, dynamic_discount_kind: 'percentage', max_discount: '50.00' }],
+        });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ settings: { service_charge_pct: 0, tax_pct: 0 } }] });
+        mockPool.query.mockResolvedValueOnce({ rows: [] });
+        mockPool.query.mockResolvedValueOnce({ rows: [{ count: '1' }] });
+        currentOrderRow = { id: 'order-1', status: 'ordered', total: '25000.00', created_at: new Date(), updated_at: new Date() };
+
+        await orderService.createOrder(
+          { ...validRequest, items: [{ serviceId: 'svc-1', quantity: 1, manualDiscount: 25000 }] },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+        // 50% of 50 000 = 25 000 — NOT the 15 000 the 30% default would have given.
+        expect(discountFor('svc-1')).toBe(25000);
+      });
     });
 
     it('should calculate correct subtotal from service prices', async () => {

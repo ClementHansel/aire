@@ -226,6 +226,11 @@ export class CampaignGrantService implements OnModuleInit, OnModuleDestroy {
         buyerName: delivery.customerName,
         buyerPhone: delivery.customerPhone,
         orderId,
+        // Name the bonus in Issued Vouchers. Without this the row fell back to the
+        // benefit service ("+ Spray Wax") with an empty Voucher column, while a
+        // purchased pack showed its template name — found by live-testing 090.
+        templateId: campaign.bonus_template_id,
+        source: 'bonus',
       });
       bookId = issued.bookId;
       codes = issued.codes;

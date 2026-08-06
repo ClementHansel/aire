@@ -351,11 +351,19 @@ export class OrderService {
         );
         continue;
       }
+      // The item's OWN rule is authoritative once it has one, so the legacy
+      // tenant-wide percentage is dropped here (`cap` above already bounds the
+      // amount). Leaving it in stacked two caps and silently took the smaller:
+      // an item the owner configured for "max 50%" was still clamped to the
+      // hardcoded 30% default, so the dashboard setting quietly did not apply and
+      // the POS showed a ceiling the server would never honour (AIRIN-122/123,
+      // found by live-testing the percentage path). applyManualDiscount keeps the
+      // tenant-wide cap for callers with no per-item rule — its documented job.
       cartItems = applyManualDiscount(
         cartItems,
         item.serviceId,
         Math.min(requestedDiscount, cap),
-        outletConfig,
+        { ...outletConfig, maxManualDiscountPct: undefined },
       );
     }
 
