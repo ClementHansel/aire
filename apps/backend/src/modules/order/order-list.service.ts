@@ -234,7 +234,7 @@ export class OrderListService {
        UNION ALL
        -- Plaintext book tickets (the current model).
        SELECT t.redeemed_order_id AS order_id, 'voucher' AS kind,
-              COALESCE(vt.name, bs.name, b.benefit_type) || ' · ' || t.code AS label,
+              COALESCE(vt.name, bs.name, b.benefit_type) || ' (' || t.code || ')' AS label,
               NULL AS amount, b.benefit_service_id AS covers_service_id
          FROM voucher_tickets t
          JOIN voucher_books b ON b.id = t.book_id
@@ -243,13 +243,14 @@ export class OrderListService {
         WHERE t.redeemed_order_id = ANY($1)
        UNION ALL
        -- Legacy hashed pack codes: the code itself was never stored in plaintext,
-       -- so the template name is all we can name it by.
-       SELECT vc.redeemed_order_id AS order_id, 'voucher' AS kind,
+       -- so the template name is all we can name it by. Note the column here is
+       -- order_id: only the newer voucher_tickets calls it redeemed_order_id.
+       SELECT vc.order_id AS order_id, 'voucher' AS kind,
               vt2.name AS label, NULL AS amount, NULL::uuid AS covers_service_id
          FROM voucher_codes vc
          JOIN voucher_packs vp ON vp.id = vc.pack_id
          JOIN voucher_templates vt2 ON vt2.id = vp.template_id
-        WHERE vc.redeemed_order_id = ANY($1)`,
+        WHERE vc.order_id = ANY($1)`,
       [orderIds],
     );
 
