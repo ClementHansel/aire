@@ -55,6 +55,22 @@ export const DYNAMIC_DISCOUNT_LABEL = { key: 'catalog.dynamicDiscount', fallback
 export const DYNAMIC_DISCOUNT_KIND_LABEL = { key: 'catalog.dynamicDiscountKind', fallback: 'Discount type' } as const;
 export const MAX_DISCOUNT_LABEL = { key: 'catalog.maxDiscount', fallback: 'Maximum discount' } as const;
 
+/**
+ * The branches an item is really restricted to, as ONE list.
+ *
+ * There are two generations of branch scoping in the schema: the legacy single
+ * `outlet_id` and the multi-branch `outlet_ids[]`. The POS menu query honours
+ * BOTH (`outlet_id = $1 OR $1 = ANY(outlet_ids)`), but the dashboard only ever
+ * read `outletIds` — so a service pinned to one branch the old way rendered as
+ * "All branches" in the list and showed nothing ticked on its edit page, neither
+ * matching where it actually sells (AIRIN-148). An empty result genuinely means
+ * every branch.
+ */
+export function effectiveOutletIds(s: { outletId?: string | null; outletIds?: string[] | null }): string[] {
+  if (s.outletIds && s.outletIds.length > 0) return s.outletIds;
+  return s.outletId ? [s.outletId] : [];
+}
+
 /** A category/brand belongs in a form when it targets that item type or 'both'. */
 export const matchesScope = (item: { appliesTo?: AppliesTo }, scope: 'service' | 'product') =>
   !item.appliesTo || item.appliesTo === 'both' || item.appliesTo === scope;
@@ -147,7 +163,13 @@ export function ServiceModal({
           businessUnit: initial.businessUnit ?? 'AIRE',
           categoryId: initial.categoryId ?? '',
           brandId: initial.brandId ?? '',
-          outletIds: initial.outletIds ?? [],
+          // Seeds from the legacy single outlet_id when there is no outlet_ids[]
+          // array, so the ticked branches match where the item actually sells —
+          // the POS honours both columns, this form only ever read the array, so a
+          // branch-pinned item opened looking tenant-wide (AIRIN-148). Saving then
+          // normalises the legacy value into the array (the backend clears
+          // outlet_id whenever outlet_ids is written).
+          outletIds: effectiveOutletIds(initial),
           price: String(initial.price),
           isActive: initial.isActive,
           isMainService: initial.isMainService,

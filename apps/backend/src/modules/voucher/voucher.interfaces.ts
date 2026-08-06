@@ -64,10 +64,19 @@ export interface SellVoucherPackResult {
   customerId: string;
 }
 
-/** Result of issuing a voucher pack — after payment. Plaintext codes shown once. */
+/**
+ * Result of issuing a voucher pack — after payment.
+ *
+ * Since AIRIN-145 a pack is issued as a voucher BOOK of plaintext tickets, so
+ * the codes remain readable in the dashboard forever rather than being shown
+ * once and then surviving only as hashes. `parentCode` is therefore optional:
+ * the retired hashed-pack model had a parent code wrapping its children, books
+ * have no such wrapper.
+ */
 export interface IssueVoucherPackResult {
+  /** voucher_books.id (was voucher_packs.id before the convergence). */
   packId: string;
-  parentCode: string;
+  parentCode?: string | null;
   childCodes: string[];
   expiryDate: string | null;
   whatsappDelivered: boolean;

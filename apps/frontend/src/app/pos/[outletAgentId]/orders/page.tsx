@@ -11,7 +11,7 @@ import { RefundDialog } from '@/components/pos/RefundDialog';
 import { useI18n } from '@/lib/i18n';
 import { buildDocHtml, type DocTemplate, type DocData } from '@/components/dashboard/DocumentRenderer';
 
-interface OrderCardItem { serviceName: string; quantity: number; subtotal: number }
+interface OrderCardItem { serviceName: string; quantity: number; subtotal: number; itemType?: string | null }
 interface OrderCard {
   id: string;
   orderNumber: string;
@@ -254,9 +254,20 @@ export default function OrdersPage() {
                 <p className="text-sm text-text-primary">{o.customerName}</p>
                 <p className="text-xs text-text-muted">{o.customerPhone}{o.licensePlate ? ` · ${o.licensePlate}` : ''}</p>
                 <ul className="mt-3 space-y-1 border-t border-border pt-2">
+                  {o.items.length === 0 && (
+                    <li className="text-xs text-text-muted">{t('pos.orders.noItems', 'No line items')}</li>
+                  )}
                   {o.items.map((it, i) => (
                     <li key={i} className="flex justify-between text-xs text-text-secondary">
-                      <span>{it.quantity}× {it.serviceName}</span>
+                      {/* Name the KIND of a membership/voucher-pack line. Both used
+                          to be dropped from this list entirely (inner join on
+                          service_id), so a pack or plan purchase showed no items at
+                          all and looked identical to any other order (AIRIN-115). */}
+                      <span>
+                        {it.quantity}× {it.serviceName}
+                        {it.itemType === 'membership_plan' && <span className="badge bg-violet-50 text-violet-700 text-[10px] ml-1.5">{t('pos.orders.membership', 'Membership')}</span>}
+                        {it.itemType === 'voucher_pack' && <span className="badge bg-amber-50 text-amber-700 text-[10px] ml-1.5">{t('pos.orders.voucherPack', 'Voucher pack')}</span>}
+                      </span>
                       <span>{fmt(it.subtotal)}</span>
                     </li>
                   ))}

@@ -181,6 +181,12 @@ export interface OrderCardItem {
   serviceName: string;
   quantity: number;
   subtotal: number;
+  /**
+   * What kind of line this is: a normal 'service'/'product', or the
+   * 'membership_plan' / 'voucher_pack' sold on this order. Lets a list say
+   * *what* was bought rather than showing a bare name (AIRIN-115).
+   */
+  itemType?: string | null;
 }
 
 /**

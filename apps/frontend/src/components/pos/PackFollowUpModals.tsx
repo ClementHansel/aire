@@ -26,7 +26,9 @@ import {
 } from '@/lib/membership-plates';
 
 export interface IssuedPack {
-  parentCode: string;
+  /** Absent since AIRIN-145: a pack is now a book of standalone plaintext
+   *  tickets, so there is no parent code wrapping them. */
+  parentCode?: string | null;
   childCodes: string[];
   expiryDate: string | null;
   whatsappDelivered: boolean;
@@ -141,13 +143,18 @@ export function VoucherCodesModal({ issued, issuing, error, onClose }: {
             </div>
             <div className="mt-4">
               <p className="text-xs text-text-muted mb-1">
-                {t('pos.sellpack.packCode', 'Pack code:')} <span className="font-mono">{issued.parentCode}</span>
+                {issued.parentCode
+                  ? <>{t('pos.sellpack.packCode', 'Pack code:')} <span className="font-mono">{issued.parentCode}</span></>
+                  : `${issued.childCodes.length} ${t('pos.sellpack.codesLabel', 'codes')}`}
                 {issued.expiryDate ? ` · ${t('pos.sellpack.expires', 'expires')} ${issued.expiryDate}` : ''}
               </p>
               <div className="rounded-lg border border-border bg-surface-sunken p-3 max-h-48 overflow-auto grid grid-cols-2 gap-1.5">
                 {issued.childCodes.map((c) => <span key={c} className="font-mono text-sm text-text-primary">{c}</span>)}
               </div>
-              <p className="mt-2 text-xs text-text-muted">{t('pos.sellpack.codesShownOnce', 'These codes are shown once. The customer can redeem them at checkout.')}</p>
+              {/* No longer "shown once": since AIRIN-145 the codes are plaintext
+                  tickets, so they stay readable under Vouchers → Issued Vouchers
+                  if the customer loses them or WhatsApp delivery fails. */}
+              <p className="mt-2 text-xs text-text-muted">{t('pos.sellpack.codesRecoverable', 'The customer can redeem these at checkout. They stay available under Vouchers → Issued Vouchers.')}</p>
             </div>
           </>
         )}

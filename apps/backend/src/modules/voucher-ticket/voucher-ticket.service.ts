@@ -20,7 +20,12 @@ export interface SellBookDto {
   paymentMethod?: string;
 }
 
-/** Input to issueBonusBook — a FREE grant, no order/price fields. */
+/**
+ * Input to issueBonusBook — issues a book of plaintext codes against an order
+ * that has ALREADY been settled, so it never creates a cash order of its own and
+ * the book is always priced 0 (the revenue is on the triggering order's line).
+ * Used for both campaign bonuses and POS pack sales; `source` tells them apart.
+ */
 export interface IssueBonusBookDto {
   outletId: string;
   quantity: number;
@@ -30,10 +35,14 @@ export interface IssueBonusBookDto {
   expiryDate?: string | null;
   buyerName?: string | null;
   buyerPhone?: string | null;
-  /** The order that earned this bonus (e.g. the membership fee order, or the
+  /** The order that earned this book (e.g. the membership fee order, or the
    *  voucher-pack purchase order) — stored for audit only; no cash order is
    *  created here. */
   orderId?: string | null;
+  /** Pack/bonus template this book was minted from — lets the dashboard name it. */
+  templateId?: string | null;
+  /** How the book came to exist. Defaults to 'bonus' (the original caller). */
+  source?: 'sale' | 'bonus' | 'adhoc';
 }
 
 export interface VoucherTicket {
@@ -131,8 +140,11 @@ export class VoucherTicketService {
       });
 
       const bookRes = await client.query<{ id: string }>(
-        `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date, order_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        // source 'adhoc': this book describes its benefit inline (no template) and
+        // it DOES carry its own unit_price, because unlike issueBonusBook it just
+        // created the order that collected the money.
+        `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date, order_id, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'adhoc') RETURNING id`,
         [
           tenantId, outletId, dto.buyerName ?? null, dto.buyerPhone ?? null, qty,
           dto.benefitType ?? 'service', dto.benefitServiceId ?? null, dto.benefitValue ?? 0,
@@ -239,12 +251,17 @@ export class VoucherTicketService {
     const start = high - qty + 1;
 
     const bookRes = await client.query<{ id: string }>(
-      `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date, order_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10) RETURNING id`,
+      // unit_price is hardcoded 0: the money for this book was already booked on
+      // the triggering order's own line (a bonus is free; a pack sale is priced
+      // on the POS order). Pricing it here would double-count it in every report
+      // that reads books alongside orders.
+      `INSERT INTO voucher_books (tenant_id, outlet_id, buyer_name, buyer_phone, quantity, benefit_type, benefit_service_id, benefit_value, unit_price, expiry_date, order_id, template_id, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11, $12) RETURNING id`,
       [
         tenantId, dto.outletId, dto.buyerName ?? null, dto.buyerPhone ?? null, qty,
         dto.benefitType, dto.benefitServiceId ?? null, dto.benefitValue ?? 0,
         dto.expiryDate ?? null, dto.orderId ?? null,
+        dto.templateId ?? null, dto.source ?? 'bonus',
       ],
     );
     const bookId = bookRes.rows[0]!.id;
@@ -320,15 +337,20 @@ export class VoucherTicketService {
       // benefit_service_id is only set for benefit_type = 'service'; the joined
       // name lets the dashboard label a pack by what it actually grants
       // ("Voucher Cuci Mobil") instead of the raw benefit type.
+      // template_name/source (migration 090) are what make a POS pack purchase
+      // identifiable here: without them a bought "Voucher Cuci 10x" and a free
+      // campaign bonus rendered as the same anonymous row (AIRIN-145/AIRIN-138).
       `SELECT b.id, b.buyer_name, b.buyer_phone, b.quantity, b.benefit_type, b.unit_price, b.created_at,
               b.outlet_id, o.name AS outlet_name, bs.name AS benefit_name,
+              b.source, vt.name AS template_name,
               COUNT(t.id) FILTER (WHERE t.status = 'redeemed')::int AS redeemed
        FROM voucher_books b
        JOIN outlets o ON o.id = b.outlet_id
        LEFT JOIN services bs ON bs.id = b.benefit_service_id
+       LEFT JOIN voucher_templates vt ON vt.id = b.template_id
        LEFT JOIN voucher_tickets t ON t.book_id = b.id
        WHERE b.tenant_id = $1 ${filter}
-       GROUP BY b.id, o.name, bs.name
+       GROUP BY b.id, o.name, bs.name, vt.name
        ORDER BY b.created_at DESC LIMIT 200`,
       qp,
     );
@@ -336,6 +358,7 @@ export class VoucherTicketService {
       id: b.id, buyerName: b.buyer_name, buyerPhone: b.buyer_phone, quantity: b.quantity,
       benefitType: b.benefit_type, benefitName: b.benefit_name ?? null, unitPrice: parseFloat(b.unit_price),
       outletId: b.outlet_id, outletName: b.outlet_name,
+      source: b.source ?? 'adhoc', templateName: b.template_name ?? null,
       redeemed: b.redeemed, createdAt: b.created_at,
     }));
   }

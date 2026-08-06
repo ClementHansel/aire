@@ -53,7 +53,12 @@ describe('MemberLookupService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPool = { query: vi.fn() };
+    // Default every un-stubbed query to an empty result. The tests below stub the
+    // queries they care about with mockResolvedValueOnce chains, and without this
+    // baseline ANY newly-added query (e.g. the non-member vehicle-history fallback
+    // from AIRIN-147) makes the next call resolve to undefined and blows up tests
+    // whose assertions all still hold.
+    mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     service = new MemberLookupService(mockPool as any);
   });
 
@@ -207,6 +212,46 @@ describe('MemberLookupService', () => {
 
       // Check dailyUsageToday is populated correctly
       expect(result.memberships[0]!.dailyUsageToday['B1234ABC']).toBe(1);
+    });
+
+    it('falls back to order-history vehicles for a customer with no membership plates', async () => {
+      // AIRIN-147: a returning NON-member has no membership_plates rows, so the POS
+      // could autofill nothing and the cashier retyped the same car every visit.
+      // Their vehicles live on their past orders.
+      mockPool.query.mockResolvedValueOnce({ rows: [mockCustomerRow] });  // customer
+      mockPool.query.mockResolvedValueOnce({ rows: [] });                 // no memberships
+      mockPool.query.mockResolvedValueOnce({                              // order history
+        rows: [{ plate: 'B9199XYZ', brand: 'Honda', model: 'Brio' }],
+      });
+
+      const result = await service.buildMemberResponse(customerId, tenantId);
+
+      expect(result.memberships).toHaveLength(0);
+      expect(result.customer.plates).toEqual([
+        { plate: 'B9199XYZ', brand: 'Honda', model: 'Brio' },
+      ]);
+      const historyQuery = mockPool.query.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .find((sql) => sql.includes('FROM orders'));
+      expect(historyQuery).toBeDefined();
+      // Never resurrect a cancelled order's car.
+      expect(historyQuery).toContain("status <> 'cancelled'");
+    });
+
+    it('does NOT mix order-history vehicles into a real member\'s plate list', async () => {
+      // Membership plates decide which car the plan actually covers, so a car the
+      // member once drove but never registered must not appear as covered.
+      mockPool.query.mockResolvedValueOnce({ rows: [mockCustomerRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockMembershipRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: mockPlateRows });
+      mockPool.query.mockResolvedValueOnce({ rows: mockUsageRows });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });                 // vouchers
+
+      const result = await service.buildMemberResponse(customerId, tenantId);
+
+      const sqls = mockPool.query.mock.calls.map((c: unknown[]) => String(c[0]));
+      expect(sqls.some((s) => s.includes('FROM orders'))).toBe(false);
+      expect(result.customer.plates.length).toBe(mockPlateRows.length);
     });
 
     it('should return empty memberships when customer has none', async () => {

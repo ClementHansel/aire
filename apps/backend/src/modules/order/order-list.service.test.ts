@@ -35,9 +35,9 @@ describe('OrderListService', () => {
   };
 
   const mockItemRows = [
-    { order_id: 'order-001', service_name: 'Super Wash', quantity: 1, subtotal: '100000.00' },
-    { order_id: 'order-001', service_name: 'Vacuum', quantity: 2, subtotal: '50000.00' },
-    { order_id: 'order-002', service_name: 'Basic Wash', quantity: 1, subtotal: '75000.00' },
+    { order_id: 'order-001', service_name: 'Super Wash', item_type: 'service', quantity: 1, subtotal: '100000.00' },
+    { order_id: 'order-001', service_name: 'Vacuum', item_type: 'service', quantity: 2, subtotal: '50000.00' },
+    { order_id: 'order-002', service_name: 'Basic Wash', item_type: 'service', quantity: 1, subtotal: '75000.00' },
   ];
 
   beforeEach(() => {
@@ -78,12 +78,40 @@ describe('OrderListService', () => {
         serviceName: 'Super Wash',
         quantity: 1,
         subtotal: 100000,
+        itemType: 'service',
       });
 
       // Second order - no plate/brand
       expect(result.orders[1]!.licensePlate).toBeUndefined();
       expect(result.orders[1]!.vehicleBrand).toBeUndefined();
       expect(result.orders[1]!.items).toHaveLength(1);
+    });
+
+    it('keeps membership-plan and voucher-pack lines, which have no services row', async () => {
+      // AIRIN-115: the items query used to INNER JOIN services on oi.service_id,
+      // which is NULL for a pack/plan line (migration 089) — so an order that was
+      // a membership or voucher-pack purchase came back with NO items at all and
+      // the cashier could not tell what had been sold. The name comes from
+      // oi.item_name via COALESCE, and item_type says which kind it is.
+      mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          { order_id: 'order-001', service_name: 'Paket Member Gold', item_type: 'membership_plan', quantity: 1, subtotal: '500000.00' },
+          { order_id: 'order-001', service_name: 'Voucher Cuci 10x', item_type: 'voucher_pack', quantity: 1, subtotal: '300000.00' },
+        ],
+      });
+
+      const result = await service.listOrders({ tenantId: TENANT });
+
+      const itemsQuery = String(mockPool.query.mock.calls[2]![0]);
+      expect(itemsQuery).toContain('LEFT JOIN services');
+      expect(itemsQuery).toContain('COALESCE(s.name, oi.item_name)');
+      expect(result.orders[0]!.items).toHaveLength(2);
+      expect(result.orders[0]!.items[0]).toEqual({
+        serviceName: 'Paket Member Gold', quantity: 1, subtotal: 500000, itemType: 'membership_plan',
+      });
+      expect(result.orders[0]!.items[1]!.itemType).toBe('voucher_pack');
     });
 
     it('should return empty result when no orders match', async () => {

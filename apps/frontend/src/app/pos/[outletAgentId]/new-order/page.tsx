@@ -38,6 +38,11 @@ interface CartLine {
   /** Cashier-entered manual discount for this line, in Rupiah (total, not per-unit).
    *  The server re-derives the cap from the item's own rule — this is UX only. */
   manualDiscount?: number;
+  /** The percentage the cashier actually typed, when this item's dashboard rule is
+   *  kind='percentage'. `manualDiscount` stays the derived Rupiah amount (the only
+   *  thing the API accepts); this is kept so the field redisplays what was typed
+   *  and can be re-derived when the quantity changes (AIRIN-122/123). */
+  manualDiscountPct?: number;
   /** Copied from the menu item so the cart can decide whether to offer a discount
    *  field at all, without re-fetching the service. */
   discountRule?: DynamicDiscountRule;
@@ -414,7 +419,11 @@ export default function NewOrderPage() {
     // memberships arrive most-actionable first; prefer the active one for pricing.
     const best = m.memberships?.find((x) => x.status === 'active') ?? m.memberships?.[0];
     setMemberDetail(best?.status === 'active' ? best : null);
-    const plates = best?.plates ?? [];
+    // Membership plates drive pricing, so they win. A returning NON-member has
+    // none, and the backend then reports the cars from their past orders on
+    // customer.plates — use those so the cashier stops retyping a vehicle the
+    // shop has already served (AIRIN-147).
+    const plates = best?.plates?.length ? best.plates : (m.customer.plates ?? []);
     setMemberPlateOptions(plates);
     if (plateUsed) {
       // Searched by plate — look up that plate's OWN brand/model instead of
@@ -506,6 +515,12 @@ export default function NewOrderPage() {
       if (m?.customer) {
         applyMember(m, canonicalPlate);
         if (canonicalPlate) setPlate(canonicalPlate);
+        // Say so explicitly when the match is a known customer WITHOUT a
+        // membership: their details and vehicle are now filled in, and silence
+        // there reads as "nothing happened" (AIRIN-147).
+        if (!m.memberships?.length) {
+          setFindMsg(t('pos.new.customerNoMembership', 'Customer found — no active membership. Details filled in.'));
+        }
       } else {
         setFindMsg(t('pos.new.noMemberFound', 'No member found'));
       }
@@ -610,7 +625,18 @@ export default function NewOrderPage() {
       prev.flatMap((l) => {
         if (l.serviceId !== serviceId) return [l];
         const qty = l.qty + delta;
-        return qty <= 0 ? [] : [{ ...l, qty }];
+        if (qty <= 0) return [];
+        const next = { ...l, qty };
+        // A percentage discount is a proportion of the LINE, so changing the
+        // quantity must re-derive the Rupiah amount; leaving the old figure would
+        // silently turn "10%" into some other fraction (AIRIN-122/123).
+        if (next.manualDiscountPct != null) {
+          next.manualDiscount = pctToRupiah(next, next.manualDiscountPct);
+        } else if (next.manualDiscount != null) {
+          // A fixed-Rupiah discount must still never exceed the (new) line total.
+          next.manualDiscount = Math.min(next.manualDiscount, lineDiscountCap(next));
+        }
+        return [next];
       }),
     );
   };
@@ -621,13 +647,32 @@ export default function NewOrderPage() {
   const lineDiscountCap = (l: CartLine) => Math.floor(maxLineDiscount(l.discountRule, l.price, l.qty));
   const canDiscount = (l: CartLine) => lineDiscountCap(l) > 0;
 
+  /**
+   * Whether this item's dashboard rule is expressed as a percentage. The POS used
+   * to take Rupiah for every item regardless, using `kind` only to compute the
+   * ceiling — so an item configured "max 10%" presented a Rupiah box and the
+   * cashier had to do the arithmetic (AIRIN-122/123).
+   */
+  const isPctRule = (l: CartLine) => l.discountRule?.enabled === true && l.discountRule.kind === 'percentage';
+  /** Percentage ceiling from the rule, never above 100. */
+  const linePctCap = (l: CartLine) => Math.min(l.discountRule?.maxDiscount ?? 0, 100);
+  /** Rupiah equivalent of a percentage of the whole line, rounded to the rupiah. */
+  const pctToRupiah = (l: CartLine, pct: number) =>
+    Math.min(Math.round((pct / 100) * l.price * l.qty), lineDiscountCap(l));
+
   const changeDiscount = (serviceId: string, value: string) => {
     const raw = Math.max(0, Number(value) || 0);
     setCart((prev) => prev.map((l) => {
       if (l.serviceId !== serviceId) return l;
+      if (isPctRule(l)) {
+        // The cashier typed a PERCENTAGE. Clamp to the configured percentage cap,
+        // then derive the Rupiah amount the API actually takes.
+        const pct = Math.min(raw, linePctCap(l));
+        return { ...l, manualDiscountPct: pct, manualDiscount: pctToRupiah(l, pct) };
+      }
       // Clamp to this line's own ceiling so the cashier can't type past it and
       // then be surprised when the server charges more than the screen showed.
-      return { ...l, manualDiscount: Math.min(raw, lineDiscountCap(l)) };
+      return { ...l, manualDiscountPct: undefined, manualDiscount: Math.min(raw, lineDiscountCap(l)) };
     }));
   };
 
@@ -1207,20 +1252,25 @@ export default function NewOrderPage() {
                 {canDiscount(l) && (
                   <div className="flex items-center gap-1.5 pl-0.5">
                     <label htmlFor={`disc-${l.serviceId}`} className="text-[11px] text-text-muted">{t('pos.new.discount', 'Disc')}</label>
+                    {/* The field matches the item's configured discount TYPE: a
+                        percent box for kind='percentage', Rupiah otherwise — it was
+                        always Rupiah before (AIRIN-122/123). */}
                     <input
                       id={`disc-${l.serviceId}`}
                       type="number"
                       min={0}
-                      max={lineDiscountCap(l)}
+                      max={isPctRule(l) ? linePctCap(l) : lineDiscountCap(l)}
                       className="input-field !py-1 !px-2 text-xs w-24"
-                      placeholder="Rp 0"
-                      value={l.manualDiscount || ''}
+                      placeholder={isPctRule(l) ? '0%' : 'Rp 0'}
+                      value={(isPctRule(l) ? l.manualDiscountPct : l.manualDiscount) || ''}
                       onChange={(e) => changeDiscount(l.serviceId, e.target.value)}
                       aria-label={`${t('pos.new.discount', 'Discount')} — ${l.name}`}
                       data-testid={`line-discount-${l.serviceId}`}
                     />
                     <span className="text-[11px] text-text-muted">
-                      {t('pos.new.discountMaxHint', 'max')} {fmt(lineDiscountCap(l))}
+                      {isPctRule(l)
+                        ? `${t('pos.new.discountMaxHint', 'max')} ${linePctCap(l)}%${l.manualDiscount ? ` = ${fmt(l.manualDiscount)}` : ''}`
+                        : `${t('pos.new.discountMaxHint', 'max')} ${fmt(lineDiscountCap(l))}`}
                     </span>
                   </div>
                 )}

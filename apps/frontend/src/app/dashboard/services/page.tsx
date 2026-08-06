@@ -11,6 +11,7 @@ import {
   BUSINESS_UNIT_LABEL,
   TYPE_LABEL,
   CATALOG_LABEL,
+  effectiveOutletIds,
   type ServiceDTO,
   type Category,
   type Brand,
@@ -74,7 +75,8 @@ export default function ServicesPage() {
       if (fCategory && s.categoryId !== fCategory) return false;
       // An item with no branch restriction is sold everywhere, so it matches any
       // branch filter — same rule the POS menu query uses.
-      if (fBranch && s.outletIds && s.outletIds.length > 0 && !s.outletIds.includes(fBranch)) return false;
+      const scope = effectiveOutletIds(s);
+      if (fBranch && scope.length > 0 && !scope.includes(fBranch)) return false;
       return true;
     });
   }, [services, search, fBusinessUnit, fBrand, fCategory, fBranch]);
@@ -204,11 +206,11 @@ export default function ServicesPage() {
                   <td className="px-5 py-3.5"><span className="badge bg-primary-50 text-primary-700">{t(CATEGORY_KEYS[s.category], CATEGORY_LABELS[s.category])}</span></td>
                   <td className="px-5 py-3.5 text-sm text-text-secondary">{categoryById(s.categoryId)?.name ?? <span className="text-text-muted">—</span>}</td>
                   <td className="px-5 py-3.5 text-xs">
-                    {!s.outletIds || s.outletIds.length === 0
+                    {effectiveOutletIds(s).length === 0
                       ? <span className="badge bg-gray-100 text-gray-600 text-xs">{t('dash.services.allBranches', 'All branches')}</span>
                       : (
                         <span className="flex flex-wrap gap-1">
-                          {s.outletIds.map((id) => (
+                          {effectiveOutletIds(s).map((id) => (
                             <span key={id} className="badge bg-sky-50 text-sky-700 text-xs">
                               {branches.find((b) => b.id === id)?.name ?? id.slice(0, 8)}
                             </span>

@@ -42,6 +42,7 @@ interface OrderRow {
 interface OrderItemRow {
   order_id: string;
   service_name: string;
+  item_type: string | null;
   quantity: number;
   subtotal: string;
 }
@@ -137,14 +138,21 @@ export class OrderListService {
     // Fetch items for all orders in one batch
     let itemsByOrder: Record<string, OrderCardItem[]> = {};
     if (orderIds.length > 0) {
+      // LEFT JOIN + COALESCE, not an inner JOIN on service_id: a membership-plan
+      // or voucher-pack line has service_id NULL (migration 089) and an inner
+      // join dropped it from the card entirely, so an order that WAS a membership
+      // or pack purchase listed no items at all and the cashier could not tell
+      // which plan/pack had been sold (AIRIN-115). item_name carries the plan or
+      // template name, and item_type says which kind it is.
       const itemsQuery = `
         SELECT
           oi.order_id,
-          s.name AS service_name,
+          COALESCE(s.name, oi.item_name) AS service_name,
+          oi.item_type,
           oi.quantity,
           oi.subtotal::text
         FROM order_items oi
-        JOIN services s ON oi.service_id = s.id
+        LEFT JOIN services s ON oi.service_id = s.id
         WHERE oi.order_id = ANY($1)
         ORDER BY oi.sort_order ASC
       `;
@@ -290,6 +298,7 @@ export class OrderListService {
         serviceName: row.service_name,
         quantity: row.quantity,
         subtotal: parseFloat(row.subtotal),
+        itemType: row.item_type ?? null,
       });
     }
     return map;

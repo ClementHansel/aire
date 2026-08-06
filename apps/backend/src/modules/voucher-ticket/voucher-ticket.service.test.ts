@@ -195,10 +195,14 @@ describe('VoucherTicketService.issueBonusBook', () => {
     expect(client.query).not.toHaveBeenCalledWith('COMMIT');
 
     const bookInsert = client.query.mock.calls.find((c: unknown[]) => String(c[0]).includes('INSERT INTO voucher_books'));
+    // Trailing template_id + source (migration 090): a caller that names no
+    // template gets NULL, and the default source is 'bonus' — the campaign-grant
+    // caller this method was written for.
     expect(bookInsert?.[1]).toEqual([
       'tenant-1', 'outlet-1', 'Budi', '0811', 3,
       'service', 'service-spray-wax', 0,
       '2026-12-31', 'order-1',
+      null, 'bonus',
     ]);
 
     const ticketInserts = client.query.mock.calls.filter((c: unknown[]) => String(c[0]).includes('INSERT INTO voucher_tickets'));

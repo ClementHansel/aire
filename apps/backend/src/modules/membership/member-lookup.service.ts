@@ -72,8 +72,10 @@ interface VoucherRow {
   code_display: string;
   type: 'fixed' | 'percentage' | 'service_pack';
   value: string;
-  expires_at: string;
+  expires_at: string | null;
   is_used: boolean;
+  /** Only used for ordering across the two grant models. */
+  created_at?: Date;
 }
 
 /**
@@ -307,20 +309,82 @@ export class MemberLookupService {
       }
     }
 
-    // 7. Get campaign-granted vouchers for this customer
+    // 6b. A customer who never bought a membership has no membership_plates rows
+    // at all, so the POS could not autofill anything for a walk-in it had already
+    // served many times — the cashier retyped the same car on every visit
+    // (AIRIN-147). Their vehicles are recorded on their past orders, so fall back
+    // to those, most recent first.
+    //
+    // Deliberately a FALLBACK, not a merge: for an actual member this list drives
+    // which plate the order is priced against, and a car they once drove but never
+    // registered is not covered by the plan. Only fill it when membership plates
+    // are absent.
+    if (customerPlates.length === 0) {
+      const historyRes = await this.pool.query<{
+        plate: string; brand: string | null; model: string | null;
+      }>(
+        `SELECT DISTINCT ON (COALESCE(plate_normalized, license_plate))
+                COALESCE(plate_normalized, license_plate) AS plate,
+                vehicle_brand AS brand, vehicle_model AS model
+           FROM orders
+          WHERE customer_id = $1 AND tenant_id = $2
+            AND COALESCE(plate_normalized, license_plate) IS NOT NULL
+            AND COALESCE(plate_normalized, license_plate) <> ''
+            AND status <> 'cancelled'
+          ORDER BY COALESCE(plate_normalized, license_plate), created_at DESC`,
+        [customerId, tenantId],
+      );
+      for (const h of historyRes.rows) {
+        if (seenPlates.has(h.plate)) continue;
+        seenPlates.add(h.plate);
+        customerPlates.push({
+          plate: h.plate,
+          brand: h.brand ?? undefined,
+          model: h.model ?? undefined,
+        });
+      }
+    }
+
+    // 7. Get campaign-granted vouchers for this customer.
+    //
+    // UNION of both grant models. Migration 086 moved new grants from
+    // voucher_packs (hashed) to voucher_books (plaintext), but this query still
+    // only joined through cg.voucher_pack_id — which is NULL for every grant
+    // issued since — so a member's bonus vouchers had silently stopped appearing
+    // here even though Issued Vouchers showed them. The book arm reports the real
+    // redeemable CODE; the legacy pack arm can only report its prefix, since the
+    // codes behind it were never stored in plaintext.
     const vouchersResult = await this.pool.query<VoucherRow>(
       `SELECT vc.id, vp.parent_code_prefix AS code_display,
               vt.type, vt.value::text,
               vt.expiry_date::text AS expires_at,
-              (vc.status = 'redeemed') AS is_used
-       FROM campaign_grants cg
-       JOIN voucher_packs vp ON cg.voucher_pack_id = vp.id
-       JOIN voucher_codes vc ON vc.pack_id = vp.id
-       JOIN voucher_templates vt ON vp.template_id = vt.id
-       WHERE cg.customer_id = $1
-         AND vp.tenant_id = $2
-         AND vc.status IN ('active', 'redeemed')
-       ORDER BY vc.created_at DESC`,
+              (vc.status = 'redeemed') AS is_used,
+              vc.created_at
+         FROM campaign_grants cg
+         JOIN voucher_packs vp ON cg.voucher_pack_id = vp.id
+         JOIN voucher_codes vc ON vc.pack_id = vp.id
+         JOIN voucher_templates vt ON vp.template_id = vt.id
+        WHERE cg.customer_id = $1
+          AND vp.tenant_id = $2
+          AND vc.status IN ('active', 'redeemed')
+       UNION ALL
+       SELECT t.id, t.code AS code_display,
+              -- Read the benefit off the BOOK, not its template: books predating
+              -- migration 090 have no template_id, and the book's own columns are
+              -- always populated. 'service' is this model's spelling of a free
+              -- service, which the voucher vocabulary calls 'service_pack'.
+              CASE b.benefit_type WHEN 'service' THEN 'service_pack' ELSE b.benefit_type END AS type,
+              b.benefit_value::text AS value,
+              t.expiry_date::text AS expires_at,
+              (t.status = 'redeemed') AS is_used,
+              t.created_at
+         FROM campaign_grants cg
+         JOIN voucher_books b ON cg.voucher_book_id = b.id
+         JOIN voucher_tickets t ON t.book_id = b.id
+        WHERE cg.customer_id = $1
+          AND b.tenant_id = $2
+          AND t.status IN ('active', 'redeemed')
+       ORDER BY created_at DESC`,
       [customerId, tenantId],
     );
 

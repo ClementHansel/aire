@@ -10,7 +10,7 @@ import { Gift, Ticket, Megaphone, Pencil, Trash2, Check } from 'lucide-react';
 
 interface Branch { id: string; name: string }
 interface ServiceLite { id: string; name: string; price?: number }
-interface Book { id: string; buyerName: string | null; buyerPhone: string | null; quantity: number; benefitType: string; unitPrice: number; outletName: string; redeemed: number; createdAt: string }
+interface Book { id: string; buyerName: string | null; buyerPhone: string | null; quantity: number; benefitType: string; benefitName?: string | null; unitPrice: number; outletName: string; redeemed: number; createdAt: string; source?: 'sale' | 'bonus' | 'adhoc'; templateName?: string | null }
 interface Ticket { id: string; code: string; status: string; expiryDate: string | null; redeemedAt: string | null }
 interface Template {
   id: string; name: string; type: 'fixed' | 'percentage' | 'service_pack'; value: number;
@@ -531,6 +531,7 @@ export default function VouchersPage() {
           <table className="w-full">
             <thead><tr className="border-b border-border bg-surface-sunken/50">
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.vouchers.buyer', 'Buyer')}</th>
+              <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.vouchers.voucher', 'Voucher')}</th>
               <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.vouchers.branch', 'Branch')}</th>
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.vouchers.qty', 'Qty')}</th>
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.vouchers.redeemed', 'Redeemed')}</th>
@@ -538,9 +539,17 @@ export default function VouchersPage() {
               <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.vouchers.codes', 'Codes')}</th>
             </tr></thead>
             <tbody className="divide-y divide-border">
-              {visibleBooks.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.vouchers.noBooksSold', 'No voucher packs sold yet.')}</td></tr> : visibleBooks.map((b) => (
+              {visibleBooks.length === 0 ? <tr><td colSpan={7} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.vouchers.noBooksSold', 'No voucher packs sold yet.')}</td></tr> : visibleBooks.map((b) => (
                 <tr key={b.id}>
                   <td className="px-5 py-3.5 text-sm font-medium">{b.buyerName ?? '—'}<div className="text-xs text-text-muted">{b.buyerPhone}</div></td>
+                  {/* What this book actually is, and how it was obtained. A POS pack
+                      purchase and a free campaign bonus used to render as identical
+                      anonymous rows (AIRIN-145 / AIRIN-138). */}
+                  <td className="px-5 py-3.5 text-sm">
+                    {b.templateName ?? b.benefitName ?? '—'}
+                    {b.source === 'bonus' && <span className="badge bg-violet-50 text-violet-700 text-xs ml-1.5">{t('dash.vouchers.sourceBonus', 'Bonus')}</span>}
+                    {b.source === 'sale' && <span className="badge bg-emerald-50 text-emerald-700 text-xs ml-1.5">{t('dash.vouchers.sourceSale', 'Purchased')}</span>}
+                  </td>
                   <td className="px-5 py-3.5 text-sm">{b.outletName}</td>
                   <td className="px-5 py-3.5 text-sm text-right">{b.quantity}</td>
                   <td className="px-5 py-3.5 text-sm text-right">{b.redeemed}/{b.quantity}</td>

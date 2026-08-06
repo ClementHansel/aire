@@ -344,6 +344,13 @@ export class ServiceService {
       setClauses.push(`outlet_ids = $${paramIndex}`);
       values.push(dto.outletIds && dto.outletIds.length > 0 ? dto.outletIds : null);
       paramIndex++;
+      // Retire the legacy single-branch column whenever the multi-branch array is
+      // written. Both are honoured by the POS menu query, so leaving a stale
+      // outlet_id behind means the item keeps selling at a branch the editor just
+      // unticked — and no UI shows the old column, making it unfixable from the
+      // dashboard (AIRIN-148). The form now seeds the array FROM outlet_id, so a
+      // legacy scope is preserved rather than dropped on the first save.
+      setClauses.push('outlet_id = NULL');
     }
 
     if (dto.barcode !== undefined) {
