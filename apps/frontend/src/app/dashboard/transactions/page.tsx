@@ -18,10 +18,21 @@ interface Summary {
   byPaymentMethod: Record<string, { revenue: number; count: number }>;
   byService: ServiceRow[];
 }
+interface OrderCardItem {
+  serviceId?: string | null; serviceName: string; quantity: number; subtotal: number; itemType?: string | null;
+  isMemberPricing?: boolean; memberDiscountType?: string | null; memberDiscountValue?: number | null;
+}
+/** Why money moved: a promotion, a redeemed voucher, or a campaign this sale earned. */
+interface OrderDiscountSource {
+  kind: 'promo' | 'voucher' | 'campaign'; label: string; amount: number | null;
+  coversServiceId?: string | null; viaCampaign?: string | null;
+}
 interface OrderCard {
   id: string; orderNumber: string; customerName: string; customerPhone: string;
   status: string; total: number; createdAt: string; operatorName: string;
   paymentMethod: string | null; isMember: boolean;
+  items?: OrderCardItem[];
+  discountSources?: OrderDiscountSource[];
 }
 /** Settlement methods offered by the POS — same set the payment modal writes. */
 const PAYMENT_METHODS = ['cash', 'qris_dynamic', 'qris_static', 'edc', 'cc', 'transfer'] as const;
@@ -502,6 +513,27 @@ export default function TransactionsPage() {
                   {o.customerName}
                   {o.isMember && <span className="ml-1.5 badge bg-violet-50 text-violet-700">{t('dash.transactions.memberOnly', 'Member')}</span>}
                   <div className="text-xs text-text-muted">{o.customerPhone}</div>
+                  {/* Why this order's money moved, and what it earned. Kept to short
+                      chips here; the View dialog names each one in full. */}
+                  {(o.discountSources ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {(o.discountSources ?? []).map((d, i) => (
+                        <span
+                          key={`${d.label}-${i}`}
+                          title={d.label + (d.viaCampaign ? ` (${d.viaCampaign})` : '')}
+                          className={`badge text-[10px] ${
+                            d.kind === 'promo' ? 'bg-fuchsia-50 text-fuchsia-700'
+                              : d.kind === 'campaign' ? 'bg-violet-50 text-violet-700'
+                                : 'bg-sky-50 text-sky-700'
+                          }`}
+                        >
+                          {d.kind === 'promo' ? t('dash.transactions.promoTag', 'Promo')
+                            : d.kind === 'campaign' ? t('dash.transactions.earnedTag', 'Earned')
+                              : t('dash.transactions.voucherTag', 'Voucher')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 {/* Unpaid orders have no method yet — show a dash, not a blank cell. */}
                 <td className="px-5 py-3 text-sm text-text-secondary">{o.paymentMethod ? paymentLabel(o.paymentMethod) : <span className="text-text-muted">—</span>}</td>
@@ -539,6 +571,57 @@ export default function TransactionsPage() {
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.total', 'Total')}</span><span className="font-medium">{fmt(detail.total)}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.date', 'Date')}</span><span>{new Date(detail.createdAt).toLocaleString()}</span></div>
             </div>
+
+            {/* What was actually sold, and why each line cost what it did. The
+                dialog previously showed totals only, so a Rp 0 line could not be
+                explained from here at all. */}
+            {(detail.items ?? []).length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border">
+                <p className="text-xs text-text-muted mb-1.5">{t('dash.transactions.items', 'Items')}</p>
+                <div className="space-y-1">
+                  {(detail.items ?? []).map((it, i) => (
+                    <div key={i} className="flex justify-between items-start text-sm gap-2">
+                      <span>
+                        {it.quantity}× {it.serviceName}
+                        {it.itemType === 'membership_plan' && <span className="badge bg-violet-50 text-violet-700 text-[10px] ml-1.5">{t('dash.transactions.membershipTag', 'Membership')}</span>}
+                        {it.itemType === 'voucher_pack' && <span className="badge bg-amber-50 text-amber-700 text-[10px] ml-1.5">{t('dash.transactions.voucherPackTag', 'Voucher pack')}</span>}
+                        {it.isMemberPricing && (
+                          <span className="badge bg-emerald-50 text-emerald-700 text-[10px] ml-1.5">
+                            {it.memberDiscountType === 'percentage' && it.memberDiscountValue
+                              ? `${t('dash.transactions.member', 'MEMBER')} −${Math.round(it.memberDiscountValue * 100)}%`
+                              : it.memberDiscountType === 'fixed'
+                                ? t('dash.transactions.memberPrice', 'MEMBER PRICE')
+                                : t('dash.transactions.memberFree', 'MEMBER · FREE')}
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-mono whitespace-nowrap">{fmt(it.subtotal)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(detail.discountSources ?? []).length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border space-y-1">
+                {(detail.discountSources ?? []).map((d, i) => (
+                  <div key={`${d.label}-${i}`} className="text-xs">
+                    <span className="text-text-muted">
+                      {d.kind === 'campaign'
+                        ? t('dash.transactions.earnedLabel', 'Earned:')
+                        : d.kind === 'promo'
+                          ? t('dash.transactions.promoLabel', 'Promo:')
+                          : t('dash.transactions.voucherLabel', 'Voucher:')}
+                    </span>{' '}
+                    <span className="text-text-primary">{d.label}</span>
+                    {d.amount ? <span className="text-green-600"> −{fmt(d.amount)}</span> : null}
+                    {d.viaCampaign && d.kind !== 'campaign' && (
+                      <span className="text-text-muted"> · {t('dash.transactions.viaCampaign', 'from campaign')} {d.viaCampaign}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <button className="btn-secondary w-full mt-4" onClick={() => setDetail(null)}>{t('dash.transactions.close', 'Close')}</button>
           </div>
         </div>

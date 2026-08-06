@@ -178,6 +178,11 @@ export interface OrderQueryParams {
  * A single order item returned in the order card.
  */
 export interface OrderCardItem {
+  /**
+   * The service behind this line, or null for a membership-plan / voucher-pack
+   * line. Needed to match a free-service voucher to the line it covered.
+   */
+  serviceId?: string | null;
   serviceName: string;
   quantity: number;
   subtotal: number;

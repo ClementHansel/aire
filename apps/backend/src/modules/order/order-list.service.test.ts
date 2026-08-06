@@ -35,9 +35,9 @@ describe('OrderListService', () => {
   };
 
   const mockItemRows = [
-    { order_id: 'order-001', service_name: 'Super Wash', item_type: 'service', quantity: 1, subtotal: '100000.00', is_member_pricing: false, discount: '0' },
-    { order_id: 'order-001', service_name: 'Vacuum', item_type: 'service', quantity: 2, subtotal: '50000.00', is_member_pricing: false, discount: '0' },
-    { order_id: 'order-002', service_name: 'Basic Wash', item_type: 'service', quantity: 1, subtotal: '75000.00', is_member_pricing: false, discount: '0' },
+    { order_id: 'order-001', service_id: 'svc-1', service_name: 'Super Wash', item_type: 'service', quantity: 1, subtotal: '100000.00', is_member_pricing: false, discount: '0' },
+    { order_id: 'order-001', service_id: 'svc-2', service_name: 'Vacuum', item_type: 'service', quantity: 2, subtotal: '50000.00', is_member_pricing: false, discount: '0' },
+    { order_id: 'order-002', service_id: 'svc-3', service_name: 'Basic Wash', item_type: 'service', quantity: 1, subtotal: '75000.00', is_member_pricing: false, discount: '0' },
   ];
 
   beforeEach(() => {
@@ -79,6 +79,7 @@ describe('OrderListService', () => {
       expect(result.orders[0]!.total).toBe(150000);
       expect(result.orders[0]!.items).toHaveLength(2);
       expect(result.orders[0]!.items[0]).toEqual({
+        serviceId: 'svc-1',
         serviceName: 'Super Wash',
         quantity: 1,
         subtotal: 100000,
@@ -117,6 +118,7 @@ describe('OrderListService', () => {
       expect(itemsQuery).toContain('COALESCE(s.name, oi.item_name)');
       expect(result.orders[0]!.items).toHaveLength(2);
       expect(result.orders[0]!.items[0]).toEqual({
+        serviceId: null,
         serviceName: 'Paket Member Gold', quantity: 1, subtotal: 500000, itemType: 'membership_plan',
         isMemberPricing: false, memberDiscountType: null, memberDiscountValue: null, discount: 0,
       });

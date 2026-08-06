@@ -42,6 +42,7 @@ interface OrderRow {
  */
 interface OrderItemRow {
   order_id: string;
+  service_id: string | null;
   service_name: string;
   item_type: string | null;
   quantity: number;
@@ -163,6 +164,7 @@ export class OrderListService {
       const itemsQuery = `
         SELECT
           oi.order_id,
+          oi.service_id,
           COALESCE(s.name, oi.item_name) AS service_name,
           oi.item_type,
           oi.quantity,
@@ -397,6 +399,7 @@ export class OrderListService {
         map[row.order_id] = [];
       }
       map[row.order_id]!.push({
+        serviceId: row.service_id ?? null,
         serviceName: row.service_name,
         quantity: row.quantity,
         subtotal: parseFloat(row.subtotal),

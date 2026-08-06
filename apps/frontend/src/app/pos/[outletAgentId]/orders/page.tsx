@@ -11,7 +11,7 @@ import { RefundDialog } from '@/components/pos/RefundDialog';
 import { useI18n } from '@/lib/i18n';
 import { buildDocHtml, type DocTemplate, type DocData } from '@/components/dashboard/DocumentRenderer';
 
-interface OrderCardItem { serviceName: string; quantity: number; subtotal: number; itemType?: string | null; isMemberPricing?: boolean; memberDiscountType?: string | null; memberDiscountValue?: number | null; discount?: number }
+interface OrderCardItem { serviceId?: string | null; serviceName: string; quantity: number; subtotal: number; itemType?: string | null; isMemberPricing?: boolean; memberDiscountType?: string | null; memberDiscountValue?: number | null; discount?: number }
 interface OrderDiscountSource { kind: 'promo' | 'voucher' | 'campaign'; label: string; amount: number | null; coversServiceId?: string | null; viaCampaign?: string | null }
 interface OrderCard {
   id: string;
@@ -162,6 +162,40 @@ export default function OrdersPage() {
     transfer: t('pos.orders.pmTransfer', 'Bank Transfer'),
   };
 
+  /**
+   * The reason a line costs what it does, as plain text for a receipt.
+   *
+   * The customer's copy is the one document they keep, so "Rp 0" with no
+   * explanation is the worst place for the ambiguity: it reads as a mistake or a
+   * freebie rather than the benefit they are paying a membership for.
+   */
+  const itemReasonText = (o: OrderCard, it: OrderCardItem): string => {
+    if (it.isMemberPricing) {
+      if (it.memberDiscountType === 'percentage' && it.memberDiscountValue) {
+        return ` (${t('pos.orders.member', 'MEMBER')} -${Math.round(it.memberDiscountValue * 100)}%)`;
+      }
+      if (it.memberDiscountType === 'fixed') return ` (${t('pos.orders.memberPrice', 'MEMBER PRICE')})`;
+      return ` (${t('pos.orders.memberFree', 'MEMBER - FREE')})`;
+    }
+    const voucher = (o.discountSources ?? []).find(
+      (d) => d.kind === 'voucher' && d.coversServiceId && d.coversServiceId === it.serviceId,
+    );
+    return voucher ? ` (${t('pos.orders.voucherTag', 'Voucher')})` : '';
+  };
+
+  /** Order-level footer lines naming each promo/voucher, and what the sale earned. */
+  const discountFooterLines = (o: OrderCard): string[] =>
+    (o.discountSources ?? []).map((d) => {
+      const prefix = d.kind === 'campaign'
+        ? t('pos.orders.earned', 'Earned:')
+        : d.kind === 'promo'
+          ? t('pos.orders.promoTag', 'Promo') + ':'
+          : t('pos.orders.voucherTag', 'Voucher') + ':';
+      const via = d.viaCampaign && d.kind !== 'campaign' ? ` (${d.viaCampaign})` : '';
+      const amt = d.amount ? ` -${fmt(d.amount)}` : '';
+      return `${prefix} ${d.label}${via}${amt}`;
+    });
+
   // Client-side printable receipt (opens a print window). Reusable for reprint.
   const printReceipt = (o: OrderCard) => {
     const branch = getPosOutletName() ?? '';
@@ -184,8 +218,16 @@ export default function OrdersPage() {
           customer_name: o.customerName, license_plate: o.licensePlate ?? '',
           operator_name: o.operatorName ?? '', payment_method: paymentLabel,
         },
-        items: o.items.map((it) => ({ line: `${it.quantity}× ${it.serviceName}`, subtotal: fmt(it.subtotal) })),
-        totals,
+        items: o.items.map((it) => ({
+          line: `${it.quantity}× ${it.serviceName}${itemReasonText(o, it)}`,
+          subtotal: fmt(it.subtotal),
+        })),
+        totals: [
+          ...totals,
+          // Named attribution under the money, so the customer's copy says which
+          // promo or voucher applied — and what the purchase earned them.
+          ...discountFooterLines(o).map((line) => ({ label: line, value: '' })),
+        ],
         logo: null, code: null,
       };
       const w = window.open('', '_blank', 'width=340,height=600');
@@ -196,7 +238,10 @@ export default function OrdersPage() {
     }
 
 
-    const rows = o.items.map((it) => `<tr><td>${it.quantity}× ${escapeHtml(it.serviceName)}</td><td style="text-align:right">${fmt(it.subtotal)}</td></tr>`).join('');
+    const rows = o.items.map((it) => `<tr><td>${it.quantity}× ${escapeHtml(it.serviceName)}${escapeHtml(itemReasonText(o, it))}</td><td style="text-align:right">${fmt(it.subtotal)}</td></tr>`).join('');
+    const reasonBlock = discountFooterLines(o)
+      .map((line) => `<p class="foot" style="text-align:left">${escapeHtml(line)}</p>`)
+      .join('');
     const breakdownRows = [
       `<tr><td>${t('pos.orders.subtotal', 'Subtotal')}</td><td style="text-align:right">${fmt(o.subtotal)}</td></tr>`,
       o.serviceCharge > 0 ? `<tr><td>${t('pos.orders.serviceCharge', 'Service charge')}</td><td style="text-align:right">${fmt(o.serviceCharge)}</td></tr>` : '',
@@ -218,6 +263,7 @@ export default function OrdersPage() {
       <table>${rows}</table>
       <table class="brk">${breakdownRows}</table>
       <div class="tot"><span>Total</span><span>${fmt(o.total)}</span></div>
+      ${reasonBlock}
       <p class="foot">${o.status.toUpperCase()}${paymentLabel ? ' · ' + escapeHtml(paymentLabel) : ''} · ${escapeHtml(o.operatorName || '')}</p>
       <p class="foot">Terima kasih!</p>
       </body></html>`;
@@ -284,7 +330,7 @@ export default function OrdersPage() {
                         )}
                         {/* A voucher that covered THIS service, named by its code. */}
                         {(o.discountSources ?? [])
-                          .filter((d) => d.kind === 'voucher' && d.coversServiceId && d.coversServiceId === (it as { serviceId?: string }).serviceId)
+                          .filter((d) => d.kind === 'voucher' && d.coversServiceId && d.coversServiceId === it.serviceId)
                           .map((d) => (
                             <span key={d.label} className="badge bg-sky-50 text-sky-700 text-[10px] ml-1.5">{d.label}</span>
                           ))}
