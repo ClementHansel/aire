@@ -89,6 +89,14 @@ export interface ValidateVoucherResult {
   discountValue?: number;
   /** Computed discount for the current cart (fixed/percentage). */
   discountAmount?: number;
+  /**
+   * For a service-type voucher, the service this code covers. `discountAmount` is
+   * 0 for those — the amount depends on the covered line's price, which the order
+   * pipeline resolves — so without this the POS could not show the effect of the
+   * code in its running total, and a cashier applying two free-service vouchers
+   * saw the total refuse to move.
+   */
+  benefitServiceIds?: string[];
   reason?: string;
   message: string;
 }

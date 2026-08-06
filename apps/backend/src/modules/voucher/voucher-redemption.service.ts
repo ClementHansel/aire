@@ -78,6 +78,10 @@ export class VoucherRedemptionService {
         type: state.type,
         discountValue: state.discountValue,
         discountAmount,
+        // Which service a free-service code covers. Its money value is 0 above
+        // (the order pipeline prices it against the covered line), so the POS
+        // needs the service id to reflect the code in its running total.
+        benefitServiceIds: data?.serviceIds ?? undefined,
         message: 'Voucher applied',
       };
     }

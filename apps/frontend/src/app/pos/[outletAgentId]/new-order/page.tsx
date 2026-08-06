@@ -217,6 +217,8 @@ export default function NewOrderPage() {
 
   // voucher redemption
   const [voucherCodes, setVoucherCodes] = useState<string[]>([]);
+  /** What each applied code does, so the running total can reflect several at once. */
+  const [voucherInfo, setVoucherInfo] = useState<Record<string, { type: string; amount: number; serviceIds: string[] }>>({});
   const [voucherInput, setVoucherInput] = useState('');
   /**
    * Voucher feedback line. `tone` drives the colour: a rejected code (not found,
@@ -789,14 +791,28 @@ export default function NewOrderPage() {
     setVoucherMsg(null);
     setVoucherWarning(null);
     try {
-      const res = await api.post<{ status: string; message: string; discountAmount?: number; reason?: string }>(
+      const res = await api.post<{ status: string; message: string; discountAmount?: number; reason?: string; type?: string; benefitServiceIds?: string[] }>(
         '/vouchers/validate',
         { code, serviceIdsInCart: cart.map((l) => l.serviceId), orderSubtotal: subtotal },
       );
       if (res.status === 'valid_applicable') {
         setVoucherCodes((prev) => [...prev, code]);
+        // Remember what this code does, so several applied codes can be reflected
+        // in the running total. Two free-service vouchers (free wash + free wax)
+        // is a normal campaign combination, and the total used to ignore both.
+        setVoucherInfo((prev) => ({
+          ...prev,
+          [code]: {
+            type: res.type ?? 'fixed',
+            amount: res.discountAmount ?? 0,
+            serviceIds: res.benefitServiceIds ?? [],
+          },
+        }));
         setVoucherInput('');
-        setVoucherMsg({ tone: 'ok', text: `${t('pos.new.applied', 'Applied:')} −${fmt(res.discountAmount ?? 0)}` });
+        const shown = res.discountAmount
+          ? `−${fmt(res.discountAmount)}`
+          : t('pos.new.appliedFreeService', 'free service');
+        setVoucherMsg({ tone: 'ok', text: `${t('pos.new.applied', 'Applied:')} ${shown}` });
       } else if (res.status === 'valid_not_applicable') {
         // Real code, but not applicable to this cart (wrong outlet/brand/service or
         // min-order not met) — orange badge with the server's reason, not an error.
@@ -814,6 +830,11 @@ export default function NewOrderPage() {
 
   const removeVoucher = (code: string) => {
     setVoucherCodes((prev) => prev.filter((c) => c !== code));
+    setVoucherInfo((prev) => {
+      const next = { ...prev };
+      delete next[code];
+      return next;
+    });
     setVoucherMsg(null);
   };
 
@@ -868,7 +889,41 @@ export default function NewOrderPage() {
     0,
   );
   const packSubtotal = (sellPlan?.price ?? 0) + (sellVoucherTpl?.salePrice ?? 0);
-  const estimatedTotal = Math.max(0, subtotal - (sellPlan ? washSubtotal : 0) - promoDiscount) + packSubtotal;
+
+  /**
+   * What the applied vouchers take off THIS cart.
+   *
+   * Several codes on one order is normal — a campaign giving a free wash and a free
+   * wax needs two — and the backend has always accepted a list. The estimate simply
+   * never included them, so the cashier applied two vouchers and watched the total
+   * refuse to move. A fixed/percentage code carries its own amount; a free-service
+   * code is worth whatever the line it covers costs, which is why validate now
+   * reports the service ids. Each cart line is credited at most once, so two codes
+   * covering the same service can't discount it twice.
+   */
+  const voucherDiscount = (() => {
+    let total = 0;
+    const creditedLines = new Set<string>();
+    for (const code of voucherCodes) {
+      const info = voucherInfo[code];
+      if (!info) continue;
+      if (info.type === 'service_pack') {
+        const line = cart.find((l) => info.serviceIds.includes(l.serviceId) && !creditedLines.has(l.serviceId));
+        if (line) {
+          creditedLines.add(line.serviceId);
+          total += lineNet(line);
+        }
+      } else {
+        total += info.amount;
+      }
+    }
+    return total;
+  })();
+
+  const estimatedTotal = Math.max(
+    0,
+    subtotal - (sellPlan ? washSubtotal : 0) - promoDiscount - voucherDiscount,
+  ) + packSubtotal;
 
   const hasNonStackableSelected = selectedPromoIds.length > 1 &&
     promoOptions.some((p) => selectedPromoIds.includes(p.id) && !p.stackable);
@@ -1005,7 +1060,7 @@ export default function NewOrderPage() {
     setReceipt({ orderNumber, total, change, membershipQuotaWarning });
     setCart([]);
     setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
-    setVoucherCodes([]); setVoucherInput(''); setVoucherMsg(null); setVoucherWarning(null);
+    setVoucherCodes([]); setVoucherInfo({}); setVoucherInput(''); setVoucherMsg(null); setVoucherWarning(null);
     setPromoOptions([]); setSelectedPromoIds([]);
     setOrder(null); setQr(null); setPolling(false); setPaying(false); setSelectedPmId(null);
     setQueueEntryId(null); setMembershipId(null); setSelectedPlate(null); setMemberBanner(null);
@@ -1496,6 +1551,15 @@ export default function NewOrderPage() {
             <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium">{fmt(subtotal)}</span></div>
             {totalManualDiscount > 0 && (
               <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.manualDiscount', 'Manual discount')}</span><span className="font-medium text-green-600">−{fmt(totalManualDiscount)}</span></div>
+            )}
+            {voucherDiscount > 0 && (
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-text-secondary">
+                  {t('pos.new.voucherLine', 'Voucher')}
+                  {voucherCodes.length > 1 ? ` (${voucherCodes.length})` : ''}
+                </span>
+                <span className="font-medium text-green-600">−{fmt(voucherDiscount)}</span>
+              </div>
             )}
             {promoDiscount > 0 && (
               <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.promoSectionTitle', 'Promo')}</span><span className="font-medium text-green-600">−{fmt(promoDiscount)}</span></div>

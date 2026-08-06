@@ -5,6 +5,7 @@ import {
   OrderQueryParams,
   OrderCard,
   OrderCardItem,
+  OrderDiscountSource,
   OrderListResponse,
   OrderStatus,
   DEFAULT_PAGE,
@@ -45,6 +46,19 @@ interface OrderItemRow {
   item_type: string | null;
   quantity: number;
   subtotal: string;
+  is_member_pricing: boolean | null;
+  member_discount_type: string | null;
+  member_discount_value: string | null;
+  discount: string | null;
+}
+
+/** One reason money came off an order: a promotion, or a redeemed voucher. */
+interface DiscountSourceRow {
+  order_id: string;
+  kind: 'promo' | 'voucher';
+  label: string;
+  amount: string | null;
+  covers_service_id: string | null;
 }
 
 /**
@@ -137,6 +151,7 @@ export class OrderListService {
 
     // Fetch items for all orders in one batch
     let itemsByOrder: Record<string, OrderCardItem[]> = {};
+    let sourcesByOrder: Record<string, OrderDiscountSource[]> = {};
     if (orderIds.length > 0) {
       // LEFT JOIN + COALESCE, not an inner JOIN on service_id: a membership-plan
       // or voucher-pack line has service_id NULL (migration 089) and an inner
@@ -150,7 +165,15 @@ export class OrderListService {
           COALESCE(s.name, oi.item_name) AS service_name,
           oi.item_type,
           oi.quantity,
-          oi.subtotal::text
+          oi.subtotal::text,
+          -- Why a line is cheap or free. A Rp 0 wash next to a full-price add-on
+          -- gave no clue whether a membership covered it, a voucher did, or the
+          -- cashier discounted it; is_member_pricing has always been recorded, it
+          -- was simply never surfaced (Samuel 2026-08-06).
+          oi.is_member_pricing,
+          oi.member_discount_type,
+          oi.member_discount_value::text,
+          oi.discount::text
         FROM order_items oi
         LEFT JOIN services s ON oi.service_id = s.id
         WHERE oi.order_id = ANY($1)
@@ -160,6 +183,7 @@ export class OrderListService {
         orderIds,
       ]);
       itemsByOrder = this.groupItemsByOrder(itemsResult.rows);
+      sourcesByOrder = await this.loadDiscountSources(orderIds);
     }
 
     // Build order cards
@@ -182,11 +206,64 @@ export class OrderListService {
       isMember: row.is_member === true,
       total: parseFloat(row.total),
       createdAt: row.created_at,
+      discountSources: sourcesByOrder[row.id] ?? [],
     }));
 
     const hasMore = offset + orders.length < total;
 
     return { orders, total, page, pageSize, hasMore };
+  }
+
+  /**
+   * Which promotions and vouchers took money off these orders.
+   *
+   * Both are recorded per order already — `promotion_grants` for promotions and
+   * `voucher_tickets.redeemed_order_id` / `voucher_codes` for vouchers — they were
+   * simply never read back, so a discounted line was unexplained: a membership, a
+   * voucher and a promo all just showed a smaller number (Samuel 2026-08-06). A
+   * service-typed voucher also reports which service it covered, which is what
+   * lets the UI tag the exact line rather than the whole order.
+   */
+  private async loadDiscountSources(orderIds: string[]): Promise<Record<string, OrderDiscountSource[]>> {
+    const res = await this.pool.query<DiscountSourceRow>(
+      `SELECT pg.order_id, 'promo' AS kind, p.name AS label,
+              pg.amount::text AS amount, NULL::uuid AS covers_service_id
+         FROM promotion_grants pg
+         JOIN promotions p ON p.id = pg.promotion_id
+        WHERE pg.order_id = ANY($1)
+       UNION ALL
+       -- Plaintext book tickets (the current model).
+       SELECT t.redeemed_order_id AS order_id, 'voucher' AS kind,
+              COALESCE(vt.name, bs.name, b.benefit_type) || ' · ' || t.code AS label,
+              NULL AS amount, b.benefit_service_id AS covers_service_id
+         FROM voucher_tickets t
+         JOIN voucher_books b ON b.id = t.book_id
+         LEFT JOIN voucher_templates vt ON vt.id = b.template_id
+         LEFT JOIN services bs ON bs.id = b.benefit_service_id
+        WHERE t.redeemed_order_id = ANY($1)
+       UNION ALL
+       -- Legacy hashed pack codes: the code itself was never stored in plaintext,
+       -- so the template name is all we can name it by.
+       SELECT vc.redeemed_order_id AS order_id, 'voucher' AS kind,
+              vt2.name AS label, NULL AS amount, NULL::uuid AS covers_service_id
+         FROM voucher_codes vc
+         JOIN voucher_packs vp ON vp.id = vc.pack_id
+         JOIN voucher_templates vt2 ON vt2.id = vp.template_id
+        WHERE vc.redeemed_order_id = ANY($1)`,
+      [orderIds],
+    );
+
+    const map: Record<string, OrderDiscountSource[]> = {};
+    for (const r of res.rows) {
+      if (!r.order_id) continue;
+      (map[r.order_id] ??= []).push({
+        kind: r.kind,
+        label: r.label,
+        amount: r.amount != null ? parseFloat(r.amount) : null,
+        coversServiceId: r.covers_service_id ?? null,
+      });
+    }
+    return map;
   }
 
   /**
@@ -299,6 +376,10 @@ export class OrderListService {
         quantity: row.quantity,
         subtotal: parseFloat(row.subtotal),
         itemType: row.item_type ?? null,
+        isMemberPricing: row.is_member_pricing === true,
+        memberDiscountType: row.member_discount_type ?? null,
+        memberDiscountValue: row.member_discount_value != null ? parseFloat(row.member_discount_value) : null,
+        discount: row.discount != null ? parseFloat(row.discount) : 0,
       });
     }
     return map;

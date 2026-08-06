@@ -187,6 +187,34 @@ export interface OrderCardItem {
    * *what* was bought rather than showing a bare name (AIRIN-115).
    */
   itemType?: string | null;
+  /**
+   * True when this line was priced by a membership benefit (free or member rate)
+   * rather than sold at list price. A Rp 0 line beside a full-price one is
+   * otherwise unexplained — the reader cannot tell a membership from a voucher or
+   * a cashier discount.
+   */
+  isMemberPricing?: boolean;
+  /** 'free' | 'percentage' | 'fixed' — which KIND of member benefit priced it. */
+  memberDiscountType?: string | null;
+  /** 1 for free, the fraction for a percentage, or the fixed member unit price. */
+  memberDiscountValue?: number | null;
+  /** Amount taken off this line, whatever the reason. 0 when nothing was. */
+  discount?: number;
+}
+
+/**
+ * A named reason money came off an order: a promotion, or a redeemed voucher.
+ * Membership benefits are reported per line instead (see OrderCardItem), because
+ * that is the level at which they apply.
+ */
+export interface OrderDiscountSource {
+  kind: 'promo' | 'voucher';
+  /** Human label — the promotion's name, or the voucher's benefit plus its code. */
+  label: string;
+  /** Money attributed, where it was recorded (promotions); null otherwise. */
+  amount: number | null;
+  /** The service a free-service voucher covered, so a line can be tagged exactly. */
+  coversServiceId?: string | null;
 }
 
 /**
@@ -214,6 +242,8 @@ export interface OrderCard {
   isMember?: boolean;
   total: number;
   createdAt: string;
+  /** Named promotions/vouchers that discounted this order (see OrderDiscountSource). */
+  discountSources?: OrderDiscountSource[];
 }
 
 /**

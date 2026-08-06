@@ -11,7 +11,8 @@ import { RefundDialog } from '@/components/pos/RefundDialog';
 import { useI18n } from '@/lib/i18n';
 import { buildDocHtml, type DocTemplate, type DocData } from '@/components/dashboard/DocumentRenderer';
 
-interface OrderCardItem { serviceName: string; quantity: number; subtotal: number; itemType?: string | null }
+interface OrderCardItem { serviceName: string; quantity: number; subtotal: number; itemType?: string | null; isMemberPricing?: boolean; memberDiscountType?: string | null; memberDiscountValue?: number | null; discount?: number }
+interface OrderDiscountSource { kind: 'promo' | 'voucher'; label: string; amount: number | null; coversServiceId?: string | null }
 interface OrderCard {
   id: string;
   orderNumber: string;
@@ -29,6 +30,7 @@ interface OrderCard {
   paymentMethod?: string | null;
   total: number;
   createdAt: string;
+  discountSources?: OrderDiscountSource[];
 }
 interface OrderListResponse { orders: OrderCard[]; total: number; page: number; pageSize: number; hasMore: boolean }
 
@@ -267,11 +269,47 @@ export default function OrdersPage() {
                         {it.quantity}× {it.serviceName}
                         {it.itemType === 'membership_plan' && <span className="badge bg-violet-50 text-violet-700 text-[10px] ml-1.5">{t('pos.orders.membership', 'Membership')}</span>}
                         {it.itemType === 'voucher_pack' && <span className="badge bg-amber-50 text-amber-700 text-[10px] ml-1.5">{t('pos.orders.voucherPack', 'Voucher pack')}</span>}
+                        {/* Say WHY a line is free or cheap. A Rp 0 wash beside a
+                            full-price add-on was unexplained: membership, voucher
+                            and cashier discount all just showed a lower number
+                            (Samuel 2026-08-06). */}
+                        {it.isMemberPricing && (
+                          <span className="badge bg-emerald-50 text-emerald-700 text-[10px] ml-1.5">
+                            {it.memberDiscountType === 'percentage' && it.memberDiscountValue
+                              ? `${t('pos.orders.member', 'MEMBER')} −${Math.round(it.memberDiscountValue * 100)}%`
+                              : it.memberDiscountType === 'fixed'
+                                ? t('pos.orders.memberPrice', 'MEMBER PRICE')
+                                : t('pos.orders.memberFree', 'MEMBER · FREE')}
+                          </span>
+                        )}
+                        {/* A voucher that covered THIS service, named by its code. */}
+                        {(o.discountSources ?? [])
+                          .filter((d) => d.kind === 'voucher' && d.coversServiceId && d.coversServiceId === (it as { serviceId?: string }).serviceId)
+                          .map((d) => (
+                            <span key={d.label} className="badge bg-sky-50 text-sky-700 text-[10px] ml-1.5">{d.label}</span>
+                          ))}
                       </span>
                       <span>{fmt(it.subtotal)}</span>
                     </li>
                   ))}
                 </ul>
+                {/* WHICH promo or voucher moved the money. Both are recorded per
+                    order (promotion_grants / redeemed tickets) and were never read
+                    back, so a discount was unattributable (Samuel 2026-08-06). */}
+                {(o.discountSources ?? []).length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <span className="text-[11px] text-text-muted">{t('pos.orders.discountFrom', 'Discount from:')}</span>
+                    {(o.discountSources ?? []).map((d, i) => (
+                      <span
+                        key={`${d.label}-${i}`}
+                        className={`badge text-[10px] ${d.kind === 'promo' ? 'bg-fuchsia-50 text-fuchsia-700' : 'bg-sky-50 text-sky-700'}`}
+                      >
+                        {d.kind === 'promo' ? t('pos.orders.promoTag', 'Promo') : t('pos.orders.voucherTag', 'Voucher')}: {d.label}
+                        {d.amount ? ` (−${fmt(d.amount)})` : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {/* Order highlights — how it was paid and who rang it up. Both
                     already come back from /orders; the card just never showed
                     them, so cashiers had to open the receipt to tell two

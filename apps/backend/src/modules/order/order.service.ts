@@ -285,6 +285,8 @@ export class OrderService {
     // Service ids whose discount is a membership benefit (free/percentage-off), not
     // the cashier's manual discount — the cap-clamp pass must leave these alone.
     const memberPricedServiceIds = new Set<string>();
+    /** Per-service benefit kind, so each saved line records WHY it was cheaper. */
+    const memberPricingKind = new Map<string, { type: 'free' | 'percentage' | 'fixed'; value: number }>();
     // Surfaced to the cashier when a member's benefit was withheld because they
     // hit their daily limit or exhausted their lifetime quota (handbook §5.2/§5.6).
     let membershipQuotaWarning: string | undefined;
@@ -407,7 +409,14 @@ export class OrderService {
       const pricingResult = applyMembershipPricing(cartItems, membershipBenefits);
       cartItems = pricingResult.items;
       membershipApplied = pricingResult.appliedPricing.length > 0;
-      for (const p of pricingResult.appliedPricing) memberPricedServiceIds.add(p.serviceId);
+      for (const p of pricingResult.appliedPricing) {
+        memberPricedServiceIds.add(p.serviceId);
+        // Keep the KIND of benefit per line, so the saved row can say "free" vs
+        // "20% off" vs "member price" rather than only that a member paid less.
+        // order_items.member_discount_type/value have existed since the first
+        // migration and were never written.
+        memberPricingKind.set(p.serviceId, { type: p.discountType, value: p.discountValue });
+      }
     }
 
     // Step 6c: Counter upsell — a membership plan bought in the SAME order as a
@@ -424,6 +433,9 @@ export class OrderService {
       cartItems = cartItems.map((ci) => {
         if (services.get(ci.serviceId)?.category !== 'car_wash') return ci;
         memberPricedServiceIds.add(ci.serviceId);
+        // The upsell wash is free, and saying so is what distinguishes it from a
+        // plain discount when the order is read back later.
+        memberPricingKind.set(ci.serviceId, { type: 'free', value: 1 });
         return { ...ci, discount: ci.quantity * ci.unitPrice };
       });
       membershipApplied = membershipApplied || cartItems.some((ci) => services.get(ci.serviceId)?.category === 'car_wash');
@@ -568,8 +580,8 @@ export class OrderService {
         const itemResult = await client.query<{ id: string }>(
           `INSERT INTO order_items
             (order_id, service_id, item_type, item_name, quantity, unit_price, discount, subtotal,
-             is_member_pricing, membership_id, sort_order)
-           VALUES ($1, $2, 'service', $3, $4, $5, $6, $7, $8, $9, $10)
+             is_member_pricing, membership_id, member_discount_type, member_discount_value, sort_order)
+           VALUES ($1, $2, 'service', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING id`,
           [
             order.id,
@@ -581,6 +593,8 @@ export class OrderService {
             itemSubtotal,
             isMemberPricing,
             isMemberPricing ? request.membershipId : null,
+            isMemberPricing ? (memberPricingKind.get(cartItem.serviceId)?.type ?? null) : null,
+            isMemberPricing ? (memberPricingKind.get(cartItem.serviceId)?.value ?? null) : null,
             i,
           ],
         );

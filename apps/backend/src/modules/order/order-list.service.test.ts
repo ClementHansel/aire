@@ -35,14 +35,18 @@ describe('OrderListService', () => {
   };
 
   const mockItemRows = [
-    { order_id: 'order-001', service_name: 'Super Wash', item_type: 'service', quantity: 1, subtotal: '100000.00' },
-    { order_id: 'order-001', service_name: 'Vacuum', item_type: 'service', quantity: 2, subtotal: '50000.00' },
-    { order_id: 'order-002', service_name: 'Basic Wash', item_type: 'service', quantity: 1, subtotal: '75000.00' },
+    { order_id: 'order-001', service_name: 'Super Wash', item_type: 'service', quantity: 1, subtotal: '100000.00', is_member_pricing: false, discount: '0' },
+    { order_id: 'order-001', service_name: 'Vacuum', item_type: 'service', quantity: 2, subtotal: '50000.00', is_member_pricing: false, discount: '0' },
+    { order_id: 'order-002', service_name: 'Basic Wash', item_type: 'service', quantity: 1, subtotal: '75000.00', is_member_pricing: false, discount: '0' },
   ];
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPool = { query: vi.fn() };
+    // Default every un-stubbed query to an empty result. The cases below stub the
+    // count/orders/items calls positionally, and without this baseline any query
+    // added afterwards (e.g. the discount-source attribution load) makes the next
+    // call resolve to undefined and breaks tests whose assertions all still hold.
+    mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     service = new OrderListService(mockPool as any);
   });
 
@@ -79,6 +83,10 @@ describe('OrderListService', () => {
         quantity: 1,
         subtotal: 100000,
         itemType: 'service',
+        isMemberPricing: false,
+        memberDiscountType: null,
+        memberDiscountValue: null,
+        discount: 0,
       });
 
       // Second order - no plate/brand
@@ -97,8 +105,8 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { order_id: 'order-001', service_name: 'Paket Member Gold', item_type: 'membership_plan', quantity: 1, subtotal: '500000.00' },
-          { order_id: 'order-001', service_name: 'Voucher Cuci 10x', item_type: 'voucher_pack', quantity: 1, subtotal: '300000.00' },
+          { order_id: 'order-001', service_name: 'Paket Member Gold', item_type: 'membership_plan', quantity: 1, subtotal: '500000.00', is_member_pricing: false, discount: '0' },
+          { order_id: 'order-001', service_name: 'Voucher Cuci 10x', item_type: 'voucher_pack', quantity: 1, subtotal: '300000.00', is_member_pricing: false, discount: '0' },
         ],
       });
 
@@ -110,8 +118,58 @@ describe('OrderListService', () => {
       expect(result.orders[0]!.items).toHaveLength(2);
       expect(result.orders[0]!.items[0]).toEqual({
         serviceName: 'Paket Member Gold', quantity: 1, subtotal: 500000, itemType: 'membership_plan',
+        isMemberPricing: false, memberDiscountType: null, memberDiscountValue: null, discount: 0,
       });
       expect(result.orders[0]!.items[1]!.itemType).toBe('voucher_pack');
+    });
+
+    it('reports WHY a line is free — a membership benefit, not just a lower number', async () => {
+      // A Rp 0 wash beside a full-price add-on was unexplained on the card: a
+      // membership, a voucher and a cashier discount all just showed less money.
+      // is_member_pricing was already recorded on the row, never surfaced
+      // (Samuel 2026-08-06).
+      mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          { order_id: 'order-001', service_name: 'Standard Car Wash', item_type: 'service', quantity: 1, subtotal: '0.00', is_member_pricing: true, discount: '60000.00' },
+          { order_id: 'order-001', service_name: '+ Spray Wax', item_type: 'service', quantity: 1, subtotal: '50000.00', is_member_pricing: false, discount: '0' },
+        ],
+      });
+
+      const result = await service.listOrders({ tenantId: TENANT });
+
+      expect(String(mockPool.query.mock.calls[2]![0])).toContain('is_member_pricing');
+      expect(result.orders[0]!.items[0]).toMatchObject({
+        serviceName: 'Standard Car Wash', subtotal: 0, isMemberPricing: true, discount: 60000,
+      });
+      // The add-on the member still pays for must NOT be flagged.
+      expect(result.orders[0]!.items[1]!.isMemberPricing).toBe(false);
+    });
+
+    it('names WHICH promo and WHICH voucher discounted the order', async () => {
+      // Attribution, not just an amount: promotion_grants and redeemed tickets have
+      // always recorded this and were never read back, so a discounted line could
+      // not be traced to the campaign that caused it (Samuel 2026-08-06).
+      mockPool.query.mockResolvedValueOnce({ rows: [{ total: 1 }] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 1) });
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          { order_id: 'order-001', kind: 'promo', label: 'Bonus 3x Spray Wax', amount: '15000.00', covers_service_id: null },
+          { order_id: 'order-001', kind: 'voucher', label: 'Standard Car Wash · KCL-082026-000050', amount: null, covers_service_id: 'svc-wash' },
+        ],
+      });
+
+      const result = await service.listOrders({ tenantId: TENANT });
+
+      const sql = String(mockPool.query.mock.calls[3]![0]);
+      expect(sql).toContain('promotion_grants');
+      expect(sql).toContain('redeemed_order_id');
+      expect(result.orders[0]!.discountSources).toEqual([
+        { kind: 'promo', label: 'Bonus 3x Spray Wax', amount: 15000, coversServiceId: null },
+        { kind: 'voucher', label: 'Standard Car Wash · KCL-082026-000050', amount: null, coversServiceId: 'svc-wash' },
+      ]);
     });
 
     it('should return empty result when no orders match', async () => {
