@@ -208,13 +208,23 @@ export interface OrderCardItem {
  * that is the level at which they apply.
  */
 export interface OrderDiscountSource {
-  kind: 'promo' | 'voucher';
+  /**
+   * 'promo' and 'voucher' took money off THIS order. 'campaign' is the other
+   * direction: the order triggered a campaign and earned the customer a bonus,
+   * which is otherwise invisible on the transaction that caused it.
+   */
+  kind: 'promo' | 'voucher' | 'campaign';
   /** Human label — the promotion's name, or the voucher's benefit plus its code. */
   label: string;
   /** Money attributed, where it was recorded (promotions); null otherwise. */
   amount: number | null;
   /** The service a free-service voucher covered, so a line can be tagged exactly. */
   coversServiceId?: string | null;
+  /**
+   * The campaign behind this. For a redeemed voucher it answers "where did the
+   * customer get this?"; for kind 'campaign' it is the campaign that just fired.
+   */
+  viaCampaign?: string | null;
 }
 
 /**

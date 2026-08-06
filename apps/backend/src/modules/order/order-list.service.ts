@@ -55,10 +55,11 @@ interface OrderItemRow {
 /** One reason money came off an order: a promotion, or a redeemed voucher. */
 interface DiscountSourceRow {
   order_id: string;
-  kind: 'promo' | 'voucher';
+  kind: 'promo' | 'voucher' | 'campaign';
   label: string;
   amount: string | null;
   covers_service_id: string | null;
+  via_campaign: string | null;
 }
 
 /**
@@ -227,30 +228,52 @@ export class OrderListService {
   private async loadDiscountSources(orderIds: string[]): Promise<Record<string, OrderDiscountSource[]>> {
     const res = await this.pool.query<DiscountSourceRow>(
       `SELECT pg.order_id, 'promo' AS kind, p.name AS label,
-              pg.amount::text AS amount, NULL::uuid AS covers_service_id
+              pg.amount::text AS amount, NULL::uuid AS covers_service_id,
+              NULL::text AS via_campaign
          FROM promotion_grants pg
          JOIN promotions p ON p.id = pg.promotion_id
         WHERE pg.order_id = ANY($1)
        UNION ALL
-       -- Plaintext book tickets (the current model).
+       -- Plaintext book tickets (the current model). The LEFT JOIN back through
+       -- campaign_grants answers "where did the customer get this voucher?" — a
+       -- bonus code is only meaningful once you know which campaign granted it.
        SELECT t.redeemed_order_id AS order_id, 'voucher' AS kind,
               COALESCE(vt.name, bs.name, b.benefit_type) || ' (' || t.code || ')' AS label,
-              NULL AS amount, b.benefit_service_id AS covers_service_id
+              NULL AS amount, b.benefit_service_id AS covers_service_id,
+              gc.name AS via_campaign
          FROM voucher_tickets t
          JOIN voucher_books b ON b.id = t.book_id
          LEFT JOIN voucher_templates vt ON vt.id = b.template_id
          LEFT JOIN services bs ON bs.id = b.benefit_service_id
+         LEFT JOIN campaign_grants cg ON cg.voucher_book_id = b.id
+         LEFT JOIN campaigns gc ON gc.id = cg.campaign_id
         WHERE t.redeemed_order_id = ANY($1)
        UNION ALL
        -- Legacy hashed pack codes: the code itself was never stored in plaintext,
        -- so the template name is all we can name it by. Note the column here is
        -- order_id: only the newer voucher_tickets calls it redeemed_order_id.
        SELECT vc.order_id AS order_id, 'voucher' AS kind,
-              vt2.name AS label, NULL AS amount, NULL::uuid AS covers_service_id
+              vt2.name AS label, NULL AS amount, NULL::uuid AS covers_service_id,
+              gc2.name AS via_campaign
          FROM voucher_codes vc
          JOIN voucher_packs vp ON vp.id = vc.pack_id
          JOIN voucher_templates vt2 ON vt2.id = vp.template_id
-        WHERE vc.order_id = ANY($1)`,
+         LEFT JOIN campaign_grants cg2 ON cg2.voucher_pack_id = vp.id
+         LEFT JOIN campaigns gc2 ON gc2.id = cg2.campaign_id
+        WHERE vc.order_id = ANY($1)
+       UNION ALL
+       -- A campaign that FIRED on this order: the purchase itself earned a bonus.
+       -- This is the other direction from the arms above — not money off today's
+       -- bill, but what this transaction triggered, which is otherwise invisible
+       -- on the order that caused it.
+       SELECT cg3.order_id, 'campaign' AS kind,
+              c3.name || COALESCE(' -> ' || vt3.name, '') AS label,
+              NULL AS amount, NULL::uuid AS covers_service_id,
+              c3.name AS via_campaign
+         FROM campaign_grants cg3
+         JOIN campaigns c3 ON c3.id = cg3.campaign_id
+         LEFT JOIN voucher_templates vt3 ON vt3.id = c3.bonus_template_id
+        WHERE cg3.order_id = ANY($1)`,
       [orderIds],
     );
 
@@ -262,6 +285,7 @@ export class OrderListService {
         label: r.label,
         amount: r.amount != null ? parseFloat(r.amount) : null,
         coversServiceId: r.covers_service_id ?? null,
+        viaCampaign: r.via_campaign ?? null,
       });
     }
     return map;

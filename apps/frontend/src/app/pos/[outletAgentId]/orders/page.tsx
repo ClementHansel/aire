@@ -12,7 +12,7 @@ import { useI18n } from '@/lib/i18n';
 import { buildDocHtml, type DocTemplate, type DocData } from '@/components/dashboard/DocumentRenderer';
 
 interface OrderCardItem { serviceName: string; quantity: number; subtotal: number; itemType?: string | null; isMemberPricing?: boolean; memberDiscountType?: string | null; memberDiscountValue?: number | null; discount?: number }
-interface OrderDiscountSource { kind: 'promo' | 'voucher'; label: string; amount: number | null; coversServiceId?: string | null }
+interface OrderDiscountSource { kind: 'promo' | 'voucher' | 'campaign'; label: string; amount: number | null; coversServiceId?: string | null; viaCampaign?: string | null }
 interface OrderCard {
   id: string;
   orderNumber: string;
@@ -296,16 +296,32 @@ export default function OrdersPage() {
                 {/* WHICH promo or voucher moved the money. Both are recorded per
                     order (promotion_grants / redeemed tickets) and were never read
                     back, so a discount was unattributable (Samuel 2026-08-06). */}
-                {(o.discountSources ?? []).length > 0 && (
+                {(o.discountSources ?? []).filter((d) => d.kind !== 'campaign').length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 mt-2">
                     <span className="text-[11px] text-text-muted">{t('pos.orders.discountFrom', 'Discount from:')}</span>
-                    {(o.discountSources ?? []).map((d, i) => (
+                    {(o.discountSources ?? []).filter((d) => d.kind !== 'campaign').map((d, i) => (
                       <span
                         key={`${d.label}-${i}`}
                         className={`badge text-[10px] ${d.kind === 'promo' ? 'bg-fuchsia-50 text-fuchsia-700' : 'bg-sky-50 text-sky-700'}`}
+                        title={d.viaCampaign ? `${t('pos.orders.fromCampaign', 'From campaign')}: ${d.viaCampaign}` : undefined}
                       >
                         {d.kind === 'promo' ? t('pos.orders.promoTag', 'Promo') : t('pos.orders.voucherTag', 'Voucher')}: {d.label}
                         {d.amount ? ` (−${fmt(d.amount)})` : ''}
+                        {/* Where the customer got the voucher — a bonus code means
+                            little until you know which campaign granted it. */}
+                        {d.viaCampaign ? ` · ${d.viaCampaign}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* The other direction: what this purchase EARNED. A campaign firing
+                    is invisible on the order that triggered it otherwise. */}
+                {(o.discountSources ?? []).filter((d) => d.kind === 'campaign').length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <span className="text-[11px] text-text-muted">{t('pos.orders.earned', 'Earned:')}</span>
+                    {(o.discountSources ?? []).filter((d) => d.kind === 'campaign').map((d, i) => (
+                      <span key={`c-${d.label}-${i}`} className="badge bg-violet-50 text-violet-700 text-[10px]">
+                        {t('pos.orders.campaignTag', 'Campaign')}: {d.label}
                       </span>
                     ))}
                   </div>

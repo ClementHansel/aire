@@ -156,8 +156,9 @@ describe('OrderListService', () => {
       mockPool.query.mockResolvedValueOnce({ rows: mockItemRows.slice(0, 1) });
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { order_id: 'order-001', kind: 'promo', label: 'Bonus 3x Spray Wax', amount: '15000.00', covers_service_id: null },
-          { order_id: 'order-001', kind: 'voucher', label: 'Standard Car Wash · KCL-082026-000050', amount: null, covers_service_id: 'svc-wash' },
+          { order_id: 'order-001', kind: 'promo', label: 'Bonus 3x Spray Wax', amount: '15000.00', covers_service_id: null, via_campaign: null },
+          { order_id: 'order-001', kind: 'voucher', label: 'Standard Car Wash (KCL-082026-000050)', amount: null, covers_service_id: 'svc-wash', via_campaign: 'Bonus 3x Spray Wax Setiap Pembelian Voucher Pack 10x' },
+          { order_id: 'order-001', kind: 'campaign', label: 'Unlimited Wash Launch Bonus -> Rp 25.000 Discount x5', amount: null, covers_service_id: null, via_campaign: 'Unlimited Wash Launch Bonus' },
         ],
       });
 
@@ -166,9 +167,20 @@ describe('OrderListService', () => {
       const sql = String(mockPool.query.mock.calls[3]![0]);
       expect(sql).toContain('promotion_grants');
       expect(sql).toContain('redeemed_order_id');
+      // Campaign attribution, both directions: which campaign granted a redeemed
+      // voucher, and which campaign this order's purchase triggered.
+      expect(sql).toContain('campaign_grants');
+      expect(sql).toContain('campaigns');
       expect(result.orders[0]!.discountSources).toEqual([
-        { kind: 'promo', label: 'Bonus 3x Spray Wax', amount: 15000, coversServiceId: null },
-        { kind: 'voucher', label: 'Standard Car Wash · KCL-082026-000050', amount: null, coversServiceId: 'svc-wash' },
+        { kind: 'promo', label: 'Bonus 3x Spray Wax', amount: 15000, coversServiceId: null, viaCampaign: null },
+        {
+          kind: 'voucher', label: 'Standard Car Wash (KCL-082026-000050)', amount: null,
+          coversServiceId: 'svc-wash', viaCampaign: 'Bonus 3x Spray Wax Setiap Pembelian Voucher Pack 10x',
+        },
+        {
+          kind: 'campaign', label: 'Unlimited Wash Launch Bonus -> Rp 25.000 Discount x5',
+          amount: null, coversServiceId: null, viaCampaign: 'Unlimited Wash Launch Bonus',
+        },
       ]);
     });
 
