@@ -14,7 +14,7 @@ import { PlateRegistrationModal, VoucherCodesModal, type IssuedPack } from '@/co
 import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { useI18n } from '@/lib/i18n';
 import { filterOfferableDetections, upsertDetection } from '@/lib/lprSuggestions';
-import { normalizePlate, maxLineDiscount, LPR_DETECTED_EVENT, type DynamicDiscountRule, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
+import { normalizePlate, maxLineDiscount, applyMembershipPricing, LPR_DETECTED_EVENT, type DynamicDiscountRule, type MembershipBenefit, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
 import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
 
 interface ServiceDTO {
@@ -676,8 +676,6 @@ export default function NewOrderPage() {
     }));
   };
 
-  const subtotal = cart.reduce((sum, l) => sum + Math.max(0, l.price * l.qty - (l.manualDiscount ?? 0)), 0);
-  const totalManualDiscount = cart.reduce((sum, l) => sum + (l.manualDiscount ?? 0), 0);
   const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 
   // Pre-order membership eligibility preview (AIRIN-126). Mirrors the server's
@@ -703,6 +701,78 @@ export default function NewOrderPage() {
     if (typeof ds.discountPct === 'number' && ds.discountPct > 0) return `${t('pos.new.memberBenefitPctBadgePrefix', 'MEMBER -')}${ds.discountPct}%`;
     return null;
   };
+
+  /**
+   * The member benefit expressed as money, per line — so Subtotal and Estimated
+   * total show what will actually be charged.
+   *
+   * The badges above already told the cashier a line was GRATIS or member-priced,
+   * but the totals ignored them entirely and still showed the full list price, so
+   * the screen disagreed with the receipt (AIRIN-150).
+   *
+   * This reuses the SERVER's own `applyMembershipPricing` rather than
+   * re-implementing the arithmetic, so a preview can't drift from the charge, and
+   * it mirrors two server rules exactly:
+   *   - a voucher SUPPRESSES member pricing entirely (Golden Rule, handbook §6.2 —
+   *     the voucher wins and quota is preserved), and
+   *   - `discountPct` is a 0-1 FRACTION in the shared helper while the lookup
+   *     reports whole percents, hence the ÷100.
+   */
+  const memberPricing = useMemo(() => {
+    const voucherWins = voucherCodes.length > 0;
+    if (!memberDetail || memberBenefitBlocked || voucherWins || cart.length === 0) {
+      return { discountByService: {} as Record<string, number>, total: 0 };
+    }
+    const benefits: MembershipBenefit[] = [{
+      membershipId: memberDetail.id,
+      planName: memberDetail.planName,
+      freeServiceIds: memberDetail.freeServices,
+      discountedServices: memberDetail.discountedServices.map((d) => ({
+        serviceId: d.serviceId,
+        discountPct: typeof d.discountPct === 'number' ? d.discountPct / 100 : undefined,
+        fixedPrice: d.fixedPrice,
+      })),
+    }];
+    const { items } = applyMembershipPricing(
+      cart.map((l) => ({
+        serviceId: l.serviceId,
+        serviceName: l.name,
+        quantity: l.qty,
+        unitPrice: l.price,
+        discount: 0,
+        isMainService: false,
+      })),
+      benefits,
+    );
+    const discountByService: Record<string, number> = {};
+    let total = 0;
+    for (const it of items) {
+      if (it.discount > 0) {
+        discountByService[it.serviceId] = it.discount;
+        total += it.discount;
+      }
+    }
+    return { discountByService, total };
+  }, [memberDetail, memberBenefitBlocked, voucherCodes, cart]);
+
+  /**
+   * What a line really costs: the member benefit wins over the cashier's manual
+   * discount, because the server refuses to stack them (a member-priced line is
+   * skipped by the manual-discount pass).
+   */
+  const lineNet = (l: CartLine) => {
+    const memberOff = memberPricing.discountByService[l.serviceId];
+    const gross = l.price * l.qty;
+    if (memberOff != null) return Math.max(0, gross - memberOff);
+    return Math.max(0, gross - (l.manualDiscount ?? 0));
+  };
+
+  const subtotal = cart.reduce((sum, l) => sum + lineNet(l), 0);
+  // Only discounts the server will actually honour are worth showing as a line.
+  const totalManualDiscount = cart.reduce(
+    (sum, l) => sum + (memberPricing.discountByService[l.serviceId] != null ? 0 : (l.manualDiscount ?? 0)),
+    0,
+  );
 
   const applyVoucher = async () => {
     const code = voucherInput.trim().toUpperCase();
@@ -784,9 +854,12 @@ export default function NewOrderPage() {
   // Cart-side mirror of the server's upsell rule (order.service.ts step 6c):
   // selling a plan on this order frees the car_wash lines — add-ons and products
   // stay payable — and the pack fee itself rides on top, untaxed.
+  // Uses lineNet, not the gross price: if a line is ALREADY free through a member
+  // benefit, subtracting its list price again would drive the estimate below what
+  // the server charges.
   const washSubtotal = cart.reduce(
     (sum, l) => (services.find((s) => s.id === l.serviceId)?.category === 'car_wash'
-      ? sum + Math.max(0, l.price * l.qty - (l.manualDiscount ?? 0))
+      ? sum + lineNet(l)
       : sum),
     0,
   );
@@ -1407,6 +1480,15 @@ export default function NewOrderPage() {
           )}
 
           <div className="border-t border-border pt-3 mt-3">
+            {/* Subtotal is already NET of the member benefit and manual discount
+                (AIRIN-150), so the member saving is itemised above it rather than
+                subtracted again below. */}
+            {memberPricing.total > 0 && (
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-text-secondary">{t('pos.new.memberBenefitLine', 'Member benefit')}</span>
+                <span className="font-medium text-green-600">−{fmt(memberPricing.total)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium">{fmt(subtotal)}</span></div>
             {totalManualDiscount > 0 && (
               <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.manualDiscount', 'Manual discount')}</span><span className="font-medium text-green-600">−{fmt(totalManualDiscount)}</span></div>

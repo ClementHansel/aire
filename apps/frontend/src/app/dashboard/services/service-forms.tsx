@@ -298,6 +298,25 @@ export function ServiceModal({
           {branches.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t(BRANCH_LABEL.key, BRANCH_LABEL.fallback)}</label>
+              {/* State the current scope in the same words the list uses.
+                  With nothing ticked the form used to look unconfigured while the
+                  list asserted "All branches", and the two screens read as
+                  contradicting each other (AIRIN-148). Empty means every branch —
+                  say so, rather than leaving the cashier to infer it from a hint. */}
+              <p className="text-xs mb-2">
+                <span className="text-text-secondary">{t('catalog.branchesCurrent', 'Currently selling at:')} </span>
+                {form.outletIds.length === 0 ? (
+                  <span className="badge bg-gray-100 text-gray-600 text-xs">{t('dash.services.allBranches', 'All branches')}</span>
+                ) : (
+                  <span className="font-medium text-text-primary">
+                    {form.outletIds.length === branches.length
+                      ? t('catalog.branchesAllTicked', 'every branch (all ticked)')
+                      : form.outletIds
+                          .map((id) => branches.find((b) => b.id === id)?.name ?? id.slice(0, 8))
+                          .join(', ')}
+                  </span>
+                )}
+              </p>
               <p className="text-xs text-text-muted mb-2">{t('catalog.branchesHint', 'Leave all unticked to sell this at every branch. Ticking specific branches hides it from the POS menu everywhere else.')}</p>
               <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-lg p-2">
                 <SelectAllCheckbox
