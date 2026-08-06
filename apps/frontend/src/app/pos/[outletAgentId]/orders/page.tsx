@@ -175,7 +175,13 @@ export default function OrdersPage() {
         return ` (${t('pos.orders.member', 'MEMBER')} -${Math.round(it.memberDiscountValue * 100)}%)`;
       }
       if (it.memberDiscountType === 'fixed') return ` (${t('pos.orders.memberPrice', 'MEMBER PRICE')})`;
-      return ` (${t('pos.orders.memberFree', 'MEMBER - FREE')})`;
+      // Orders placed before the benefit KIND was recorded have no type. Read it
+      // off the money instead of assuming: printing "FREE" beside Rp 35.000 is
+      // worse than printing nothing at all.
+      if (it.memberDiscountType === 'free' || it.subtotal === 0) {
+        return ` (${t('pos.orders.memberFree', 'MEMBER - FREE')})`;
+      }
+      return ` (${t('pos.orders.memberPrice', 'MEMBER PRICE')})`;
     }
     const voucher = (o.discountSources ?? []).find(
       (d) => d.kind === 'voucher' && d.coversServiceId && d.coversServiceId === it.serviceId,
@@ -323,9 +329,9 @@ export default function OrdersPage() {
                           <span className="badge bg-emerald-50 text-emerald-700 text-[10px] ml-1.5">
                             {it.memberDiscountType === 'percentage' && it.memberDiscountValue
                               ? `${t('pos.orders.member', 'MEMBER')} −${Math.round(it.memberDiscountValue * 100)}%`
-                              : it.memberDiscountType === 'fixed'
-                                ? t('pos.orders.memberPrice', 'MEMBER PRICE')
-                                : t('pos.orders.memberFree', 'MEMBER · FREE')}
+                              : it.memberDiscountType === 'free' || it.subtotal === 0
+                                ? t('pos.orders.memberFree', 'MEMBER · FREE')
+                                : t('pos.orders.memberPrice', 'MEMBER PRICE')}
                           </span>
                         )}
                         {/* A voucher that covered THIS service, named by its code. */}

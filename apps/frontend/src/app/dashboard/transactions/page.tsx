@@ -589,9 +589,9 @@ export default function TransactionsPage() {
                           <span className="badge bg-emerald-50 text-emerald-700 text-[10px] ml-1.5">
                             {it.memberDiscountType === 'percentage' && it.memberDiscountValue
                               ? `${t('dash.transactions.member', 'MEMBER')} −${Math.round(it.memberDiscountValue * 100)}%`
-                              : it.memberDiscountType === 'fixed'
-                                ? t('dash.transactions.memberPrice', 'MEMBER PRICE')
-                                : t('dash.transactions.memberFree', 'MEMBER · FREE')}
+                              : it.memberDiscountType === 'free' || it.subtotal === 0
+                                ? t('dash.transactions.memberFree', 'MEMBER · FREE')
+                                : t('dash.transactions.memberPrice', 'MEMBER PRICE')}
                           </span>
                         )}
                       </span>
