@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { SettingsService } from '../settings/settings.service';
 import { MonitoringService } from '../monitoring/monitoring.service';
+import { stripReasoning } from '../../common/strip-reasoning';
 
 /**
  * Interfaces for LLM communication.
@@ -185,6 +186,10 @@ export class LLMRouterService {
     const body = {
       model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      // The default model is a hybrid-reasoning Qwen. Ask OpenRouter to keep the
+      // chain-of-thought out of the response entirely; `stripReasoning` below is
+      // the backstop for models/providers that ignore this.
+      reasoning: { exclude: true },
       ...(options?.temperature !== undefined && { temperature: options.temperature }),
       ...(options?.max_tokens !== undefined && { max_tokens: options.max_tokens }),
     };
@@ -230,7 +235,7 @@ export class LLMRouterService {
       const choice = data.choices?.[0];
 
       return {
-        content: choice?.message?.content ?? '',
+        content: stripReasoning(choice?.message?.content ?? ''),
         model: data.model ?? model,
         usage: data.usage
           ? {
@@ -267,6 +272,9 @@ export class LLMRouterService {
       model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
       stream: false,
+      // Ollama's switch for the same thing (reasoning models return their
+      // scratchpad in `message.thinking` instead of inlining it in content).
+      think: false,
       ...(options?.temperature !== undefined && {
         options: { temperature: options.temperature },
       }),
@@ -306,7 +314,7 @@ export class LLMRouterService {
       const data: any = await response.json();
 
       return {
-        content: data.message?.content ?? '',
+        content: stripReasoning(data.message?.content ?? ''),
         model: data.model ?? model,
         usage: data.prompt_eval_count !== undefined
           ? {

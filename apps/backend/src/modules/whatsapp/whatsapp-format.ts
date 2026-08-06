@@ -8,6 +8,8 @@
  * reply — fluid LLM, rigid template, booking prompt — is normalised regardless of
  * where the text came from. Kept deterministic and dependency-free.
  */
+import { stripReasoning } from '../../common/strip-reasoning';
+
 /**
  * Romantic/flirty emoji a CS persona should never send a customer. The system
  * prompt asks the model to avoid these, but it keeps slipping them back in
@@ -21,7 +23,10 @@ const FLIRTY_EMOJI =
 
 export function formatForWhatsApp(input: string): string {
   if (!input) return input;
-  let text = input;
+  // Last line of defence against a reasoning model leaking its <think> scratchpad
+  // to the customer. LLMRouterService already strips it, but this chokepoint sees
+  // every outbound message, including replies that never touched the router.
+  let text = stripReasoning(input);
 
   // Drop flirty emoji, then tidy the space they leave behind ("bantu! 💕🙏" →
   // "bantu! 🙏", "ya kak 💕" → "ya kak").
