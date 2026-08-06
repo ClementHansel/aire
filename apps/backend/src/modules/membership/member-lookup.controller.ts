@@ -33,9 +33,19 @@ export class MemberLookupController {
     @Query('phone') phone?: string,
     @Query('plate') plate?: string,
     @Query('number') number?: string,
+    /**
+     * One value of unknown kind — the server works out whether it is a membership
+     * number, a phone, or a plate. Preferred for a single search box: the three
+     * formats overlap (a 12-digit mobile looks exactly like a membership number)
+     * and only the server knows this tenant's number prefix. The explicit
+     * phone/plate/number params remain for callers that already know.
+     */
+    @Query('q') q?: string,
   ) {
     let result;
-    if (number?.trim()) {
+    if (q?.trim()) {
+      result = await this.service.resolveIdentifier(user.tenant_id, q);
+    } else if (number?.trim()) {
       result = await this.service.lookupByMembershipNumber(user.tenant_id, number);
     } else if (phone?.trim()) {
       result = await this.service.lookupByPhone(user.tenant_id, phone);
@@ -43,7 +53,7 @@ export class MemberLookupController {
       result = await this.service.lookupByPlate(user.tenant_id, plate);
     } else {
       throw new BadRequestException(
-        'Provide a membership number, phone, or license plate to look up',
+        'Provide q (any identifier), or a membership number, phone, or license plate to look up',
       );
     }
 

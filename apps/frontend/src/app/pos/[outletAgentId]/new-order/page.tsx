@@ -14,7 +14,6 @@ import { PlateRegistrationModal, VoucherCodesModal, type IssuedPack } from '@/co
 import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { useI18n } from '@/lib/i18n';
 import { filterOfferableDetections, upsertDetection } from '@/lib/lprSuggestions';
-import { classifyMemberSearch } from '@/lib/memberSearch';
 import { normalizePlate, maxLineDiscount, applyMembershipPricing, LPR_DETECTED_EVENT, type DynamicDiscountRule, type MembershipBenefit, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
 import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
 
@@ -502,29 +501,21 @@ export default function NewOrderPage() {
     // Drop the previous result BEFORE the request, so a slow/failed lookup can
     // never leave the last customer's membership attached to this order.
     clearMemberState();
-    // A 12-char alphanumeric value = membership number (scanned or typed);
-    // digits-only = phone; otherwise a plate.
-    //
-    // An Indonesian mobile is very often EXACTLY 12 digits (08xx xxxx xxxx),
-    // which collides with the 12-char membership number — so "081200000091" was
-    // classified as a member number and the cashier got "Customer not found" for a
-    // customer who was right there. All-digits starting 0/62 is read as a phone
-    // first, and whichever key we pick, a miss retries the other one before we
-    // claim there is no such customer: the two formats are inherently ambiguous,
-    // so guessing must never be a dead end.
-    const { key, alternateKey } = classifyMemberSearch(v);
+    // ONE value, and the server decides what it is. The three formats overlap — a
+    // 12-digit Indonesian mobile (08xx xxxx xxxx) is indistinguishable by length
+    // from a 12-char membership number — and the tie-breaker is this tenant's
+    // number prefix, which only the server knows. Guessing here classified real
+    // phones as member numbers and told the cashier "Customer not found" for a
+    // customer standing at the counter.
     try {
-      let m: MemberLookupResponse | null = null;
-      try {
-        m = await api.get<MemberLookupResponse>(`/members/lookup?${key}=${encodeURIComponent(v)}`);
-      } catch (firstErr) {
-        if (!alternateKey) throw firstErr;
-        m = await api.get<MemberLookupResponse>(`/members/lookup?${alternateKey}=${encodeURIComponent(v)}`);
-      }
+      const m = await api.get<MemberLookupResponse & { matchedBy?: 'number' | 'phone' | 'plate' }>(
+        `/members/lookup?q=${encodeURIComponent(v)}`,
+      );
       // Canonicalise the plate the cashier typed before it becomes the order's
       // plate: uppercasing alone left the spaces in, so "B 8882 CST" and
-      // "B8882CST" produced two different stored values (AIRIN-117).
-      const canonicalPlate = key === 'plate' ? normalizePlate(v).normalized : undefined;
+      // "B8882CST" produced two different stored values (AIRIN-117). We only do
+      // this when the server says a PLATE is what matched.
+      const canonicalPlate = m?.matchedBy === 'plate' ? normalizePlate(v).normalized : undefined;
       if (m?.customer) {
         applyMember(m, canonicalPlate);
         if (canonicalPlate) setPlate(canonicalPlate);

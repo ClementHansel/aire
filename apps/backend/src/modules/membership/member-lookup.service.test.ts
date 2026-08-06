@@ -347,4 +347,99 @@ describe('MemberLookupService', () => {
       expect(result.memberships[0]!.discountedServices).toEqual([]);
     });
   });
+
+  /**
+   * resolveIdentifier — one typed value, server decides what it is.
+   *
+   * The formats overlap: an Indonesian mobile is very often EXACTLY 12 digits
+   * (08xx xxxx xxxx) and a membership number is 12 base-36 chars, which can also
+   * be all digits. The POS used to guess from length and looked a real phone up as
+   * a member number, so a customer at the counter came back "not found". The
+   * tie-breaker is structural — a membership number starts with this tenant's
+   * `tenant_code` — and lives here because only the server knows that code.
+   */
+  describe('resolveIdentifier', () => {
+    const TENANT_CODE = '000001';
+
+    /** Routes by SQL fragment so an added query cannot invalidate these tests. */
+    const routeQueries = (opts: { phoneHit?: boolean; numberHit?: boolean; plateHit?: boolean }) => {
+      mockPool.query.mockImplementation((sql: string, params?: unknown[]) => {
+        const s = String(sql);
+        if (s.includes('tenant_code')) return Promise.resolve({ rows: [{ tenant_code: TENANT_CODE }] });
+        // buildMemberResponse's own customer read — checked FIRST because it also
+        // selects membership_number and would otherwise be swallowed by the
+        // number-lookup branch below.
+        if (s.includes('FROM customers WHERE id = $1')) {
+          return Promise.resolve({ rows: [{ id: customerId, name: 'Resolved', phone: '628', membership_number: null }] });
+        }
+        if (s.includes('phone_normalized')) {
+          return Promise.resolve({ rows: opts.phoneHit ? [{ id: customerId, name: 'By Phone', phone: '628' }] : [] });
+        }
+        if (s.includes('membership_number = $2')) {
+          return Promise.resolve({ rows: opts.numberHit ? [{ id: customerId }] : [] });
+        }
+        if (s.includes('membership_plates mp')) {
+          return Promise.resolve({ rows: opts.plateHit ? [{ customer_id: customerId }] : [] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+    };
+
+    it('treats a 12-DIGIT phone as a phone, not a membership number', async () => {
+      // The regression, exactly: 081200000091 is 12 digits and does NOT start with
+      // the tenant code, so it cannot be one of our membership numbers.
+      routeQueries({ phoneHit: true });
+
+      const res = await service.resolveIdentifier(tenantId, '081200000091');
+
+      expect(res?.matchedBy).toBe('phone');
+    });
+
+    it('treats a 12-char value starting with the tenant code as a membership number', async () => {
+      routeQueries({ numberHit: true });
+
+      const res = await service.resolveIdentifier(tenantId, `${TENANT_CODE}01000A`);
+
+      expect(res?.matchedBy).toBe('number');
+    });
+
+    it('treats a plate as a plate', async () => {
+      routeQueries({ plateHit: true });
+
+      const res = await service.resolveIdentifier(tenantId, 'B 9091 VRF');
+
+      expect(res?.matchedBy).toBe('plate');
+    });
+
+    it('falls back to the other interpretations rather than dead-ending', async () => {
+      // Looks like a phone, but only the membership-number table has it. A guess
+      // must never be the end of the road.
+      routeQueries({ numberHit: true });
+
+      const res = await service.resolveIdentifier(tenantId, '081200000091');
+
+      expect(res?.matchedBy).toBe('number');
+    });
+
+    it('returns null when no interpretation matches', async () => {
+      routeQueries({});
+
+      expect(await service.resolveIdentifier(tenantId, '081200000091')).toBeNull();
+    });
+
+    it('ignores a blank value without querying', async () => {
+      routeQueries({});
+
+      expect(await service.resolveIdentifier(tenantId, '   ')).toBeNull();
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('is case-insensitive about the tenant prefix', async () => {
+      routeQueries({ numberHit: true });
+
+      const res = await service.resolveIdentifier(tenantId, '000001010 00a'.replace(/\s/g, ''));
+
+      expect(res?.matchedBy).toBe('number');
+    });
+  });
 });

@@ -64,6 +64,9 @@ interface DailyUsageRow {
   usage_count: string; // COUNT returns string from pg
 }
 
+/** Which interpretation of a typed value actually resolved the customer. */
+export type MemberSearchMatch = 'number' | 'phone' | 'plate';
+
 /**
  * Raw voucher row from campaign grants.
  */
@@ -125,6 +128,63 @@ export class MemberLookupService {
 
     const customer = result.rows[0]!;
     return this.buildMemberResponse(customer.id, tenantId);
+  }
+
+  /**
+   * Resolve ONE typed/scanned value to a customer, deciding for itself whether it
+   * is a membership number, a phone, or a plate.
+   *
+   * Why this lives on the server: the three formats overlap, and the tie-breaker
+   * is a piece of tenant state the client does not have. A membership number is
+   * `TTTTTT` + `BB` + `CCCC` (see MembershipIdentityService) — the first six
+   * characters are THIS tenant's `tenant_code` — so "is this 12-char value one of
+   * our membership numbers?" is a structural question with a definite answer,
+   * not a guess. The POS used to guess from length alone and classified every
+   * 12-digit Indonesian mobile (08xx xxxx xxxx) as a member number, so a real
+   * customer came back "not found".
+   *
+   * The chosen interpretation is tried first and the others follow, so an unusual
+   * value still resolves instead of dead-ending. `matchedBy` tells the caller which
+   * one hit, which is what lets the POS canonicalise a plate it searched by.
+   */
+  async resolveIdentifier(
+    tenantId: string,
+    raw: string,
+  ): Promise<(MemberLookupResponse & { matchedBy: MemberSearchMatch }) | null> {
+    const v = raw.trim();
+    if (!v) return null;
+
+    const tenantCodeRes = await this.pool.query<{ tenant_code: string | null }>(
+      'SELECT tenant_code FROM tenants WHERE id = $1',
+      [tenantId],
+    );
+    const tenantCode = (tenantCodeRes.rows[0]?.tenant_code ?? '').trim().toUpperCase();
+
+    const upper = v.toUpperCase();
+    const isTwelveAlnum = /^[0-9A-Z]{12}$/.test(upper);
+    const isOurMembershipNumber = isTwelveAlnum && !!tenantCode && upper.startsWith(tenantCode);
+    const looksLikePhone = /^(?:0|62)\d{7,14}$/.test(v);
+
+    // Most-likely first; the rest are fallbacks.
+    const order: MemberSearchMatch[] = isOurMembershipNumber
+      ? ['number', 'phone', 'plate']
+      : looksLikePhone
+        ? ['phone', 'number', 'plate']
+        : isTwelveAlnum
+          // 12 chars but not our prefix: still try it as a number (a legacy or
+          // mistyped code) before treating it as a plate.
+          ? ['number', 'phone', 'plate']
+          : ['plate', 'phone', 'number'];
+
+    for (const matchedBy of order) {
+      const found = matchedBy === 'number'
+        ? await this.lookupByMembershipNumber(tenantId, v)
+        : matchedBy === 'phone'
+          ? await this.lookupByPhone(tenantId, v)
+          : await this.lookupByPlate(tenantId, v);
+      if (found) return { ...found, matchedBy };
+    }
+    return null;
   }
 
   /**
