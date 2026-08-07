@@ -1,7 +1,9 @@
-import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SettingsService } from '../settings/settings.service';
 import { JobMonitorService } from '../job-monitor';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { renderNotificationText } from './notification-templates';
 
 /**
  * WhatsApp message payload to be sent via the WhatsApp Business API.
@@ -137,6 +139,10 @@ export class NotificationService {
     private readonly configService: ConfigService,
     @Optional() @Inject(SettingsService) private readonly settingsService?: SettingsService,
     @Optional() @Inject(JobMonitorService) private readonly jobMonitor?: JobMonitorService,
+    // forwardRef: WhatsappModule reaches NotificationModule through AgentModule,
+    // so the two modules genuinely reference each other. Same pattern as
+    // AgentService <-> ScheduledAnalysisService.
+    @Optional() @Inject(forwardRef(() => WhatsappService)) private readonly whatsapp?: WhatsappService,
   ) {
     this.whatsappApiUrl =
       this.configService.get<string>('WHATSAPP_API_URL') ?? 'https://api.whatsapp.business/v1';
@@ -175,6 +181,33 @@ export class NotificationService {
    * Requirement 19.3: Send campaign bonus codes to customer's phone via WhatsApp.
    */
   async sendWhatsApp(message: WhatsAppMessage): Promise<SendResult> {
+    // PREFERRED PATH: the tenant's real WhatsApp line (WAHA/kirimdev), which is
+    // what this platform actually runs. Everything below it targets the Meta
+    // WhatsApp Business Cloud API, a vendor that has never been configured here
+    // (WHATSAPP_API_URL/TOKEN are unset in production) — so for years every
+    // caller of this method silently failed: membership welcome messages,
+    // expiry reminders, agent retention offers, proposal alerts. The Meta branch
+    // is kept for a deployment that genuinely registers templates with Meta.
+    if (this.whatsapp && message.tenantId) {
+      const text = renderNotificationText(message.templateName, message.params);
+      if (!text) {
+        this.logger.warn(`No text body defined for notification template '${message.templateName}' — not sent`);
+        return { success: false, error: `Unknown template: ${message.templateName}` };
+      }
+      const ok = await this.whatsapp.sendText(message.tenantId, message.to, text);
+      if (!ok) {
+        this.logger.warn(`WhatsApp line refused ${message.templateName} to ${message.to} (tenant ${message.tenantId})`);
+        return { success: false, error: 'WhatsApp line unavailable or message blocked' };
+      }
+      this.logger.log(`WhatsApp message sent: ${message.templateName} to ${message.to} (via tenant line)`);
+      return { success: true, messageId: 'wa-line' };
+    }
+    if (!message.tenantId) {
+      // sendText is tenant-scoped (it resolves the branch's line), so a message
+      // with no tenant cannot be routed. Say so instead of failing obscurely.
+      this.logger.warn(`Notification ${message.templateName} has no tenantId — cannot route to a WhatsApp line`);
+    }
+
     try {
       // Resolve credentials: tenant-specific or global fallback
       const credentials = await this.resolveCredentials(message.tenantId);

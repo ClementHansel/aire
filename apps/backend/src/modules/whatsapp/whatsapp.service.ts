@@ -2,7 +2,6 @@ import { Injectable, Inject, Logger, Optional, OnModuleInit } from '@nestjs/comm
 import { Pool } from 'pg';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { DATABASE_POOL } from '../auth/database.provider';
-import { NotificationService } from '../notification';
 import { AgentRuntimeService } from './agent-runtime.service';
 import { PendingBookingService } from './pending-booking.service';
 import { CustomerContextService, ResolvedCustomer } from './customer-context.service';
@@ -99,7 +98,6 @@ export class WhatsappService implements OnModuleInit {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly runtime: AgentRuntimeService,
-    @Optional() private readonly notifications?: NotificationService,
     @Optional() private readonly llm?: LLMRouterService,
     @Optional() private readonly pendingBooking?: PendingBookingService,
     @Optional() private readonly customerContext?: CustomerContextService,
@@ -902,9 +900,19 @@ export class WhatsappService implements OnModuleInit {
     const ack = 'Baik kak, ini Irene teruskan dulu ke tim biar dibantu lebih lanjut ya 🙏 Mohon tunggu sebentar, nanti tim langsung menghubungi kakak. Sambil menunggu, ada lagi yang bisa Irene bantu? 😊';
     await this.addMessage(tenantId, convId, 'outbound', ack, true, 'Escalation');
     await this.sendText(tenantId, from, ack, outletId);
-    if (cfg?.escalation_number && this.notifications) {
+    // Alert the tenant's escalation number on their OWN line. This used to go
+    // through NotificationService.sendWhatsApp, i.e. the unconfigured Meta
+    // Business API — so the team was never actually paged when a customer got
+    // escalated. sendText is right here anyway: it is this very class.
+    if (cfg?.escalation_number) {
       try {
-        await this.notifications.sendWhatsApp({ to: cfg.escalation_number, templateName: 'escalation', params: { from, reason } } as never);
+        const alert = [
+          '🚨 *Percakapan dieskalasi ke tim*',
+          `Dari: ${from}`,
+          `Alasan: ${reason}`,
+          'Silakan balas customer ini langsung ya.',
+        ].join('\n');
+        await this.sendText(tenantId, cfg.escalation_number, alert, outletId);
       } catch { /* best-effort */ }
     }
   }

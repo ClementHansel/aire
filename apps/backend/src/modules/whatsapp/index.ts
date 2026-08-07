@@ -9,14 +9,17 @@ import { VoucherNotifyService } from './voucher-notify.service';
 import { VoucherRedeemNotifyService } from './voucher-redeem-notify.service';
 import { PaymentNotifyService } from './payment-notify.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
-import { NotificationModule } from '../notification';
 import { SettingsModule } from '../settings/settings.module';
 import { AgentModule } from '../agent';
 import { BookingModule } from '../booking';
 import { AuditModule } from '../audit';
 
 @Module({
-  imports: [NotificationModule, SettingsModule, AgentModule, BookingModule, AuditModule],
+  // NotificationModule is deliberately absent: the dependency now runs the other
+  // way (NotificationService sends THROUGH WhatsappService). WhatsappModule
+  // still reaches it transitively via AgentModule, which is why the other side
+  // uses forwardRef.
+  imports: [SettingsModule, AgentModule, BookingModule, AuditModule],
   controllers: [WhatsappWebhookController, WhatsappController],
   providers: [
     WhatsappService, CustomerContextService, CustomerAgentService, PendingBookingService, AgentRuntimeService,

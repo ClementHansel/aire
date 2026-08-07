@@ -664,3 +664,66 @@ describe('WhatsApp Credential Routing', () => {
     });
   });
 });
+
+/**
+ * Every sendWhatsApp caller was silently failing: the Meta Business API this
+ * class posted to has never been configured on this platform (WHATSAPP_API_URL
+ * and WHATSAPP_API_TOKEN are unset in production). Delivery now prefers the
+ * tenant's real WAHA/kirimdev line.
+ */
+describe('sendWhatsApp routes through the tenant WhatsApp line', () => {
+  const config = { get: vi.fn(() => undefined) };
+
+  it('sends rendered text via WhatsappService instead of a Meta template', async () => {
+    const whatsapp = { sendText: vi.fn().mockResolvedValue(true) };
+    const http = vi.fn();
+    const service = new NotificationService(config as any, undefined, undefined, whatsapp as any);
+    service.setHttpClient(http as any);
+
+    const res = await service.sendWhatsApp({
+      to: '0811', templateName: 'membership_welcome', tenantId: 'tenant-1',
+      params: { customerName: 'Budi', planName: 'Unlimited', endDate: '2026-09-06' },
+    });
+
+    expect(res.success).toBe(true);
+    expect(http).not.toHaveBeenCalled(); // the Meta endpoint is not touched
+    const [tenantId, to, text] = whatsapp.sendText.mock.calls[0];
+    expect(tenantId).toBe('tenant-1');
+    expect(to).toBe('0811');
+    expect(text).toContain('Unlimited');
+    expect(text).toContain('Halo kak Budi!');
+  });
+
+  it('reports failure when the line refuses the message', async () => {
+    const whatsapp = { sendText: vi.fn().mockResolvedValue(false) };
+    const service = new NotificationService(config as any, undefined, undefined, whatsapp as any);
+    const res = await service.sendWhatsApp({
+      to: '0811', templateName: 'membership_welcome', tenantId: 'tenant-1', params: {},
+    });
+    expect(res.success).toBe(false);
+  });
+
+  it('refuses a template with no text body rather than sending an empty message', async () => {
+    const whatsapp = { sendText: vi.fn() };
+    const service = new NotificationService(config as any, undefined, undefined, whatsapp as any);
+    const res = await service.sendWhatsApp({
+      to: '0811', templateName: 'no_such_template', tenantId: 'tenant-1', params: {},
+    });
+    expect(res.success).toBe(false);
+    expect(whatsapp.sendText).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the HTTP path when there is no tenant to route by', async () => {
+    // sendText is tenant-scoped (it resolves the branch's line), so a message
+    // with no tenantId cannot use it.
+    const whatsapp = { sendText: vi.fn() };
+    const http = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ messages: [{ id: 'm1' }] }) });
+    const service = new NotificationService(config as any, undefined, undefined, whatsapp as any);
+    service.setHttpClient(http as any);
+
+    await service.sendWhatsApp({ to: '0811', templateName: 'membership_welcome', params: {} });
+
+    expect(whatsapp.sendText).not.toHaveBeenCalled();
+    expect(http).toHaveBeenCalled();
+  });
+});

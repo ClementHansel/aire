@@ -232,7 +232,7 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
       resolveIdentityFromText: vi.fn(async () => null),
       resolveCustomer: vi.fn(async () => null),
     };
-    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, undefined, ctx as never);
+    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, ctx as never);
     await svc.handleInbound({ tenantId: TENANT_ID, from: '99999999999999@lid', text: 'harga cuci berapa?' });
     expect(runtime.generate).toHaveBeenCalledTimes(1);
     expect(String(pool.outbox[0]!.body)).toContain('nomor HP yang terdaftar'); // identity ask appended
@@ -247,7 +247,7 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
         /0812/.test(text) ? { id: 'cust-1', name: 'Budi', phone: '628123456789', normalized: '628123456789' } : null),
       resolveCustomer: vi.fn(async () => null),
     };
-    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, undefined, ctx as never);
+    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, ctx as never);
     await svc.handleInbound({ tenantId: TENANT_ID, from: '99999999999999@lid', text: '0812 3456 7890' });
     expect(runtime.generate).not.toHaveBeenCalled();        // identity turn short-circuits
     expect(String(pool.outbox[0]!.body)).toContain('Makasih kak Budi'); // warm ack by name
@@ -261,7 +261,7 @@ describe('WhatsApp pipeline e2e (WAHA_MOCK bypass)', () => {
       resolveIdentityFromText: vi.fn(async () => null),
       resolveCustomer: vi.fn(async () => null),
     };
-    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, undefined, ctx as never);
+    const svc = new WhatsappService(pool as never, runtime, undefined, undefined, ctx as never);
     await svc.handleInbound({ tenantId: TENANT_ID, from: '55555555555555@lid', text: 'Hello im hansel' });
     expect(runtime.generate).toHaveBeenCalledTimes(1); // greeted, NOT escalated
     const arg = (runtime.generate as unknown as { mock: { calls: any[][] } }).mock.calls[0]![0];
