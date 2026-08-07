@@ -3,7 +3,6 @@ import { Pool } from 'pg';
 import { JWTPayload } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
-import { NotificationService } from '../notification/notification.service';
 import { VoucherTicketService } from '../voucher-ticket';
 import { VoucherTemplateService } from './voucher-template.service';
 import { SellVoucherPackResult, IssueVoucherPackResult } from './voucher.interfaces';
@@ -36,7 +35,6 @@ export class VoucherPackService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly checkout: PosCheckoutService,
     private readonly templates: VoucherTemplateService,
-    private readonly notifications: NotificationService,
     private readonly tickets: VoucherTicketService,
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
@@ -198,33 +196,30 @@ export class VoucherPackService {
       );
     } catch { /* tagging is best-effort */ }
 
-    // Deliver plaintext codes to the customer's WhatsApp (best-effort).
-    let whatsappDelivered = false;
-    try {
-      const result = await this.notifications.sendWhatsApp({
-        to: order.customer_phone,
-        templateName: 'voucher_delivery',
-        params: {
-          customerName: order.customer_name ?? '',
-          codes: codes.join(', '),
-          expiryDate: expiryDate ?? 'no expiry',
-        },
-        tenantId: user.tenant_id,
-      });
-      whatsappDelivered = result.success;
-      if (!result.success) {
-        this.logger.warn(`Voucher codes generated but WhatsApp delivery failed for order ${orderId}: ${result.error}`);
-      }
-    } catch (err) {
-      this.logger.warn(`WhatsApp delivery threw for order ${orderId}: ${err instanceof Error ? err.message : err}`);
+    // Hand the code list to VoucherNotifyService, which sends it through the
+    // same WAHA/kirimdev line the customer already talks to. This used to call
+    // NotificationService.sendWhatsApp with a `voucher_delivery` TEMPLATE aimed
+    // at the Meta WhatsApp Business API — a vendor that was never configured
+    // here (WHATSAPP_API_URL/TOKEN are unset in production), so a customer who
+    // bought a voucher pack never actually received their codes.
+    const whatsappQueued = !!order.customer_phone;
+    if (!whatsappQueued) {
+      this.logger.warn(`Voucher codes issued for order ${orderId} but the order has no phone — codes must be handed over at the counter`);
     }
+    void this.eventBus?.emit({
+      type: DomainEventType.VoucherBookSold,
+      tenantId: user.tenant_id,
+      outletId: order.outlet_id,
+      actor: user.sub,
+      payload: { bookId: packId, orderId, quantity: codes.length, unitPrice: 0, total: 0 },
+    });
 
     void this.eventBus?.emit({
       type: DomainEventType.VoucherPackIssued,
       tenantId: user.tenant_id,
       outletId: user.outlet_id,
       actor: user.sub,
-      payload: { packId, orderId, templateId: template.id, codes: codes.length, whatsappDelivered },
+      payload: { packId, orderId, templateId: template.id, codes: codes.length, whatsappQueued },
     });
 
     return {
@@ -233,7 +228,7 @@ export class VoucherPackService {
       parentCode: null,
       childCodes: codes,
       expiryDate,
-      whatsappDelivered,
+      whatsappQueued,
     };
   }
 

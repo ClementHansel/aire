@@ -6,7 +6,6 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { VoucherTemplateService } from '../voucher/voucher-template.service';
 import { VoucherTicketService } from '../voucher-ticket/voucher-ticket.service';
-import { NotificationService } from '../notification/notification.service';
 import { CampaignRow } from './campaign.interfaces';
 
 /**
@@ -44,7 +43,6 @@ export class CampaignGrantService implements OnModuleInit, OnModuleDestroy {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly templates: VoucherTemplateService,
     private readonly tickets: VoucherTicketService,
-    private readonly notifications: NotificationService,
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
@@ -252,36 +250,19 @@ export class CampaignGrantService implements OnModuleInit, OnModuleDestroy {
       client.release();
     }
 
-    // Deliver the bonus codes via WhatsApp (best-effort — never blocks the grant).
-    let whatsappDelivered = false;
-    if (delivery.customerPhone) {
-      try {
-        const result = await this.notifications.sendWhatsApp({
-          to: delivery.customerPhone,
-          templateName: 'campaign_bonus',
-          params: {
-            customerName: delivery.customerName ?? '',
-            campaignName: campaign.name,
-            codes: codes.join(', '),
-            expiryDate: expiryDate ?? 'no expiry',
-          },
-          tenantId,
-        });
-        whatsappDelivered = result.success;
-        if (!result.success) {
-          this.logger.warn(`Campaign bonus codes generated but WhatsApp delivery failed (campaign ${campaign.id}): ${result.error}`);
-        }
-      } catch (err) {
-        this.logger.warn(`WhatsApp delivery threw for campaign ${campaign.id}: ${err instanceof Error ? err.message : err}`);
-      }
-    }
-
+    // Delivery of the bonus codes rides on this event: VoucherNotifyService
+    // subscribes to CampaignBonusGranted and sends the name + code list over the
+    // tenant's real WhatsApp line. It used to be attempted inline here through
+    // NotificationService.sendWhatsApp, which posts a registered TEMPLATE to the
+    // Meta WhatsApp Business API — never configured on this platform, so a
+    // campaign bonus reached the customer's account but never their phone.
+    const whatsappQueued = !!delivery.customerPhone;
     void this.eventBus?.emit({
       type: DomainEventType.CampaignBonusGranted,
       tenantId,
       outletId: delivery.outletId,
       actor: 'system',
-      payload: { campaignId: campaign.id, customerId, orderId, bookId, codes: codes.length, whatsappDelivered },
+      payload: { campaignId: campaign.id, customerId, orderId, bookId, codes: codes.length, whatsappQueued },
     });
   }
 

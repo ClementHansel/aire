@@ -4,15 +4,27 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from './whatsapp.service';
+import { loadBookSummary, loadActiveCodes, formatCodeList } from './voucher-book.query';
 
 /**
- * VoucherNotifyService — sends the buyer a thank-you WhatsApp message with the
- * actual voucher codes right after a voucher BOOK sale (voucher-ticket module).
+ * VoucherNotifyService — sends the customer the voucher NAME and the full list
+ * of codes as soon as a book of vouchers becomes theirs.
  *
- * Subscribes to VoucherBookSold rather than being called inline from
- * VoucherTicketService, so the send goes through the branch-aware, mock-visible
- * WhatsappService.sendText without VoucherTicketService needing to depend on
- * the whatsapp module (avoids a circular dependency).
+ * It listens for a book coming into existence rather than being called inline,
+ * so the send goes through the branch-aware, mock-visible
+ * WhatsappService.sendText without the voucher/campaign modules having to
+ * depend on the whatsapp module (that would be a circular dependency).
+ *
+ * Three routes produce a book, and all three land here:
+ *   - VoucherBookSold   — a dashboard ad-hoc sale, AND a POS voucher-pack sale
+ *   - CampaignBonusGranted — a bonus book minted by a campaign trigger
+ *
+ * NB the POS pack sale and the campaign bonus used to attempt delivery through
+ * NotificationService.sendWhatsApp, which posts a registered TEMPLATE to the
+ * Meta WhatsApp Business API. That vendor was never wired here (the platform
+ * sends via WAHA/kirimdev, and WHATSAPP_API_URL/TOKEN are unset in production),
+ * so those messages could only ever fail — which is why a customer buying a
+ * voucher pack never received their codes.
  */
 @Injectable()
 export class VoucherNotifyService implements OnModuleInit, OnModuleDestroy {
@@ -29,9 +41,11 @@ export class VoucherNotifyService implements OnModuleInit, OnModuleDestroy {
     if (this.eventBus) {
       this.unsubscribes.push(
         this.eventBus.on(DomainEventType.VoucherBookSold, (e) =>
-          this.safe(() => this.onVoucherBookSold(e.tenantId!, e.outletId ?? null, e.payload as { bookId: string }))),
+          this.safe(() => this.deliverCodes(e.tenantId!, e.outletId ?? null, (e.payload as { bookId: string }).bookId))),
+        this.eventBus.on(DomainEventType.CampaignBonusGranted, (e) =>
+          this.safe(() => this.deliverCodes(e.tenantId!, e.outletId ?? null, (e.payload as { bookId?: string }).bookId))),
       );
-      this.logger.log('Voucher-purchase notification subscribed (voucher.book_sold)');
+      this.logger.log('Voucher-purchase notification subscribed (voucher.book_sold, campaign.bonus_granted)');
     }
   }
 
@@ -44,28 +58,32 @@ export class VoucherNotifyService implements OnModuleInit, OnModuleDestroy {
     try { await fn(); } catch (e) { this.logger.error(`Voucher-purchase notification failed: ${e instanceof Error ? e.message : e}`); }
   }
 
-  private async onVoucherBookSold(tenantId: string, outletId: string | null, payload: { bookId: string }): Promise<void> {
-    if (!this.whatsapp) return;
-    const bookRes = await this.pool.query<{ buyer_name: string | null; buyer_phone: string | null; expiry_date: string | null }>(
-      `SELECT buyer_name, buyer_phone, expiry_date::text AS expiry_date FROM voucher_books WHERE id = $1 AND tenant_id = $2`,
-      [payload.bookId, tenantId],
-    );
-    const book = bookRes.rows[0];
-    if (!book?.buyer_phone) return;
+  private async deliverCodes(tenantId: string, eventOutletId: string | null, bookId: string | undefined): Promise<void> {
+    if (!this.whatsapp || !bookId) return;
 
-    const codesRes = await this.pool.query<{ code: string }>(
-      `SELECT code FROM voucher_tickets WHERE book_id = $1 AND tenant_id = $2 ORDER BY code`,
-      [payload.bookId, tenantId],
-    );
-    const codes = codesRes.rows.map((r) => r.code);
+    const book = await loadBookSummary(this.pool, tenantId, bookId);
+    if (!book?.buyerPhone) return; // walk-in buyer, nowhere to send
+
+    // Every code, not just the unused ones: this fires at issue time, so they are
+    // all unused — and reading the book's own tickets keeps it correct even if the
+    // event is replayed after one has been redeemed.
+    const codes = await loadActiveCodes(this.pool, tenantId, bookId);
     if (codes.length === 0) return;
 
-    const text =
-      `Terima kasih! Pembelian ${codes.length} voucher berhasil ✅\n` +
-      `Kode voucher Anda:\n${codes.join('\n')}` +
-      `${book.expiry_date ? `\nBerlaku sampai ${book.expiry_date}.` : ''}\n` +
-      `Tunjukkan kode ini di kasir untuk digunakan.`;
+    const greeting = book.buyerName?.trim() ? `Halo kak ${book.buyerName.trim()}! ` : 'Halo kak! ';
+    const opening = book.source === 'bonus'
+      ? `${greeting}🎉 Selamat, kakak dapat bonus *${book.name}*!`
+      : `${greeting}Terima kasih atas pembelian *${book.name}* 🎫`;
 
-    await this.whatsapp.sendText(tenantId, book.buyer_phone, text, outletId ?? null);
+    const text = [
+      opening,
+      '',
+      `Berikut ${codes.length} kode voucher yang bisa kakak gunakan:`,
+      formatCodeList(codes),
+      book.expiryDate ? `\nBerlaku sampai ${book.expiryDate}.` : '',
+      'Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊',
+    ].filter((l) => l !== '').join('\n');
+
+    await this.whatsapp.sendText(tenantId, book.buyerPhone, text, book.outletId ?? eventOutletId ?? null);
   }
 }

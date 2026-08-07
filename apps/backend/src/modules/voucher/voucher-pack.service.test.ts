@@ -14,7 +14,6 @@ describe('VoucherPackService.sellPack — business_unit', () => {
   let client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
   let checkout: { upsertCustomer: ReturnType<typeof vi.fn>; createPackOrder: ReturnType<typeof vi.fn> };
   let templates: { getTemplate: ReturnType<typeof vi.fn> };
-  let notifications: { sendWhatsApp: ReturnType<typeof vi.fn> };
   let tickets: { issueBonusBook: ReturnType<typeof vi.fn> };
   let eventBus: { emit: ReturnType<typeof vi.fn> };
   let service: VoucherPackService;
@@ -29,11 +28,10 @@ describe('VoucherPackService.sellPack — business_unit', () => {
       createPackOrder: vi.fn().mockResolvedValue({ id: 'order-1', orderNumber: 'ORD-1', total: 200000 }),
     };
     templates = { getTemplate: vi.fn() };
-    notifications = { sendWhatsApp: vi.fn() };
     tickets = { issueBonusBook: vi.fn().mockResolvedValue({ bookId: 'book-1', codes: ['KCL-082026-000001'] }) };
     eventBus = { emit: vi.fn() };
     service = new VoucherPackService(
-      pool as any, checkout as any, templates as any, notifications as any, tickets as any, eventBus as any,
+      pool as any, checkout as any, templates as any, tickets as any, eventBus as any,
     );
   });
 
@@ -93,7 +91,6 @@ describe('VoucherPackService.issuePack — issues a visible book, not hashes', (
   let client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
   let checkout: { upsertCustomer: ReturnType<typeof vi.fn>; createPackOrder: ReturnType<typeof vi.fn> };
   let templates: { getTemplate: ReturnType<typeof vi.fn> };
-  let notifications: { sendWhatsApp: ReturnType<typeof vi.fn> };
   let tickets: { issueBonusBook: ReturnType<typeof vi.fn> };
   let eventBus: { emit: ReturnType<typeof vi.fn> };
   let service: VoucherPackService;
@@ -121,7 +118,6 @@ describe('VoucherPackService.issuePack — issues a visible book, not hashes', (
         service_ids: ['svc-wash'], validity_days: 30, expiry_date: null,
       }),
     };
-    notifications = { sendWhatsApp: vi.fn().mockResolvedValue({ success: true }) };
     tickets = {
       issueBonusBook: vi.fn().mockResolvedValue({
         bookId: 'book-1',
@@ -130,7 +126,7 @@ describe('VoucherPackService.issuePack — issues a visible book, not hashes', (
     };
     eventBus = { emit: vi.fn() };
     service = new VoucherPackService(
-      pool as any, checkout as any, templates as any, notifications as any, tickets as any, eventBus as any,
+      pool as any, checkout as any, templates as any, tickets as any, eventBus as any,
     );
   });
 
@@ -160,18 +156,33 @@ describe('VoucherPackService.issuePack — issues a visible book, not hashes', (
     expect(res.parentCode).toBeNull();
   });
 
-  it('WhatsApps the plaintext codes and announces VoucherPackIssued', async () => {
+  it('hands the codes to the WhatsApp notifier and announces VoucherPackIssued', async () => {
     givenPaidOrderNotYetIssued();
 
-    await service.issuePack(user, 'order-1', 'tpl-1');
+    const res = await service.issuePack(user, 'order-1', 'tpl-1');
 
-    expect(notifications.sendWhatsApp).toHaveBeenCalledWith(expect.objectContaining({
-      to: '0811',
-      params: expect.objectContaining({ codes: 'KCL-082026-000001, KCL-082026-000002' }),
-    }));
+    // Delivery rides on VoucherBookSold now. The old inline send targeted the Meta
+    // Business API, which is not the vendor this platform uses, so a bought pack's
+    // codes never reached the customer.
+    const sold = eventBus.emit.mock.calls
+      .map((c: unknown[]) => c[0] as { type: string; payload: Record<string, unknown> })
+      .find((e) => e.type === DomainEventType.VoucherBookSold);
+    expect(sold?.payload).toMatchObject({ bookId: 'book-1', orderId: 'order-1' });
+    expect(res.whatsappQueued).toBe(true);
+
     // AIRIN-102 hangs a campaign bonus off this event — it must survive the move.
     const emitted = eventBus.emit.mock.calls.map((c: unknown[]) => (c[0] as { type: string }).type);
     expect(emitted).toContain(DomainEventType.VoucherPackIssued);
+  });
+
+  it('does not claim a WhatsApp send when the order has no phone', async () => {
+    pool.query.mockResolvedValueOnce({ rows: [{ ...paidOrder, customer_phone: null }] });
+    pool.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await service.issuePack(user, 'order-1', 'tpl-1');
+
+    expect(res.whatsappQueued).toBe(false);
+    expect(res.childCodes).toHaveLength(2); // codes still minted for counter handover
   });
 
   it('is idempotent per order: refuses a second issue for the same sale', async () => {

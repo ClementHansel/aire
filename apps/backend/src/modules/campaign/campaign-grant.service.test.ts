@@ -15,7 +15,6 @@ describe('CampaignGrantService', () => {
   let client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
   let templates: { getTemplate: ReturnType<typeof vi.fn> };
   let tickets: { issueBonusBook: ReturnType<typeof vi.fn> };
-  let notifications: { sendWhatsApp: ReturnType<typeof vi.fn> };
   let eventBus: { on: ReturnType<typeof vi.fn>; emit: ReturnType<typeof vi.fn> };
   let service: CampaignGrantService;
 
@@ -59,13 +58,11 @@ describe('CampaignGrantService', () => {
     };
     templates = { getTemplate: vi.fn().mockResolvedValue(templateRow) };
     tickets = { issueBonusBook: vi.fn().mockResolvedValue({ bookId: 'book-1', codes: ['BTR-072026-000001', 'BTR-072026-000002', 'BTR-072026-000003'] }) };
-    notifications = { sendWhatsApp: vi.fn().mockResolvedValue({ success: true }) };
     eventBus = { on: vi.fn().mockReturnValue(() => {}), emit: vi.fn() };
     service = new CampaignGrantService(
       pool as any,
       templates as any,
       tickets as any,
-      notifications as any,
       eventBus as any,
     );
   });

@@ -31,7 +31,9 @@ export interface IssuedPack {
   parentCode?: string | null;
   childCodes: string[];
   expiryDate: string | null;
-  whatsappDelivered: boolean;
+  /** Codes are on their way to the buyer's WhatsApp — not a delivery receipt;
+   *  the send happens asynchronously after the issue call returns. */
+  whatsappQueued: boolean;
 }
 
 export function PlateRegistrationModal({
@@ -136,9 +138,9 @@ export function VoucherCodesModal({ issued, issuing, error, onClose }: {
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3"><span className="text-2xl">✓</span></div>
               <h3 className="text-lg font-semibold text-text-primary">{t('pos.sellpack.voucherPackSold', 'Voucher Pack Sold')}</h3>
               <p className="text-sm text-text-secondary mt-1">
-                {issued.whatsappDelivered
-                  ? t('pos.sellpack.codesSent', 'Codes sent to the customer via WhatsApp.')
-                  : t('pos.sellpack.codesPending', 'Codes generated. WhatsApp delivery pending — share them now.')}
+                {issued.whatsappQueued
+                  ? t('pos.sellpack.codesSending', 'Codes are being sent to the customer via WhatsApp.')
+                  : t('pos.sellpack.codesNoPhone', 'Codes generated. No phone number on this order — hand them over now.')}
               </p>
             </div>
             <div className="mt-4">

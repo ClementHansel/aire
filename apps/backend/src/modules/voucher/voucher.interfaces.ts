@@ -79,7 +79,15 @@ export interface IssueVoucherPackResult {
   parentCode?: string | null;
   childCodes: string[];
   expiryDate: string | null;
-  whatsappDelivered: boolean;
+  /**
+   * True when the codes are on their way to the buyer's WhatsApp — i.e. the
+   * order carries a phone number and the delivery has been handed to
+   * VoucherNotifyService. NOT a delivery receipt: the send happens after this
+   * call returns. It replaced `whatsappDelivered`, which claimed a receipt it
+   * never had — it reported the result of a Meta Business API template send
+   * against a vendor this platform has never used, so it was permanently false.
+   */
+  whatsappQueued: boolean;
 }
 
 /** Result of validating a voucher code at the POS. */
