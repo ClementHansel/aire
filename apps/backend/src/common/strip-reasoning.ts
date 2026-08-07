@@ -49,10 +49,12 @@ export function stripReasoning(input: string): string {
 
   if (text === input) return input; // nothing was a reasoning tag; leave it exactly as-is
 
-  const cleaned = text.trim();
-
-  // Never hand back an empty reply just because the model produced nothing but
-  // reasoning — the caller's fallback handling is better than silence, and an
-  // empty string here would look like a provider error.
-  return cleaned || input.trim();
+  // Deliberately CAN return empty. The old code fell back to `input.trim()` when
+  // the whole turn was reasoning, on the theory that empty "looks like a provider
+  // error" — but that handed the scratchpad straight back, which is exactly the
+  // leak this module exists to prevent. It fires on the commonest shape too: a
+  // reply truncated at max_tokens mid-`<think>` has no closing tag, so stripping
+  // leaves nothing. Callers treat empty as "no usable answer" and re-prompt or
+  // fall back to a template — silence beats leaking the deliberation.
+  return text.trim();
 }

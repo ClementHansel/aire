@@ -10,6 +10,7 @@ import { ChatMessage, LLMRouterService, LLMErrorResponse } from '../agent/llm-ro
 import { JobMonitorService } from '../job-monitor';
 import { normalizePhone } from '@aire/shared';
 import { formatForWhatsApp } from './whatsapp-format';
+import { looksLikeReasoning } from '../../common/looks-like-reasoning';
 
 /** Once-per-chat identity request, appended after the first reply to an unknown sender. */
 const IDENTITY_ASK =
@@ -386,6 +387,13 @@ export class WhatsappService implements OnModuleInit {
     // WhatsApp doesn't render Markdown — normalise **bold**/links/headings the LLM
     // emits into WhatsApp markup (single-* bold) at this single outbound chokepoint.
     const text = formatForWhatsApp(rawText);
+    // formatForWhatsApp returns '' when the payload was nothing but the model's
+    // own deliberation. Refuse the send rather than deliver a scratchpad (or a
+    // blank bubble) — loudly, because it means an upstream guard was bypassed.
+    if (rawText.trim() !== '' && text.trim() === '') {
+      this.logger.error(`Blocked an outbound WhatsApp message that was model reasoning, not a reply (tenant ${tenantId}, to ${to})`);
+      return false;
+    }
     const cfg = await this.config(tenantId, outletId);
     if (!cfg) return false;
     // Per-branch on but this branch has no line of its own: no-op (require own number).
@@ -1148,7 +1156,11 @@ export class WhatsappService implements OnModuleInit {
         );
         const isError = 'error' in res && (res as LLMErrorResponse).error === true;
         const content = res.content?.trim();
-        if (!isError && content) summary = content;
+        // 180 tokens is a tight budget, so this one truncates readily — and a
+        // truncated or self-talking summary is worse than the deterministic
+        // count, which at least reads as a sentence.
+        const usable = !!content && !res.truncated && !looksLikeReasoning(content);
+        if (!isError && usable) summary = content;
       } catch (e) {
         this.logger.warn(`AI summary failed for conv ${convId}: ${String(e)}; using fallback`);
       }

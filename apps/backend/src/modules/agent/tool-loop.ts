@@ -1,4 +1,5 @@
 import { LLMRouterService, ChatMessage, LLMErrorResponse } from './llm-router.service';
+import { looksLikeReasoning } from '../../common/looks-like-reasoning';
 import type { ToolResult } from './agent.types';
 
 /**
@@ -52,13 +53,18 @@ Rules:
 - When a TOOL_RESULT message is provided, use it to decide the next step.`;
 
 export interface ParsedAction {
-  /** 'unparseable' = the turn looked like protocol JSON but did not parse; the
-   *  loop should re-prompt for a valid object rather than treat it as an answer. */
+  /** 'unparseable' = the turn was not a usable action (malformed protocol JSON,
+   *  empty, or a raw chain-of-thought dump); the loop should re-prompt for a
+   *  valid object rather than treat it as an answer. */
   kind: 'tool' | 'final' | 'unparseable';
   tool: string;
   parameters?: Record<string, unknown>;
   reasoning?: string;
   message: string;
+  /** How a 'final' was obtained: 'json' = a real `{"action":"final"}` object,
+   *  'prose' = the lenient path that accepts a plain-text turn as the answer.
+   *  The loop trusts 'prose' less — e.g. it refuses a TRUNCATED prose turn. */
+  via?: 'json' | 'prose';
 }
 
 /**
@@ -104,7 +110,12 @@ export function parseAction(content: string): ParsedAction {
         return { kind: 'tool', tool: parsed.tool, parameters: parsed.parameters ?? {}, reasoning: parsed.reasoning, message: '' };
       }
       if (parsed.action === 'final' && typeof parsed.message === 'string') {
-        return { kind: 'final', tool: '', message: parsed.message };
+        // Even inside a well-formed envelope the message can be a scratchpad —
+        // some models put their deliberation in `message` when they run long.
+        if (looksLikeReasoning(parsed.message)) {
+          return { kind: 'unparseable', tool: '', message: '' };
+        }
+        return { kind: 'final', tool: '', message: parsed.message, via: 'json' };
       }
     } catch {
       /* fall through */
@@ -120,7 +131,21 @@ export function parseAction(content: string): ParsedAction {
     return { kind: 'unparseable', tool: '', message: '' };
   }
 
-  return { kind: 'final', tool: '', message: txt || 'OK' };
+  // Nothing left to say. Previously this returned the literal "OK", which a
+  // WhatsApp customer would receive as the reply; it also became reachable once
+  // `stripReasoning` started returning empty for an all-scratchpad turn.
+  if (!txt) return { kind: 'unparseable', tool: '', message: '' };
+
+  // A plain-prose turn is normally the model ignoring the protocol and simply
+  // answering, which we accept. But on 2026-08-07 the "answer" was 600 words of
+  // untagged English self-talk ("Okay, let me try to figure out how to respond
+  // here. The user asked…") and this lenient path forwarded it to the customer.
+  // A scratchpad is not an answer — send it back for a proper one.
+  if (looksLikeReasoning(txt)) {
+    return { kind: 'unparseable', tool: '', message: '' };
+  }
+
+  return { kind: 'final', tool: '', message: txt, via: 'prose' };
 }
 
 export interface ToolLoopResult {
@@ -176,23 +201,37 @@ export async function runToolLoop(opts: RunToolLoopOptions): Promise<ToolLoopRes
     }
 
     const action = parseAction(res.content);
-    if (action.kind === 'final') {
+
+    // A turn cut off at max_tokens is a half-thought. Inside the protocol we'd
+    // never have parsed it; on the LENIENT prose path we would happily forward
+    // the fragment — which is how a customer got a scratchpad that stopped
+    // mid-word ("…only 6 in Jabodetabek and"). Treat it as unusable instead.
+    const truncatedProse = action.kind === 'final' && action.via === 'prose' && res.truncated === true;
+
+    if (action.kind === 'final' && !truncatedProse) {
       return { reply: action.message, toolsUsed, llmError: false };
     }
 
-    // Malformed protocol: give the model exactly ONE chance to correct itself,
-    // otherwise return a safe, surface-appropriate line (never the raw JSON).
-    if (action.kind === 'unparseable') {
+    // Unusable turn — malformed protocol, empty, a chain-of-thought dump, or a
+    // truncated fragment. Give the model exactly ONE chance to correct itself,
+    // otherwise return a safe, surface-appropriate line (never the raw text).
+    if (action.kind === 'unparseable' || truncatedProse) {
       if (reprompted) {
         return { reply: fallbackReply, toolsUsed, llmError: false };
       }
       reprompted = true;
-      messages.push({ role: 'assistant', content: res.content });
+      // Do NOT echo the offending turn back as context when it was truncated or
+      // a scratchpad: feeding a half-finished monologue to the model invites it
+      // to continue the monologue. A short marker keeps the turn order valid.
+      const usableEcho = !truncatedProse && !looksLikeReasoning(res.content) && res.content.trim() !== '';
+      messages.push({ role: 'assistant', content: usableEcho ? res.content : '(unusable reply omitted)' });
       messages.push({
         role: 'user',
         content:
           'SYSTEM: Your previous reply was not a valid PROTOCOL JSON object. ' +
-          'Reply with EXACTLY ONE JSON object — either {"action":"tool",...} or {"action":"final","message":"..."} — and nothing else.',
+          'Do NOT write out your thinking, notes, or drafts — the customer sees everything you send. ' +
+          'Reply with EXACTLY ONE JSON object — either {"action":"tool",...} or {"action":"final","message":"..."} — and nothing else. ' +
+          'Keep "message" short enough to finish in one reply.',
       });
       continue;
     }

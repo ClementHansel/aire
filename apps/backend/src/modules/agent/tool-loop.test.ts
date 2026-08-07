@@ -14,6 +14,27 @@ function scriptedLlm(responses: string[]): LLMRouterService {
   } as unknown as LLMRouterService;
 }
 
+/** Same, but every turn is flagged as cut off at max_tokens. */
+function truncatedLlm(responses: string[]): LLMRouterService {
+  let i = 0;
+  return {
+    chat: vi.fn(async () => {
+      const content = responses[Math.min(i, responses.length - 1)];
+      i++;
+      return { content, model: 'test', truncated: true };
+    }),
+  } as unknown as LLMRouterService;
+}
+
+/** The untagged chain-of-thought a customer received on 2026-08-07 (abridged). */
+const SCRATCHPAD = [
+  'Okay, let me try to figure out how to respond here. The user asked where the AIRE branches are.',
+  'I just got the tool result with all the branch info. Now I need to present that in a friendly way',
+  'without listing everything dryly. First, I should acknowledge their question warmly.',
+  'Wait, the business knowledge says AIRE serves Jabodetabek and Surabaya, but the tool result also',
+  'includes two outlets in Jakarta. Should I include those? Let me check the guidelines again.',
+].join(' ');
+
 describe('parseAction', () => {
   it('parses a fenced tool call', () => {
     const a = parseAction('```json\n{"action":"tool","tool":"get_x","parameters":{"a":1}}\n```');
@@ -43,6 +64,24 @@ describe('parseAction', () => {
   it('extracts a tool call embedded after prose', () => {
     const a = parseAction('Sure! {"action":"tool","tool":"get_x","parameters":{}}');
     expect(a).toMatchObject({ kind: 'tool', tool: 'get_x' });
+  });
+  it('refuses an untagged chain-of-thought dump instead of forwarding it', () => {
+    const a = parseAction(SCRATCHPAD);
+    expect(a.kind).toBe('unparseable');
+    expect(a.message).toBe('');
+  });
+  it('refuses a scratchpad even inside a well-formed final envelope', () => {
+    const a = parseAction(JSON.stringify({ action: 'final', message: SCRATCHPAD }));
+    expect(a.kind).toBe('unparseable');
+  });
+  it('does not answer "OK" when the turn is empty', () => {
+    // Reachable since stripReasoning started returning '' for an all-scratchpad turn.
+    expect(parseAction('').kind).toBe('unparseable');
+    expect(parseAction('   ').kind).toBe('unparseable');
+  });
+  it('marks how a final was obtained so the loop can distrust the lenient path', () => {
+    expect(parseAction('{"action":"final","message":"hello"}').via).toBe('json');
+    expect(parseAction('just text').via).toBe('prose');
   });
 });
 
@@ -117,6 +156,52 @@ describe('runToolLoop', () => {
     });
     expect(res.reply).toBe('FALLBACK');
     expect(res.reply).not.toContain('action');
+  });
+
+  it('never sends a chain-of-thought dump to the customer', async () => {
+    const llm = scriptedLlm([SCRATCHPAD]); // the model keeps thinking out loud
+    const res = await runToolLoop({
+      llm, tenantId: 't1',
+      messages: [{ role: 'system', content: 'sys' }],
+      execute: vi.fn(),
+      fallbackReply: 'FALLBACK',
+    });
+    expect(res.reply).toBe('FALLBACK');
+    expect(res.reply).not.toContain('let me');
+  });
+
+  it('recovers when the model corrects itself after a scratchpad turn', async () => {
+    const llm = scriptedLlm([SCRATCHPAD, '{"action":"final","message":"Halo kak! Cabang kami ada di BSD."}']);
+    const res = await runToolLoop({
+      llm, tenantId: 't1',
+      messages: [{ role: 'system', content: 'sys' }],
+      execute: vi.fn(),
+      fallbackReply: 'FALLBACK',
+    });
+    expect(res.reply).toBe('Halo kak! Cabang kami ada di BSD.');
+  });
+
+  it('refuses a prose answer that was cut off at max_tokens', async () => {
+    // A plain-prose turn is normally accepted; a truncated one is a fragment.
+    const llm = truncatedLlm(['Cabang kami ada di BSD, Bintaro, Kencana Loka dan']);
+    const res = await runToolLoop({
+      llm, tenantId: 't1',
+      messages: [{ role: 'system', content: 'sys' }],
+      execute: vi.fn(),
+      fallbackReply: 'FALLBACK',
+    });
+    expect(res.reply).toBe('FALLBACK');
+  });
+
+  it('still accepts a truncated turn that parsed as real protocol JSON', async () => {
+    // If it parsed, the envelope closed, so the message itself is complete.
+    const llm = truncatedLlm(['{"action":"final","message":"Halo kak!"}']);
+    const res = await runToolLoop({
+      llm, tenantId: 't1',
+      messages: [{ role: 'system', content: 'sys' }],
+      execute: vi.fn(),
+    });
+    expect(res.reply).toBe('Halo kak!');
   });
 
   it('stops at the iteration cap without looping forever', async () => {

@@ -38,8 +38,14 @@ describe('stripReasoning', () => {
     expect(stripReasoning(reply)).toBe(reply);
   });
 
-  it('never returns empty when the model produced only reasoning', () => {
-    expect(stripReasoning('<think>nothing to say</think>')).toBe('<think>nothing to say</think>');
+  it('returns empty when the model produced only reasoning, rather than leaking it', () => {
+    expect(stripReasoning('<think>nothing to say</think>')).toBe('');
+  });
+
+  it('returns empty for a reply truncated mid-thought (no closing tag at all)', () => {
+    // The max_tokens guillotine: the whole budget went into the scratchpad, so
+    // there is no closing tag and no answer. Must not fall back to the input.
+    expect(stripReasoning('<think>The user asked about branches. I should list')).toBe('');
   });
 
   it('passes empty input through', () => {

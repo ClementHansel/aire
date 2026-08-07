@@ -9,6 +9,7 @@
  * where the text came from. Kept deterministic and dependency-free.
  */
 import { stripReasoning } from '../../common/strip-reasoning';
+import { looksLikeReasoning } from '../../common/looks-like-reasoning';
 
 /**
  * Romantic/flirty emoji a CS persona should never send a customer. The system
@@ -21,12 +22,20 @@ import { stripReasoning } from '../../common/strip-reasoning';
 const FLIRTY_EMOJI =
   /[\u{1F495}-\u{1F49F}\u{2764}\u{1F48B}\u{1F618}\u{1F617}\u{1F619}\u{1F61A}\u{1F60D}\u{1F970}\u{1F929}\u{1F9E1}]\u{FE0F}?/gu;
 
+/**
+ * Returns '' when the text must not be sent at all (it was nothing but model
+ * deliberation). {@link WhatsappService.sendText} treats empty as "do not send".
+ */
 export function formatForWhatsApp(input: string): string {
   if (!input) return input;
-  // Last line of defence against a reasoning model leaking its <think> scratchpad
-  // to the customer. LLMRouterService already strips it, but this chokepoint sees
-  // every outbound message, including replies that never touched the router.
+  // Last line of defence against a reasoning model leaking its scratchpad to the
+  // customer. LLMRouterService already strips it, but this chokepoint sees every
+  // outbound message, including replies that never touched the router.
   let text = stripReasoning(input);
+  // …and the UNTAGGED variety, which no amount of tag-stripping can catch.
+  // Nothing downstream can recover here, so refuse the send outright: an
+  // unanswered message is recoverable, a leaked deliberation is not.
+  if (looksLikeReasoning(text)) return '';
 
   // Drop flirty emoji, then tidy the space they leave behind ("bantu! 💕🙏" →
   // "bantu! 🙏", "ya kak 💕" → "ya kak").

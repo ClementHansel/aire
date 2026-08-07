@@ -25,6 +25,13 @@ export interface LLMOptions {
 export interface LLMResponse {
   content: string;
   model: string;
+  /**
+   * True when the provider stopped because it hit `max_tokens`, not because the
+   * model finished. A truncated turn is a half-thought: its content may be a
+   * partial JSON action, or — as leaked to a customer on 2026-08-07 — a
+   * scratchpad guillotined mid-word. Callers must never forward it as an answer.
+   */
+  truncated?: boolean;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -237,6 +244,7 @@ export class LLMRouterService {
       return {
         content: stripReasoning(choice?.message?.content ?? ''),
         model: data.model ?? model,
+        truncated: choice?.finish_reason === 'length' || choice?.native_finish_reason === 'length',
         usage: data.usage
           ? {
               prompt_tokens: data.usage.prompt_tokens ?? 0,
@@ -316,6 +324,7 @@ export class LLMRouterService {
       return {
         content: stripReasoning(data.message?.content ?? ''),
         model: data.model ?? model,
+        truncated: data.done_reason === 'length',
         usage: data.prompt_eval_count !== undefined
           ? {
               prompt_tokens: data.prompt_eval_count ?? 0,
