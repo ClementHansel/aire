@@ -169,7 +169,15 @@ export class VoucherRedemptionService {
       brandScope: row.brand_scope,
       serviceIds: row.service_ids,
       minOrderAmount: parseFloat(row.min_order_amount),
-      isActive: row.template_active && row.pack_status === 'active' && row.code_status === 'active',
+      // `isActive` means "this code is enabled", NOT "this code is unspent" —
+      // being spent is what `currentUses` says. Folding redemption in here made
+      // evaluateVoucher short-circuit at rule 3 ('inactive') before it could ever
+      // reach rule 4 ('fully_redeemed'), so a customer holding a code somebody
+      // already used was told "not found or not active" (AIRIN-158). Genuinely
+      // dead states — cancelled, expired — remain inactive.
+      isActive: row.template_active
+        && row.pack_status === 'active'
+        && (row.code_status === 'active' || row.code_status === 'redeemed'),
       isParentCode: false,
     };
   }
@@ -221,7 +229,10 @@ export class VoucherRedemptionService {
       brandScope: null,
       serviceIds: row.benefit_service_id ? [row.benefit_service_id] : null,
       minOrderAmount: 0,
-      isActive: row.ticket_status === 'active',
+      // Same rule as the pack path above: a redeemed ticket is ENABLED but
+      // exhausted, so it reaches the 'fully_redeemed' verdict and the cashier is
+      // told the code was already used (AIRIN-158). 'expired'/'void' stay dead.
+      isActive: row.ticket_status === 'active' || row.ticket_status === 'redeemed',
       isParentCode: false,
     };
   }

@@ -73,10 +73,35 @@ describe('VoucherRedemptionService.validate — hashed pack codes AND book ticke
     expect(res.discountAmount).toBe(25000);
   });
 
-  it('rejects an already-redeemed ticket', async () => {
+  it('tells the cashier an already-redeemed ticket was USED, not that it does not exist', async () => {
+    // AIRIN-158. This assertion used to be a bare `not.toBe('valid_applicable')`,
+    // which passed while the code answered "Voucher not found or not active" —
+    // the redeemed state was folded into isActive, so evaluateVoucher stopped at
+    // rule 3 and never reached 'fully_redeemed'. Caught by live-testing prod.
     routeQueries({
       ticketRow: {
         ticket_status: 'redeemed',
+        ticket_expiry: null,
+        benefit_type: 'fixed',
+        benefit_value: '25000',
+        benefit_service_id: null,
+        used_at: '2026-08-05T09:00:00.000Z',
+      },
+    });
+
+    const res = await service.validate('tenant-1', 'KCL-082026-000024', ctx);
+
+    expect(res.status).toBe('fully_redeemed');
+    expect(res.message).toMatch(/sudah digunakan/i);
+    expect(res.usedAt).toBe('2026-08-05T09:00:00.000Z');
+  });
+
+  it('still treats a VOID ticket as dead rather than as merely spent', async () => {
+    // A cancelled ticket is not "already used" — saying so would send the
+    // cashier hunting for a redemption that never happened.
+    routeQueries({
+      ticketRow: {
+        ticket_status: 'void',
         ticket_expiry: null,
         benefit_type: 'fixed',
         benefit_value: '25000',
@@ -86,7 +111,7 @@ describe('VoucherRedemptionService.validate — hashed pack codes AND book ticke
 
     const res = await service.validate('tenant-1', 'KCL-082026-000024', ctx);
 
-    expect(res.status).not.toBe('valid_applicable');
+    expect(res.status).toBe('inactive');
   });
 
   it('rejects an expired ticket', async () => {
