@@ -10,7 +10,18 @@ Seluruh teks dalam dokumen ini dapat diubah sendiri oleh Pemilik Usaha melalui m
 
 ---
 
-## 1. Ketentuan penggunaan variabel
+## 1. Prasyarat pengiriman
+
+Seluruh pesan dalam dokumen ini dikirim melalui **WhatsApp**, menggunakan nomor WhatsApp yang terhubung pada cabang terkait. Ketentuan berikut berlaku untuk semua pesan:
+
+1. **Nomor WhatsApp harus terhubung.** Apabila sambungan WhatsApp cabang terputus, pesan tidak terkirim. Status sambungan dapat diperiksa pada **Pengaturan → WhatsApp**.
+2. **Nomor penerima harus tercatat.** Pesan kepada pelanggan hanya dikirim bila nomor telepon pelanggan tersimpan pada data pelanggan atau pada transaksi yang bersangkutan.
+3. **Notifikasi yang dinonaktifkan tidak dikirim.** Mematikan sebuah notifikasi pada halaman **Pengaturan → Notifications** menghentikan pengirimannya sampai diaktifkan kembali.
+4. **Kegagalan pengiriman tidak menghentikan transaksi.** Apabila sebuah pesan gagal terkirim, kegagalan tersebut dicatat pada log sistem dan proses penjualan, pembayaran, maupun antrian tetap berjalan normal.
+
+---
+
+## 2. Ketentuan penggunaan variabel
 
 Kata yang ditulis di dalam kurung kurawal, misalnya `{customerName}`, merupakan **variabel**: sistem menggantinya dengan data sebenarnya pada saat pesan dikirim.
 
@@ -23,34 +34,34 @@ Ketentuan yang berlaku:
 
 ---
 
-## 2. Ringkasan seluruh notifikasi
+## 3. Ringkasan seluruh notifikasi
 
 Sistem mengirimkan 26 jenis pesan otomatis.
 
 | No. | Notifikasi | Penerima | Pemicu (ringkas) | Dapat dimatikan |
 |---|---|---|---|---|
 | 1 | Membership aktif (selamat datang) | Pelanggan | Saat pembayaran membership berhasil dan membership pelanggan aktif. | Ya |
-| 2 | Pengingat membership akan habis (H-30 / H-7 / hari-H) | Pelanggan | Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. | Ya |
+| 2 | Pengingat membership akan habis (H-30 / H-7 / hari-H) | Pelanggan | Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir tepat dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. | Ya |
 | 3 | Voucher dibeli — kode dikirim | Pelanggan | Saat pelanggan membeli paket voucher di kasir dan nomor HP-nya tercatat. | Ya |
 | 4 | Voucher bonus diberikan | Pelanggan | Saat pelanggan mendapat voucher bonus dari sebuah campaign/promo (bukan pembelian). | Ya |
 | 5 | Voucher terpakai — sisa saldo | Pelanggan | Saat satu atau lebih kode voucher ditukarkan di kasir, dan masih ada sisa kode. | Ya |
 | 6 | Voucher terpakai — dipakai orang lain | Pelanggan | Ketika kode voucher ditukarkan oleh orang yang bukan pemilik voucher (voucher memang bisa dibagikan). | Ya |
 | 7 | Voucher terpakai — kode habis | Pelanggan | Sama seperti di atas, tetapi dikirim ketika kode voucher pelanggan sudah habis semua. | Ya |
-| 8 | Struk / invoice setelah pembayaran | Pelanggan | Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. | Ya |
-| 9 | Mobil selesai dicuci | Pelanggan | Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. | Ya |
+| 8 | Struk / invoice (dikirim kasir dari layar struk) | Pelanggan | Dikirim atas permintaan kasir melalui tombol kirim struk pada layar struk, setelah pesanan lunas dan nomor HP pelanggan tercatat. | Ya |
+| 9 | Mobil selesai dicuci | Pelanggan | Saat kasir menandai mobil pada papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. | Ya |
 | 10 | Permintaan booking diterima | Pelanggan | Saat pelanggan mengajukan booking lewat WhatsApp dan permintaannya menunggu konfirmasi tim. | Tidak |
 | 11 | Booking dikonfirmasi | Pelanggan | Saat tim cabang menyetujui booking — baik lewat balasan WhatsApp maupun lewat tautan konfirmasi dari portal pelanggan. | Tidak |
 | 12 | Booking ditolak | Pelanggan | Saat tim cabang menolak permintaan booking pelanggan. | Tidak |
 | 13 | Booking kedaluwarsa otomatis | Pelanggan | Saat permintaan booking tidak dikonfirmasi tim sampai batas waktunya, sistem membatalkannya otomatis dan mengabari pelanggan. | Ya |
 | 14 | Permintaan booking baru (untuk tim) | Kasir / Tim Cabang | Saat ada permintaan booking lewat WhatsApp. | Tidak |
 | 15 | Booking baru dari portal pelanggan (untuk cabang) | Kasir / Tim Cabang | Saat pelanggan membuat booking lewat portal/aplikasi. | Tidak |
-| 16 | Permintaan ulasan / feedback | Pelanggan | Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit). | Ya |
+| 16 | Permintaan ulasan / feedback | Pelanggan | Setelah pesanan lunas, apabila fitur Feedback diaktifkan dan diatur untuk mengirim otomatis pada halaman Feedback & NPS. | Ya |
 | 17 | Kode masuk akun pelanggan (OTP) | Pelanggan | Saat pelanggan meminta kode masuk ke portal/aplikasi pelanggan. | 🔒 Tidak (terkunci) |
 | 18 | Nomor WhatsApp berhasil dikenali | Pelanggan | Saat pelanggan yang chat lewat WhatsApp berhasil dicocokkan dengan datanya di sistem, sehingga asisten bisa mengecek membership/voucher miliknya. | Ya |
 | 19 | Percakapan diteruskan ke tim (balasan ke pelanggan) | Pelanggan | Saat asisten WhatsApp menyerahkan percakapan ke tim manusia. | Tidak |
 | 20 | Peringatan eskalasi (untuk tim) | Kasir / Tim Cabang | Bersamaan dengan pesan di atas, dikirim ke nomor eskalasi tim yang diatur di pengaturan asisten. | Tidak |
 | 21 | Kode PIN refund | Pemilik | Saat kasir mengajukan refund. | 🔒 Tidak (terkunci) |
-| 22 | Kode PIN pembatalan transaksi (void) | Pemilik | Saat kasir mengajukan pembatalan transaksi. | 🔒 Tidak (terkunci) |
+| 22 | Kode PIN pembatalan transaksi (void) | Pemilik | Saat kasir mengajukan pembatalan transaksi (void). | 🔒 Tidak (terkunci) |
 | 23 | Usulan tindakan AI menunggu persetujuan | Pemilik | Saat asisten AI mengusulkan sebuah tindakan yang butuh persetujuan pemilik. | Ya |
 | 24 | Pesan campaign / promo dari AI | Pelanggan | Saat asisten AI menjalankan campaign ke segmen pelanggan tertentu (fitur ini harus diaktifkan dulu di pengaturan otomatisasi). | Ya |
 | 25 | Penawaran untuk pelanggan lama (retensi) | Pelanggan | Saat asisten AI mendeteksi pelanggan sudah lama tidak datang dan mengirim penawaran (butuh toggle "retention offers" aktif). | Ya |
@@ -58,11 +69,11 @@ Sistem mengirimkan 26 jenis pesan otomatis.
 
 ---
 
-## 3. Rincian per notifikasi
+## 4. Rincian per notifikasi
 
-### 3.1 Membership
+### 4.1 Membership
 
-#### 3.1.1 Membership aktif (selamat datang)
+#### 4.1.1 Membership aktif (selamat datang)
 
 | | |
 |---|---|
@@ -98,7 +109,7 @@ Berlaku sampai 06 September 2026.
 Tinggal sebutkan nomor HP atau plat mobil kakak di kasir untuk pakai benefitnya ya 😊
 ```
 
-#### 3.1.2 Pengingat membership akan habis (H-30 / H-7 / hari-H)
+#### 4.1.2 Pengingat membership akan habis (H-30 / H-7 / hari-H)
 
 | | |
 |---|---|
@@ -106,7 +117,7 @@ Tinggal sebutkan nomor HP atau plat mobil kakak di kasir untuk pakai benefitnya 
 | **Dapat dimatikan** | Ya |
 | **Kode sistem** | `membership_expiry_reminder` |
 
-**Pemicu.** Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. Setiap tahap hanya dikirim satu kali.
+**Pemicu.** Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir tepat dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. Setiap tahap dikirim satu kali untuk setiap periode membership; bila membership diperpanjang, ketiga tahap berlaku kembali untuk periode yang baru. Pelanggan yang tanggal berakhirnya sudah melewati salah satu tahap tidak menerima pengingat tahap tersebut.
 
 **Variabel yang tersedia.**
 
@@ -135,9 +146,9 @@ Berlaku sampai 06 September 2026.
 Mau kami bantu perpanjang sekarang biar benefitnya jalan terus? 😊
 ```
 
-### 3.2 Voucher
+### 4.2 Voucher
 
-#### 3.2.1 Voucher dibeli — kode dikirim
+#### 4.2.1 Voucher dibeli — kode dikirim
 
 | | |
 |---|---|
@@ -180,7 +191,7 @@ Berlaku sampai 31 Desember 2026.
 Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊
 ```
 
-#### 3.2.2 Voucher bonus diberikan
+#### 4.2.2 Voucher bonus diberikan
 
 | | |
 |---|---|
@@ -223,7 +234,7 @@ Berlaku sampai 31 Desember 2026.
 Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊
 ```
 
-#### 3.2.3 Voucher terpakai — sisa saldo
+#### 4.2.3 Voucher terpakai — sisa saldo
 
 | | |
 |---|---|
@@ -266,7 +277,7 @@ Sisa voucher kakak: *8* kode
 Terima kasih ya kak! 🚗✨
 ```
 
-#### 3.2.4 Voucher terpakai — dipakai orang lain
+#### 4.2.4 Voucher terpakai — dipakai orang lain
 
 | | |
 |---|---|
@@ -304,7 +315,7 @@ Sisa voucher: *8* kode.
 Terima kasih ya kak! 🚗✨
 ```
 
-#### 3.2.5 Voucher terpakai — kode habis
+#### 4.2.5 Voucher terpakai — kode habis
 
 | | |
 |---|---|
@@ -342,9 +353,9 @@ Voucher kakak sudah terpakai semua ya 🙏 Kalau mau beli lagi, tinggal bilang k
 Terima kasih ya kak! 🚗✨
 ```
 
-### 3.3 Transaksi & Pembayaran
+### 4.3 Transaksi & Pembayaran
 
-#### 3.3.1 Struk / invoice setelah pembayaran
+#### 4.3.1 Struk / invoice (dikirim kasir dari layar struk)
 
 | | |
 |---|---|
@@ -352,7 +363,7 @@ Terima kasih ya kak! 🚗✨
 | **Dapat dimatikan** | Ya |
 | **Kode sistem** | `payment_receipt` |
 
-**Pemicu.** Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. Berisi tautan struk digital yang bisa dibuka pelanggan.
+**Pemicu.** Dikirim atas permintaan kasir melalui tombol kirim struk pada layar struk, setelah pesanan lunas dan nomor HP pelanggan tercatat. Pengiriman TIDAK otomatis pada setiap transaksi: kasir memutuskan per penjualan, karena setiap pesan WhatsApp dikenakan biaya. Berisi tautan struk digital yang dapat dibuka pelanggan, dan boleh dikirim ulang bila nomor tujuan salah.
 
 **Variabel yang tersedia.**
 
@@ -379,9 +390,9 @@ Pesanan ORD-1042 — Total Rp150.000.
 Lihat invoice: https://app.useairin.id/receipt/abc123
 ```
 
-### 3.4 Antrian
+### 4.4 Antrian
 
-#### 3.4.1 Mobil selesai dicuci
+#### 4.4.1 Mobil selesai dicuci
 
 | | |
 |---|---|
@@ -389,7 +400,7 @@ Lihat invoice: https://app.useairin.id/receipt/abc123
 | **Dapat dimatikan** | Ya |
 | **Kode sistem** | `queue_completion` |
 
-**Pemicu.** Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat.
+**Pemicu.** Saat kasir menandai mobil pada papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. Mobil hanya dapat ditandai selesai setelah pesanannya lunas, sehingga pesan ini selalu dikirim setelah pembayaran.
 
 **Variabel yang tersedia.**
 
@@ -419,9 +430,9 @@ Cabang: Kencana Loka
 Silakan menuju kasir ya kak. Terima kasih!
 ```
 
-### 3.5 Booking
+### 4.5 Booking
 
-#### 3.5.1 Permintaan booking diterima
+#### 4.5.1 Permintaan booking diterima
 
 | | |
 |---|---|
@@ -455,7 +466,7 @@ Menunggu konfirmasi akhir dari tim kami — Anda akan kami kabari.
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-#### 3.5.2 Booking dikonfirmasi
+#### 4.5.2 Booking dikonfirmasi
 
 | | |
 |---|---|
@@ -489,7 +500,7 @@ Sampai jumpa!
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-#### 3.5.3 Booking ditolak
+#### 4.5.3 Booking ditolak
 
 | | |
 |---|---|
@@ -523,7 +534,7 @@ Silakan hubungi kami atau coba pilih waktu lain ya.
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-#### 3.5.4 Booking kedaluwarsa otomatis
+#### 4.5.4 Booking kedaluwarsa otomatis
 
 | | |
 |---|---|
@@ -553,7 +564,7 @@ Halo kak, maaf banget ya 🙏 Booking kakak (Cuci Premium · 10 Agustus 2026 14:
 Kalau masih mau dijadwalkan, chat kami aja ya — nanti kami bantu atur ulang 😊
 ```
 
-#### 3.5.5 Permintaan booking baru (untuk tim)
+#### 4.5.5 Permintaan booking baru (untuk tim)
 
 | | |
 |---|---|
@@ -593,7 +604,7 @@ Balas TERIMA B7K2 untuk konfirmasi atau TOLAK B7K2 untuk menolak.
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-#### 3.5.6 Booking baru dari portal pelanggan (untuk cabang)
+#### 4.5.6 Booking baru dari portal pelanggan (untuk cabang)
 
 | | |
 |---|---|
@@ -640,9 +651,9 @@ Konfirmasi / tolak: https://app.useairin.id/confirm-booking/abc123
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### 3.6 Feedback & Ulasan
+### 4.6 Feedback & Ulasan
 
-#### 3.6.1 Permintaan ulasan / feedback
+#### 4.6.1 Permintaan ulasan / feedback
 
 | | |
 |---|---|
@@ -650,7 +661,7 @@ Konfirmasi / tolak: https://app.useairin.id/confirm-booking/abc123
 | **Dapat dimatikan** | Ya |
 | **Kode sistem** | `feedback_request` |
 
-**Pemicu.** Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit).
+**Pemicu.** Setelah pesanan lunas, apabila fitur Feedback diaktifkan dan diatur untuk mengirim otomatis pada halaman Feedback & NPS. Dikirim langsung atau tertunda sesuai jeda waktu yang diatur di halaman tersebut.
 
 **Variabel yang tersedia.**
 
@@ -673,9 +684,9 @@ Terima kasih sudah mampir! Bagaimana layanan kami?
 https://app.useairin.id/feedback/abc123
 ```
 
-### 3.7 Akun Pelanggan
+### 4.7 Akun Pelanggan
 
-#### 3.7.1 Kode masuk akun pelanggan (OTP)
+#### 4.7.1 Kode masuk akun pelanggan (OTP)
 
 | | |
 |---|---|
@@ -707,7 +718,7 @@ Berlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.
 
 > 🔒 **Teks terkunci.** Pesan ini membawa kode keamanan. Mengubahnya berisiko membuat pelanggan gagal masuk, jadi teksnya dikunci.
 
-#### 3.7.2 Nomor WhatsApp berhasil dikenali
+#### 4.7.2 Nomor WhatsApp berhasil dikenali
 
 | | |
 |---|---|
@@ -735,9 +746,9 @@ Makasih kak {customerName}! 😊 Sekarang kami sudah bisa bantu cek membership, 
 Makasih kak Budi! 😊 Sekarang kami sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa dibantu?
 ```
 
-### 3.8 Keamanan & Persetujuan
+### 4.8 Keamanan & Persetujuan
 
-#### 3.8.1 Percakapan diteruskan ke tim (balasan ke pelanggan)
+#### 4.8.1 Percakapan diteruskan ke tim (balasan ke pelanggan)
 
 | | |
 |---|---|
@@ -763,7 +774,7 @@ Baik kak, ini kami teruskan dulu ke tim biar dibantu lebih lanjut ya 🙏 Mohon 
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-#### 3.8.2 Peringatan eskalasi (untuk tim)
+#### 4.8.2 Peringatan eskalasi (untuk tim)
 
 | | |
 |---|---|
@@ -800,7 +811,7 @@ Silakan balas customer ini langsung ya.
 
 > **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-#### 3.8.3 Kode PIN refund
+#### 4.8.3 Kode PIN refund
 
 | | |
 |---|---|
@@ -808,7 +819,7 @@ Silakan balas customer ini langsung ya.
 | **Dapat dimatikan** | Tidak (terkunci) |
 | **Kode sistem** | `refund_pin` |
 
-**Pemicu.** Saat kasir mengajukan refund. Kode dikirim ke nomor eskalasi tenant agar refund hanya bisa disetujui pemilik.
+**Pemicu.** Saat kasir mengajukan refund. Kode dikirim ke nomor eskalasi yang diatur pada pengaturan asisten, agar refund hanya dapat disetujui pemilik. Apabila nomor eskalasi belum diatur atau pengiriman WhatsApp gagal, kode dikirim melalui surel ke pemilik. Berlaku 10 menit dan hanya kode terakhir yang diminta yang sah.
 
 **Variabel yang tersedia.**
 
@@ -836,7 +847,7 @@ Berlaku 10 menit. Jangan bagikan kode ini kepada siapa pun.
 
 > 🔒 **Teks terkunci.** Pesan ini membawa kode persetujuan refund. Teksnya dikunci demi keamanan.
 
-#### 3.8.4 Kode PIN pembatalan transaksi (void)
+#### 4.8.4 Kode PIN pembatalan transaksi (void)
 
 | | |
 |---|---|
@@ -844,7 +855,7 @@ Berlaku 10 menit. Jangan bagikan kode ini kepada siapa pun.
 | **Dapat dimatikan** | Tidak (terkunci) |
 | **Kode sistem** | `void_pin` |
 
-**Pemicu.** Saat kasir mengajukan pembatalan transaksi. Kode dikirim ke nomor WhatsApp pemilik.
+**Pemicu.** Saat kasir mengajukan pembatalan transaksi (void). Kode dikirim ke nomor WhatsApp pemilik, dan apabila pengiriman WhatsApp gagal, dikirim melalui surel ke pemilik. Berlaku 10 menit.
 
 **Variabel yang tersedia.**
 
@@ -878,7 +889,7 @@ Berlaku 10 menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas
 
 > 🔒 **Teks terkunci.** Pesan ini membawa kode persetujuan pembatalan. Teksnya dikunci demi keamanan.
 
-#### 3.8.5 Usulan tindakan AI menunggu persetujuan
+#### 4.8.5 Usulan tindakan AI menunggu persetujuan
 
 | | |
 |---|---|
@@ -916,9 +927,9 @@ Keyakinan: 78%
 Buka dashboard untuk menyetujui atau menolak.
 ```
 
-### 3.9 Promo & Marketing
+### 4.9 Promo & Marketing
 
-#### 3.9.1 Pesan campaign / promo dari AI
+#### 4.9.1 Pesan campaign / promo dari AI
 
 | | |
 |---|---|
@@ -957,7 +968,7 @@ Berlaku sampai 31 Agustus 2026.
 Kalau mau tanya-tanya dulu, balas aja pesan ini ya kak 😊
 ```
 
-#### 3.9.2 Penawaran untuk pelanggan lama (retensi)
+#### 4.9.2 Penawaran untuk pelanggan lama (retensi)
 
 | | |
 |---|---|
@@ -992,7 +1003,7 @@ Ada penawaran khusus buat kakak: diskon 20% untuk cuci berikutnya
 Mau kami bantu jadwalkan cuci berikutnya?
 ```
 
-#### 3.9.3 Rekomendasi membership dari AI
+#### 4.9.3 Rekomendasi membership dari AI
 
 | | |
 |---|---|
@@ -1029,7 +1040,7 @@ Mau kami jelaskan detailnya kak?
 
 ---
 
-## 4. Pesan yang tidak tercakup dalam dokumen ini
+## 5. Pesan yang tidak tercakup dalam dokumen ini
 
 Tiga jenis pesan berikut tidak diatur melalui halaman **Pengaturan → Notifications** dan karena itu tidak tercantum di atas:
 

@@ -50,8 +50,37 @@ lines.push('');
 lines.push('---');
 lines.push('');
 
+// ── Delivery prerequisites ──────────────────────────────────────────────────
+lines.push('## 1. Prasyarat pengiriman');
+lines.push('');
+lines.push(
+  'Seluruh pesan dalam dokumen ini dikirim melalui **WhatsApp**, menggunakan nomor WhatsApp yang ' +
+    'terhubung pada cabang terkait. Ketentuan berikut berlaku untuk semua pesan:',
+);
+lines.push('');
+lines.push(
+  '1. **Nomor WhatsApp harus terhubung.** Apabila sambungan WhatsApp cabang terputus, pesan tidak ' +
+    'terkirim. Status sambungan dapat diperiksa pada **Pengaturan → WhatsApp**.',
+);
+lines.push(
+  '2. **Nomor penerima harus tercatat.** Pesan kepada pelanggan hanya dikirim bila nomor telepon ' +
+    'pelanggan tersimpan pada data pelanggan atau pada transaksi yang bersangkutan.',
+);
+lines.push(
+  '3. **Notifikasi yang dinonaktifkan tidak dikirim.** Mematikan sebuah notifikasi pada halaman ' +
+    '**Pengaturan → Notifications** menghentikan pengirimannya sampai diaktifkan kembali.',
+);
+lines.push(
+  '4. **Kegagalan pengiriman tidak menghentikan transaksi.** Apabila sebuah pesan gagal terkirim, ' +
+    'kegagalan tersebut dicatat pada log sistem dan proses penjualan, pembayaran, maupun antrian ' +
+    'tetap berjalan normal.',
+);
+lines.push('');
+lines.push('---');
+lines.push('');
+
 // ── How variables work ──────────────────────────────────────────────────────
-lines.push('## 1. Ketentuan penggunaan variabel');
+lines.push('## 2. Ketentuan penggunaan variabel');
 lines.push('');
 lines.push(
   'Kata yang ditulis di dalam kurung kurawal, misalnya `{customerName}`, merupakan **variabel**: ' +
@@ -82,7 +111,7 @@ lines.push('---');
 lines.push('');
 
 // ── Summary table ───────────────────────────────────────────────────────────
-lines.push('## 2. Ringkasan seluruh notifikasi');
+lines.push('## 3. Ringkasan seluruh notifikasi');
 lines.push('');
 lines.push(`Sistem mengirimkan ${NOTIFICATION_CATALOG.length} jenis pesan otomatis.`);
 lines.push('');
@@ -105,15 +134,15 @@ const categories = [...new Set(NOTIFICATION_CATALOG.map((d) => d.category))] as 
 
 lines.push('---');
 lines.push('');
-lines.push('## 3. Rincian per notifikasi');
+lines.push('## 4. Rincian per notifikasi');
 lines.push('');
 
 categories.forEach((cat, ci) => {
-  lines.push(`### 3.${ci + 1} ${CATEGORY_LABELS[cat]}`);
+  lines.push(`### 4.${ci + 1} ${CATEGORY_LABELS[cat]}`);
   lines.push('');
 
   NOTIFICATION_CATALOG.filter((x) => x.category === cat).forEach((d, di) => {
-    lines.push(`#### 3.${ci + 1}.${di + 1} ${d.title}`);
+    lines.push(`#### 4.${ci + 1}.${di + 1} ${d.title}`);
     lines.push('');
     lines.push('| | |');
     lines.push('|---|---|');
@@ -168,7 +197,7 @@ categories.forEach((cat, ci) => {
 // ── What is NOT in this list ────────────────────────────────────────────────
 lines.push('---');
 lines.push('');
-lines.push('## 4. Pesan yang tidak tercakup dalam dokumen ini');
+lines.push('## 5. Pesan yang tidak tercakup dalam dokumen ini');
 lines.push('');
 lines.push(
   'Tiga jenis pesan berikut tidak diatur melalui halaman **Pengaturan → Notifications** dan karena itu ' +

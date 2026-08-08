@@ -138,7 +138,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     category: 'membership',
     audience: 'customer',
     trigger:
-      'Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. Setiap tahap hanya dikirim satu kali.',
+      'Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir tepat dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. Setiap tahap dikirim satu kali untuk setiap periode membership; bila membership diperpanjang, ketiga tahap berlaku kembali untuk periode yang baru. Pelanggan yang tanggal berakhirnya sudah melewati salah satu tahap tidak menerima pengingat tahap tersebut.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
       { name: 'planName', description: 'Nama paket membership', sample: 'Unlimited' },
@@ -276,11 +276,13 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
   // ── Transaksi ─────────────────────────────────────────────────────────────
   D({
     key: 'payment_receipt',
-    title: 'Struk / invoice setelah pembayaran',
+    // Named for how it actually fires: the cashier presses send. Calling it
+    // "setelah pembayaran" implied every paid order messages the customer.
+    title: 'Struk / invoice (dikirim kasir dari layar struk)',
     category: 'transaction',
     audience: 'customer',
     trigger:
-      'Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. Berisi tautan struk digital yang bisa dibuka pelanggan.',
+      'Dikirim atas permintaan kasir melalui tombol kirim struk pada layar struk, setelah pesanan lunas dan nomor HP pelanggan tercatat. Pengiriman TIDAK otomatis pada setiap transaksi: kasir memutuskan per penjualan, karena setiap pesan WhatsApp dikenakan biaya. Berisi tautan struk digital yang dapat dibuka pelanggan, dan boleh dikirim ulang bila nomor tujuan salah.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
       { name: 'orderNumber', description: 'Nomor pesanan', sample: 'ORD-1042' },
@@ -305,7 +307,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     category: 'queue',
     audience: 'customer',
     trigger:
-      'Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat.',
+      'Saat kasir menandai mobil pada papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. Mobil hanya dapat ditandai selesai setelah pesanannya lunas, sehingga pesan ini selalu dikirim setelah pembayaran.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
       { name: 'plate', description: 'Plat nomor kendaraan', sample: 'B 1234 XYZ', optional: true },
@@ -442,7 +444,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     category: 'feedback',
     audience: 'customer',
     trigger:
-      'Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit).',
+      'Setelah pesanan lunas, apabila fitur Feedback diaktifkan dan diatur untuk mengirim otomatis pada halaman Feedback & NPS. Dikirim langsung atau tertunda sesuai jeda waktu yang diatur di halaman tersebut.',
     variables: [
       { name: 'thanksMessage', description: 'Kalimat pembuka dari pengaturan Feedback', sample: 'Terima kasih sudah mampir! Bagaimana layanan kami?' },
       { name: 'feedbackUrl', description: 'Tautan formulir ulasan', sample: 'https://app.useairin.id/feedback/abc123' },
@@ -515,7 +517,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     category: 'security',
     audience: 'owner',
     trigger:
-      'Saat kasir mengajukan refund. Kode dikirim ke nomor eskalasi tenant agar refund hanya bisa disetujui pemilik.',
+      'Saat kasir mengajukan refund. Kode dikirim ke nomor eskalasi yang diatur pada pengaturan asisten, agar refund hanya dapat disetujui pemilik. Apabila nomor eskalasi belum diatur atau pengiriman WhatsApp gagal, kode dikirim melalui surel ke pemilik. Berlaku 10 menit dan hanya kode terakhir yang diminta yang sah.',
     variables: [
       { name: 'orderNumber', description: 'Nomor pesanan', sample: 'ORD-1042' },
       { name: 'pin', description: 'Kode PIN sekali pakai', sample: '482915' },
@@ -534,7 +536,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     title: 'Kode PIN pembatalan transaksi (void)',
     category: 'security',
     audience: 'owner',
-    trigger: 'Saat kasir mengajukan pembatalan transaksi. Kode dikirim ke nomor WhatsApp pemilik.',
+    trigger:
+      'Saat kasir mengajukan pembatalan transaksi (void). Kode dikirim ke nomor WhatsApp pemilik, dan apabila pengiriman WhatsApp gagal, dikirim melalui surel ke pemilik. Berlaku 10 menit.',
     variables: [
       { name: 'context', description: 'Rincian transaksi yang akan dibatalkan', sample: 'ORD-1042 · Rp150.000 · Kasir Andi' },
       { name: 'pin', description: 'Kode PIN sekali pakai', sample: '482915' },
