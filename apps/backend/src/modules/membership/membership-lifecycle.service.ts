@@ -150,6 +150,21 @@ export class MembershipLifecycleService implements OnModuleInit {
    * Idempotent: a `reminder` membership_event is recorded per milestone, so the
    * same reminder is never sent twice even across the 6-hourly runs / restarts.
    * Delivery is best-effort via NotificationService (drained in-process).
+   *
+   * Idempotency is scoped to the membership's CURRENT TERM, via the `endDate`
+   * recorded in the event payload. Matching on the milestone alone was wrong in
+   * two ways:
+   *
+   *   - A renewal EXTENDS the same membership row (membership-renewal.service
+   *     updates end_date in place), so a member reminded at H-30 once could never
+   *     be reminded at H-30 again — in any future term, forever.
+   *   - Reminders recorded while delivery was silently broken (the notification
+   *     tenantId defect) went on suppressing the message that never arrived.
+   *
+   * Legacy rows carry no `endDate`, so the comparison yields NULL and they stop
+   * suppressing anything — which is what releases the never-delivered ones. This
+   * cannot produce a back-dated message: the milestone filter above still
+   * restricts sending to memberships sitting on a milestone TODAY.
    */
   async sendExpiryReminders(): Promise<number> {
     if (!this.notifications) return 0;
@@ -171,6 +186,7 @@ export class MembershipLifecycleService implements OnModuleInit {
              WHERE e.membership_id = m.id
                AND e.event_type = 'reminder'
                AND e.payload->>'milestone' = (m.end_date - CURRENT_DATE)::text
+               AND e.payload->>'endDate' = m.end_date::text
           )`,
     );
 
@@ -189,7 +205,11 @@ export class MembershipLifecycleService implements OnModuleInit {
         // fire-and-forget; a failed send is logged by NotificationService).
         // actor is a uuid column — system-generated events carry null (like the
         // grace/revoked transitions above); the system origin is noted in payload.
-        await this.recordEvent(this.pool, r.tenant_id, r.id, 'reminder', { milestone: r.days_left, source: 'system' }, null);
+        // endDate stamps the term this reminder belongs to — see the note above.
+        await this.recordEvent(
+          this.pool, r.tenant_id, r.id, 'reminder',
+          { milestone: r.days_left, endDate: r.end_date, source: 'system' }, null,
+        );
         sent++;
       } catch (e) {
         this.logger.warn(`expiry reminder for membership ${r.id} failed: ${e instanceof Error ? e.message : e}`);
