@@ -7,6 +7,27 @@ import { Download, Clock, FileText, ArrowLeft, Lock } from 'lucide-react';
 import { getUser } from '@/lib/auth';
 import { getDoc, visibleDocs, canViewTech, AirinMark } from '../lib';
 
+/**
+ * Per-document running header/footer, as @page margin boxes.
+ *
+ * `content` takes a CSS string, so every value has to be quoted and escaped — an
+ * apostrophe or backslash in a document title would otherwise break the rule and
+ * silently drop the whole header.
+ */
+function cssString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function marginBoxCss(title: string, audience: string): string {
+  return `@media print { @page {
+    @top-left      { content: "airin docs"; font-size: 8.5pt; font-weight: 600; color: #16213c; }
+    @top-right     { content: ${cssString(title)}; font-size: 8.5pt; font-weight: 600; color: #16213c; }
+    @bottom-left   { content: "© Airin · app.useairin.id/docs"; font-size: 8pt; color: #6b7280; }
+    @bottom-center { content: ${cssString(audience)}; font-size: 8pt; color: #6b7280; }
+    @bottom-right  { content: counter(page) " / " counter(pages); font-size: 8pt; color: #6b7280; }
+  } }`;
+}
+
 export default function DocReaderPage() {
   const params = useParams<{ slug: string }>();
   const slug = Array.isArray(params.slug) ? params.slug[0] : params.slug;
@@ -67,14 +88,21 @@ export default function DocReaderPage() {
           Source: app.useairin.id/docs/{doc.slug}{printedOn ? ` · Printed ${printedOn}` : ''}
         </div>
       </div>
-      <div className="print-header" aria-hidden>
-        <span className="ph-left"><span className="airin-mark">A</span> airin docs</span>
-        <span>{doc.title}</span>
-      </div>
-      <div className="print-footer" aria-hidden>
-        <span>© Airin · app.useairin.id/docs</span>
-        <span>{doc.audience}</span>
-      </div>
+      {/*
+        The running header/footer are @page MARGIN BOXES, not positioned elements.
+        They used to be fixed-position divs, and in paged media Chrome lays a fixed
+        element out against the page AREA — inside the margins — so `top: 0` put the
+        branding on the first line of body text and every printed page came out with
+        the title struck through. Nudging them into the margin with negative offsets
+        does not work either: Chrome relocates a fixed box that overflows the page
+        area, and they reappeared on the wrong edge.
+
+        A margin box cannot overlap the text, because it lives in the margin by
+        definition. The cost is that it takes generated content only — hence the
+        title and audience are injected here as CSS strings rather than markup, and
+        the Airin logo chip survives on the cover page alone.
+      */}
+      <style>{marginBoxCss(doc.title, doc.audience)}</style>
 
       {/* ── On-screen document ───────────────────────────────────────────── */}
       <div className="doc-layout">
