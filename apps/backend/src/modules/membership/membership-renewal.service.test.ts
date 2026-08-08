@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MembershipRenewalService } from './membership-renewal.service';
 import { Membership } from './interfaces';
 import { MembershipPlanService } from './membership-plan.service';
@@ -50,6 +50,13 @@ describe('MembershipRenewalService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The period start now depends on TODAY (AIRIN-156: a renewal taken after the
+    // membership lapsed starts fresh instead of back-dating itself to the old
+    // expiry), so these fixtures — all dated 2024 — need "today" pinned inside
+    // their term for the early-renewal cases to mean what they say. The lapsed
+    // case has its own test below.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2024-03-01T00:00:00'));
     mockPool = { query: vi.fn() };
     mockPlanService = { getPlan: vi.fn() };
     mockLifecycle = { recordEvent: vi.fn().mockResolvedValue(undefined) };
@@ -59,6 +66,10 @@ describe('MembershipRenewalService', () => {
       mockLifecycle as any,
       {} as any, // PosCheckoutService — unused by renewMembership
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('renewMembership - same plan renewal (extension)', () => {
@@ -146,11 +157,72 @@ describe('MembershipRenewalService', () => {
       );
 
       expect(result.type).toBe('extension');
-      // Verify start_date is NOT part of the UPDATE (retained)
+      // start_date IS in the UPDATE now, but behind a flag that is false for an
+      // early renewal — the running term keeps the start it already had
+      // (AIRIN-156 only moves it when the membership had already lapsed).
       const queryStr = mockPool.query.mock.calls[0][0] as string;
-      expect(queryStr).not.toContain('start_date');
+      expect(queryStr).toContain('start_date = CASE');
+      const lapsedFlag = mockPool.query.mock.calls[0][1][2] as boolean;
+      expect(lapsedFlag).toBe(false);
       // The returned membership should still have the original start_date
       expect(result.membership.startDate).toEqual(originalStartDate);
+    });
+
+    it('starts a LAPSED membership fresh from today, not from its old expiry (AIRIN-156)', async () => {
+      mockPlanService.getPlan.mockResolvedValueOnce(mockPlan);
+
+      // Expired three weeks ago and renewed during grace. Extending from the old
+      // expiry would silently charge for a full term and deliver three weeks less.
+      const lapsed = makeActiveMembership({
+        status: 'grace',
+        startDate: new Date('2023-11-08'),
+        endDate: new Date('2024-02-08'),
+      });
+
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: lapsed.id, tenant_id: 'tenant-001', customer_id: customerId, plan_id: planId,
+          status: 'active', start_date: new Date('2024-03-01'), end_date: new Date('2024-06-01'),
+          uses_count: 5, max_uses: 30, daily_limit: 1, order_id: 'order-original',
+          created_at: new Date('2023-11-08'), updated_at: new Date(),
+        }],
+      });
+
+      const result = await service.renewMembership(customerId, planId, orderId, [lapsed]);
+
+      expect(result.type).toBe('extension');
+      const [endDate, , lapsedFlag, periodStart] = mockPool.query.mock.calls[0][1] as [Date, string, boolean, Date];
+      // Today (pinned to 2024-03-01) + 3 months, and the term is re-based to today.
+      expect(lapsedFlag).toBe(true);
+      expect([periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()]).toEqual([2024, 2, 1]);
+      expect(endDate.getFullYear()).toBe(2024);
+      expect(endDate.getMonth()).toBe(5); // June
+      expect(endDate.getDate()).toBe(1);
+    });
+
+    it('honours an explicit later start, bounded to 7 days past expiry (AIRIN-157)', async () => {
+      mockPlanService.getPlan.mockResolvedValueOnce(mockPlan);
+      const m = makeActiveMembership({ endDate: new Date('2024-04-15') });
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: m.id, tenant_id: 'tenant-001', customer_id: customerId, plan_id: planId,
+          status: 'active', start_date: new Date('2024-04-20'), end_date: new Date('2024-07-20'),
+          uses_count: 0, max_uses: 30, daily_limit: 1, order_id: 'order-original',
+          created_at: new Date('2024-01-15'), updated_at: new Date(),
+        }],
+      });
+
+      await service.renewMembership(customerId, planId, orderId, [m], '2024-04-20');
+
+      const endDate = mockPool.query.mock.calls[0][1][0] as Date;
+      expect(endDate.getMonth()).toBe(6); // July — three months from April 20
+      expect(endDate.getDate()).toBe(20);
+
+      // …and the bounds are enforced where the fee order is created.
+      expect(() => service.validateNextStart('2024-04-10', '2024-04-15')).toThrow();
+      expect(() => service.validateNextStart('2024-04-30', '2024-04-15')).toThrow();
+      expect(service.validateNextStart('2024-04-22', '2024-04-15')).toBe('2024-04-22');
+      expect(service.validateNextStart(undefined, '2024-04-15')).toBeNull();
     });
 
     it('should NOT create a new membership record (uses UPDATE)', async () => {
@@ -374,8 +446,10 @@ describe('MembershipRenewalService', () => {
       const oneMonthPlan = { ...mockPlan, durationMonths: 1 };
       mockPlanService.getPlan.mockResolvedValueOnce(oneMonthPlan);
 
+      // A FUTURE Jan 31 — the extension has to run from the expiry, which only
+      // happens while the term is still live (AIRIN-156).
       const existingMembership = makeActiveMembership({
-        endDate: new Date('2024-01-31'),
+        endDate: new Date('2025-01-31'),
       });
 
       mockPool.query.mockResolvedValueOnce({
@@ -399,8 +473,9 @@ describe('MembershipRenewalService', () => {
       await service.renewMembership(customerId, planId, orderId, [existingMembership]);
 
       const passedEndDate = mockPool.query.mock.calls[0][1][0] as Date;
-      // Jan 31 + 1 month: Feb only has 29 days in 2024 (leap year)
-      expect(passedEndDate.getFullYear()).toBe(2024);
+      // Jan 31 + 1 month: February is short, so the date clamps into February
+      // rather than spilling into March.
+      expect(passedEndDate.getFullYear()).toBe(2025);
       expect(passedEndDate.getMonth()).toBe(1); // February
       expect(passedEndDate.getDate()).toBeLessThanOrEqual(29);
     });

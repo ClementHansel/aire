@@ -15,6 +15,11 @@ interface QueueEntry {
   customerName: string | null; customerPhone: string | null;
   businessUnit: string | null; note: string | null; status: string; position: number; createdAt: string;
   orderId: string | null; paymentStatus: 'paid' | 'unpaid';
+  /** The one stage the board shows — see the backend's QueueEntry.stage. */
+  stage?: 'waiting_payment' | 'paid' | 'done' | 'cancelled';
+  startedAt?: string | null;
+  /** Arrival → payment, in seconds; still recorded though no longer tapped in. */
+  serviceSeconds?: number | null;
 }
 
 export default function QueuePage() {
@@ -82,9 +87,52 @@ export default function QueuePage() {
     } catch (err) { setError(err instanceof Error ? err.message : t('pos.queue.failedAdd', 'Failed to add')); }
   };
 
-  const setStatus = async (id: string, status: string) => {
-    try { await api.patch(`/vehicle-queue/${id}/status`, { status }); if (operatingOutletId) await load(operatingOutletId); }
+  const setStatus = async (id: string, status: string, reason?: string) => {
+    try { await api.patch(`/vehicle-queue/${id}/status`, { status, reason }); if (operatingOutletId) await load(operatingOutletId); }
     catch (err) { setError(err instanceof Error ? err.message : t('pos.queue.failed', 'Failed')); }
+  };
+
+  /**
+   * Taking a car OFF the board unserved is the one queue action that needs an
+   * account of itself — the row is kept, so tomorrow's shift can see why the
+   * car left without paying (AIRIN-171).
+   */
+  const cancelEntry = (q: QueueEntry) => {
+    const reason = window.prompt(
+      t('pos.queue.cancelReasonPrompt', 'Why is this car leaving the queue unserved?'),
+      '',
+    );
+    // A dismissed prompt means "changed my mind", not "cancel with no reason".
+    if (reason === null) return;
+    if (!reason.trim()) { setError(t('pos.queue.cancelReasonRequired', 'Enter a reason to remove a car from the queue.')); return; }
+    void setStatus(q.id, 'cancelled', reason.trim());
+  };
+
+  /** Arrival → now (or → payment, once paid), for the on-board timer. */
+  const elapsedLabel = (q: QueueEntry) => {
+    const startIso = q.startedAt ?? q.createdAt;
+    const secs = q.serviceSeconds ?? Math.max(0, Math.round((Date.now() - new Date(startIso).getTime()) / 1000));
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}j ${mins % 60}m`;
+  };
+
+  /** The board's three words — see AIRIN-170. */
+  const stageOf = (q: QueueEntry): 'waiting_payment' | 'paid' | 'done' | 'cancelled' =>
+    q.stage ?? (q.status === 'done' ? 'done' : q.status === 'cancelled' ? 'cancelled' : q.paymentStatus === 'paid' ? 'paid' : 'waiting_payment');
+
+  const STAGE_LABEL: Record<string, string> = {
+    waiting_payment: t('pos.queue.stageWaitingPayment', 'Waiting for payment'),
+    paid: t('pos.queue.stagePaid', 'Paid'),
+    done: t('pos.queue.stageDone', 'Done'),
+    cancelled: t('pos.queue.stageCancelled', 'Cancelled'),
+  };
+
+  const STAGE_STYLE: Record<string, string> = {
+    waiting_payment: 'bg-rose-50 text-rose-700',
+    paid: 'bg-green-50 text-green-700',
+    done: 'bg-gray-100 text-gray-600',
+    cancelled: 'bg-gray-100 text-gray-500',
   };
 
   // "Proses Bayar" — carry the queued car into New Order so its details prefill
@@ -145,7 +193,8 @@ export default function QueuePage() {
             <datalist id="q-veh-types">{(vehicleBrands.find((b) => b.name === brand)?.types ?? []).map((vt) => <option key={vt.id} value={vt.name} />)}</datalist>
             <button type="submit" className="btn-primary w-full">+ {t('pos.queue.addToQueue', 'Add to queue')}</button>
           </form>
-          <p className="text-xs text-text-muted mt-2">{t('pos.queue.recordNote', 'Record cars as they arrive. Complete the product & payment later from New Order.')}</p>
+          <p className="text-xs text-text-muted mt-2">{t('pos.queue.recordNote', 'Record cars as they arrive — service starts the moment a car is added. Complete the product & payment later from New Order.')}</p>
+          <p className="text-xs text-text-muted mt-1">{t('pos.queue.dailyResetNote', 'The queue clears itself at midnight; anything still open is kept on record with a reason.')}</p>
         </div>
 
         {/* Queue list */}
@@ -162,12 +211,16 @@ export default function QueuePage() {
                     <p className="font-semibold text-text-primary">{q.plate ?? '—'} <span className={`badge ml-1 ${q.businessUnit === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{q.businessUnit ?? 'AIRE'}</span></p>
                     <p className="text-xs text-text-muted">{[q.brand, q.model].filter(Boolean).join(' ') || t('pos.queue.vehicleDetailsNotSet', 'Vehicle details not set')} · {new Date(q.createdAt).toLocaleTimeString()}</p>
                   </div>
+                  {/* ONE badge, not two. 'waiting' vs 'serving' was an internal
+                      distinction the cashier had to maintain by hand and never
+                      acted on; what matters is whether the car still owes money
+                      (AIRIN-170). The timer beside it is the arrival→payment
+                      duration, which is still recorded. */}
                   <div className="flex flex-col items-end gap-1">
-                    <span className={`badge ${q.status === 'serving' ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-600'} capitalize`}>{q.status}</span>
-                    <span className={`badge ${q.paymentStatus === 'paid' ? 'bg-green-50 text-green-700' : 'bg-rose-50 text-rose-700'}`}>{q.paymentStatus === 'paid' ? t('pos.queue.paid', 'Paid') : t('pos.queue.unpaid', 'Unpaid')}</span>
+                    <span className={`badge ${STAGE_STYLE[stageOf(q)]}`} data-testid={`queue-stage-${q.id}`}>{STAGE_LABEL[stageOf(q)]}</span>
+                    <span className="text-[11px] text-text-muted">{elapsedLabel(q)}</span>
                   </div>
                   <div className="flex gap-1">
-                    {q.status === 'waiting' && <button className="btn-ghost text-xs text-amber-600" onClick={() => setStatus(q.id, 'serving')}>{t('pos.queue.start', 'Start')}</button>}
                     {q.paymentStatus === 'unpaid'
                       ? (q.orderId
                           ? <button className="btn-ghost text-xs text-primary-600 font-semibold" onClick={() => setCollectFor(q.orderId!)}>{t('pos.queue.prosesBayar', 'Proses Bayar')}</button>
@@ -179,7 +232,11 @@ export default function QueuePage() {
                       title={q.paymentStatus !== 'paid' ? t('pos.queue.collectBeforeDone', 'Collect payment before marking done') : t('pos.queue.markDone', 'Mark done')}
                       onClick={() => setStatus(q.id, 'done')}
                     >{t('pos.queue.done', 'Done')}</button>
-                    <button className="btn-ghost text-xs text-red-600" onClick={() => setStatus(q.id, 'cancelled')}>✕</button>
+                    <button
+                      className="btn-ghost text-xs text-red-600"
+                      title={t('pos.queue.removeUnserved', 'Remove from queue (asks for a reason)')}
+                      onClick={() => cancelEntry(q)}
+                    >✕</button>
                   </div>
                 </div>
               ))}

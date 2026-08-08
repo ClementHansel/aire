@@ -11,6 +11,8 @@ interface OutletSettings {
   free_void_window_minutes?: number;
   /** Owner cap on the cashier's per-line manual discount, 0-1 fraction (e.g. 0.3 = 30%). */
   max_manual_discount_pct?: number;
+  /** WhatsApp number that approves voids at THIS branch (AIRIN-165). */
+  void_approver_phone?: string;
   [key: string]: unknown;
 }
 
@@ -29,8 +31,8 @@ interface Branch {
 
 interface LegalEntity { id: string; name: string; isActive: boolean }
 
-interface FormState { name: string; code: string; legalEntityId: string; address: string; phone: string; mapsUrl: string; maxManualDiscountPct: string }
-const EMPTY: FormState = { name: '', code: '', legalEntityId: '', address: '', phone: '', mapsUrl: '', maxManualDiscountPct: '30' };
+interface FormState { name: string; code: string; legalEntityId: string; address: string; phone: string; mapsUrl: string; maxManualDiscountPct: string; voidApproverPhone: string }
+const EMPTY: FormState = { name: '', code: '', legalEntityId: '', address: '', phone: '', mapsUrl: '', maxManualDiscountPct: '30', voidApproverPhone: '' };
 
 function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Branch | null; legalEntities: LegalEntity[]; onClose: () => void; onSaved: () => void }) {
   const { t } = useI18n();
@@ -40,6 +42,7 @@ function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Br
           name: initial.name, code: initial.code ?? '', legalEntityId: initial.legalEntityId ?? '',
           address: initial.address ?? '', phone: initial.phone ?? '', mapsUrl: initial.mapsUrl ?? '',
           maxManualDiscountPct: String(Math.round((initial.settings?.max_manual_discount_pct ?? 0.3) * 100)),
+          voidApproverPhone: initial.settings?.void_approver_phone ?? '',
         }
       : EMPTY,
   );
@@ -64,6 +67,9 @@ function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Br
       settings: {
         ...(initial?.settings ?? {}),
         max_manual_discount_pct: clampedPct / 100,
+        // Blank clears it, which correctly falls the branch back to the
+        // tenant-wide escalation line.
+        void_approver_phone: form.voidApproverPhone.trim(),
       },
     };
     try {
@@ -131,6 +137,16 @@ function BranchModal({ initial, legalEntities, onClose, onSaved }: { initial: Br
               onChange={(e) => setForm({ ...form, maxManualDiscountPct: e.target.value })}
             />
             <p className="text-xs text-text-muted mt-1">{t('dash.branches.maxManualDiscountHint', 'Caps the per-line discount a cashier can apply manually at checkout. Enforced by the server; default is 30%.')}</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.branches.voidApprover', 'Void approver — WhatsApp')}</label>
+            <input
+              className="input-field"
+              value={form.voidApproverPhone}
+              onChange={(e) => setForm({ ...form, voidApproverPhone: e.target.value })}
+              placeholder="628xxxxxxxxxx"
+            />
+            <p className="text-xs text-text-muted mt-1">{t('dash.branches.voidApproverHint', 'The supervisor who approves voids (refunds) at this branch. The approval PIN goes to this number together with the order, the reason, who asked for it and when. Leave blank to fall back to the tenant escalation number.')}</p>
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" className="btn-secondary" onClick={onClose}>{t('dash.branches.cancel', 'Cancel')}</button>

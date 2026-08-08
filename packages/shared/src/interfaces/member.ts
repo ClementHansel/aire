@@ -64,6 +64,11 @@ export interface MemberLookupResponse {
     /** 12-char membership number (present once the member has been issued one). */
     membershipNumber?: string;
     plates: PlateInfo[];
+    /** When this customer was last served (most recent non-cancelled order), ISO
+     *  timestamp. Absent for a customer with no order history. Members and
+     *  walk-ins alike carry it — the POS greets both with "last visit …"
+     *  (AIRIN-155). */
+    lastVisitAt?: string;
   };
   memberships: MembershipDetail[];
   vouchers?: VoucherInfo[];

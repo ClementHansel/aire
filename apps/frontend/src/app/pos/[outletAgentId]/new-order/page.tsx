@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { io, type Socket } from 'socket.io-client';
 import { api } from '@/lib/api';
-import { isAuthenticated } from '@/lib/auth';
+import { isAuthenticated, getUser } from '@/lib/auth';
 import { PosNav } from '@/components/pos/PosNav';
 import { PaymentModal, type PaymentMethodDTO, type PosPaymentMethod, type PaymentSummaryLine } from '@/components/pos/PaymentModal';
 import { PlateInput } from '@/components/shared/PlateInput';
@@ -152,7 +152,9 @@ export default function NewOrderPage() {
   const [businessUnit, setBusinessUnit] = useState<'AIRE' | 'LEAD'>('AIRE');
   const [salesperson, setSalesperson] = useState('');
   const [salespersonEmployeeId, setSalespersonEmployeeId] = useState('');
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  // Staff working at THIS branch, with the link back to their login so the field
+  // can default to whoever is signed in (AIRIN-152).
+  const [employees, setEmployees] = useState<{ id: string; name: string; userId?: string | null }[]>([]);
   const [barcodeCfg, setBarcodeCfg] = useState<{ enabled: boolean; scanAddsToCart: boolean }>({ enabled: false, scanAddsToCart: false });
   const [scanCode, setScanCode] = useState('');
   const [scanMsg, setScanMsg] = useState('');
@@ -200,6 +202,9 @@ export default function NewOrderPage() {
   const [pendingRenewalId, setPendingRenewalId] = useState<string | null>(null);
   const [showMemberPanel, setShowMemberPanel] = useState(false);
   const [renewPlanId, setRenewPlanId] = useState('');
+  // Optional start of the NEXT period on a renewal (AIRIN-157). Empty = start the
+  // moment the current one ends (or today, if it already has).
+  const [renewStartDate, setRenewStartDate] = useState('');
   const [memberLookup, setMemberLookup] = useState<MemberLookupResponse | null>(null);
   const [findInput, setFindInput] = useState('');
   const [finding, setFinding] = useState(false);
@@ -208,6 +213,11 @@ export default function NewOrderPage() {
   // something else cleared it (Samuel 2026-08-03). It clears itself when the
   // cashier edits the query or after a few seconds.
   const [findMsg, setFindMsg] = useState('');
+  // Standing note about the customer the plate resolved to: when they were last
+  // here, and whether they are a member (AIRIN-151/154/155). Unlike `findMsg`
+  // this does NOT time out — it is context for the whole order, not a search
+  // result.
+  const [customerNote, setCustomerNote] = useState<{ tone: 'info' | 'warn'; text: string } | null>(null);
   const [vehicleBrands, setVehicleBrands] = useState<{ id: string; name: string; types: { id: string; name: string }[] }[]>([]);
   const [payMethods, setPayMethods] = useState<PaymentMethodDTO[]>([]);
   const [selectedPmId, setSelectedPmId] = useState<string | null>(null);
@@ -247,7 +257,10 @@ export default function NewOrderPage() {
   const [paying, setPaying] = useState(false);
   const [qr, setQr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
-  const [receipt, setReceipt] = useState<{ orderNumber: string; total: number; change: number; membershipQuotaWarning?: string } | null>(null);
+  const [receipt, setReceipt] = useState<{ orderId: string; orderNumber: string; total: number; change: number; membershipQuotaWarning?: string } | null>(null);
+  // The receipt WhatsApp is now the cashier's call, one sale at a time — every
+  // message is billed, so nothing is sent unless this is tapped (AIRIN-168).
+  const [waSend, setWaSend] = useState<{ state: 'idle' | 'sending' | 'sent' | 'error'; message?: string }>({ state: 'idle' });
   // The branch this POS is operating. POS follows the HR schedule: it's today's
   // scheduled branch when set, otherwise the operator's home outlet.
   const [operatingOutletId, setOperatingOutletId] = useState<string | null>(null);
@@ -273,7 +286,26 @@ export default function NewOrderPage() {
     api.get<PaymentMethodDTO[]>(pmUrl).then(setPayMethods).catch(() => { /* default buttons */ });
     // Employees for the salesperson picker (drives commission crediting). Falls
     // back to the free-text field if the cashier lacks HR read access.
-    api.get<{ id: string; name: string }[]>('/hr/employees').then(setEmployees).catch(() => setEmployees([]));
+    //
+    // Scoped to the operating branch: the picker exists so a sale can be credited
+    // to whoever actually served the car, and only this branch's staff can have
+    // (AIRIN-152). The signed-in cashier is preselected below, so an untouched
+    // field still books the order to them.
+    api.get<{ id: string; name: string; userId?: string | null }[]>(
+      outletId ? `/hr/employees?outletId=${outletId}` : '/hr/employees',
+    )
+      .then((rows) => {
+        setEmployees(rows);
+        const me = getUser();
+        const self = me ? rows.find((r) => r.userId && r.userId === me.id) : undefined;
+        // Only ever fills an EMPTY field — never overwrites a cashier who has
+        // already credited the sale to a colleague.
+        if (self) {
+          setSalespersonEmployeeId((prev) => prev || self.id);
+          setSalesperson((prev) => prev || self.name);
+        }
+      })
+      .catch(() => setEmployees([]));
     // Barcode scan-to-cart config (feature is off by default; only show the scanner when enabled).
     api.get<{ enabled: boolean; scanAddsToCart: boolean }>('/barcode/config')
       .then((c) => setBarcodeCfg({ enabled: !!c.enabled, scanAddsToCart: c.scanAddsToCart !== false }))
@@ -379,6 +411,60 @@ export default function NewOrderPage() {
     return null;
   };
 
+  /** Whole days since an ISO date, or null when there is no date to measure. */
+  const daysSince = (iso?: string | null): number | null => {
+    if (!iso) return null;
+    const then = new Date(iso);
+    if (Number.isNaN(then.getTime())) return null;
+    then.setHours(0, 0, 0, 0);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return Math.round((today.getTime() - then.getTime()) / 86400000);
+  };
+
+  const fmtDate = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString('id-ID') : '');
+
+  /**
+   * The one-line briefing the cashier gets the moment a customer is identified:
+   * when they were last here (member or walk-in alike, AIRIN-155), whether the
+   * membership has lapsed and for how long (AIRIN-154), and — for a returning
+   * walk-in whose car we already knew — that they are NOT a member, so nobody
+   * expects member pricing to appear (AIRIN-151).
+   */
+  const buildCustomerNote = (m: MemberLookupResponse): { tone: 'info' | 'warn'; text: string } | null => {
+    const parts: string[] = [];
+    const best = m.memberships?.find((x) => x.status === 'active') ?? m.memberships?.[0];
+    const lastVisitDays = daysSince(m.customer.lastVisitAt);
+    let tone: 'info' | 'warn' = 'info';
+
+    if (lastVisitDays != null) {
+      parts.push(
+        lastVisitDays <= 0
+          ? t('pos.new.lastVisitToday', 'Last visit: today')
+          : `${t('pos.new.lastVisitPrefix', 'Last visit:')} ${fmtDate(m.customer.lastVisitAt)} (${lastVisitDays} ${t('pos.new.daysAgo', 'day(s) ago')})`,
+      );
+    }
+
+    if (!best) {
+      // Known car, no membership ever — say so plainly rather than letting the
+      // silent autofill imply the customer is a member.
+      parts.push(t('pos.new.notAMember', 'Not a member — regular pricing applies.'));
+    } else if (best.status !== 'active') {
+      const lapsedDays = daysSince(best.endDate);
+      // Past the 7-day mark the membership is not something to nudge a renewal
+      // on any more — it is a fact the cashier has to state before charging
+      // full price.
+      if (lapsedDays != null && lapsedDays > 7) {
+        tone = 'warn';
+        parts.push(
+          `${t('pos.new.memberInactivePrefix', 'Membership inactive since')} ${fmtDate(best.endDate)} (${lapsedDays} ${t('pos.new.daysAgo', 'day(s) ago')}) — ${t('pos.new.memberInactiveSuffix', 'full price applies.')}`,
+        );
+      }
+    }
+
+    if (parts.length === 0) return null;
+    return { tone, text: parts.join(' · ') };
+  };
+
   // Select one of the member's registered plates as the order's vehicle,
   // autofilling brand/model from that plate's own record (AIRIN-116/118).
   const choosePlate = (p: PlateInfo) => {
@@ -407,6 +493,7 @@ export default function NewOrderPage() {
     setMemberAlert(null);
     setMemberExpiry(null);
     setPendingRenewalId(null);
+    setCustomerNote(null);
   };
 
   // Apply a resolved member to the order panel. Member pricing attaches ONLY for a
@@ -448,6 +535,7 @@ export default function NewOrderPage() {
       setMemberAlert(alert);
       setMemberExpiry(alert ? alert.body : null);
     }
+    setCustomerNote(buildCustomerNote(m));
   };
 
   // Tapping an LPR chip is the cashier's explicit confirmation — the only
@@ -548,7 +636,10 @@ export default function NewOrderPage() {
     setPlacing(true); setError('');
     try {
       const r = await api.post<{ order: { id: string; orderNumber: string; total: number } }>(
-        `/memberships/${membershipId}/renew`, { planId },
+        // The next period can be made to start later than the expiry — a customer
+        // going away for a week should not pay for days they cannot use. The
+        // server bounds it to 7 days past the expiry (AIRIN-157).
+        `/memberships/${membershipId}/renew`, { planId, nextStartDate: renewStartDate || undefined },
       );
       setPendingRenewalId(membershipId);
       setOrder({
@@ -562,6 +653,42 @@ export default function NewOrderPage() {
       setPlacing(false);
     }
   };
+
+  /**
+   * Plate typed straight into the vehicle field → look the car up on its own.
+   *
+   * The cashier's real first move is the plate, not the "Find member" box, and a
+   * car the shop has served before already carries its owner, phone, brand and
+   * type — for MEMBERS and walk-ins alike, since the lookup now falls back to
+   * order history (AIRIN-151). Retyping all of that on every visit was pure
+   * re-entry of data the system already had.
+   *
+   * Deliberately conservative: it only fires for a plate long enough to be real,
+   * only once per plate, and never while a customer is already attached (the
+   * cashier may be correcting the car of a member they just found).
+   */
+  const autoLookedUpPlate = useRef<string | null>(null);
+  useEffect(() => {
+    const norm = normalizePlate(plate).normalized;
+    if (norm.length < 5) { autoLookedUpPlate.current = null; return; }
+    if (memberLookup || autoLookedUpPlate.current === norm) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      autoLookedUpPlate.current = norm;
+      api.get<MemberLookupResponse>(`/members/lookup?plate=${encodeURIComponent(norm)}`)
+        .then((m) => {
+          // The cashier may have moved on to another car while this was in
+          // flight; applying a stale result would attach the wrong customer.
+          if (cancelled || !m?.customer) return;
+          if (normalizePlate(plate).normalized !== norm) return;
+          applyMember(m, norm);
+          setPlate(norm);
+        })
+        .catch(() => { /* unknown car — a plain walk-in, nothing to say */ });
+    }, 600);
+    return () => { cancelled = true; clearTimeout(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- applyMember is recreated every render; the plate is the trigger
+  }, [plate, memberLookup]);
 
   // The search note is transient — it disappears on its own so the cashier is
   // never left staring at a stale "not found" from two customers ago.
@@ -791,10 +918,48 @@ export default function NewOrderPage() {
     setVoucherMsg(null);
     setVoucherWarning(null);
     try {
-      const res = await api.post<{ status: string; message: string; discountAmount?: number; reason?: string; type?: string; benefitServiceIds?: string[] }>(
+      type ValidateRes = { status: string; message: string; discountAmount?: number; reason?: string; type?: string; benefitServiceIds?: string[]; usedAt?: string };
+      const validate = (serviceIds: string[], sub: number) => api.post<ValidateRes>(
         '/vouchers/validate',
-        { code, serviceIdsInCart: cart.map((l) => l.serviceId), orderSubtotal: subtotal },
+        { code, serviceIdsInCart: serviceIds, orderSubtotal: sub },
       );
+      let res = await validate(cart.map((l) => l.serviceId), subtotal);
+
+      /**
+       * A code entered before any service was picked is "not applicable" only
+       * because the covered service is missing from the cart. The cashier's
+       * intent is unambiguous — the customer is here to redeem THIS voucher — so
+       * put the service it covers in the cart and validate again, instead of
+       * making them find the right menu tile first (AIRIN-161).
+       */
+      let autoAdded: ServiceDTO | undefined;
+      if (res.status === 'valid_not_applicable' && res.benefitServiceIds?.length) {
+        const missing = res.benefitServiceIds.find((id) => !cart.some((l) => l.serviceId === id));
+        const svc = missing ? services.find((s) => s.id === missing) : undefined;
+        if (svc) {
+          addToCart(svc);
+          // Follow the item's own business unit so the catalog shows the tab the
+          // added service actually lives on.
+          if (svc.businessUnit === 'AIRE' || svc.businessUnit === 'LEAD') setBusinessUnit(svc.businessUnit);
+          setCatalogTab('services');
+          const nextIds = [...cart.map((l) => l.serviceId), svc.id];
+          res = await validate(nextIds, subtotal + svc.price);
+          if (res.status === 'valid_applicable') autoAdded = svc;
+        }
+      }
+
+      if (res.status === 'fully_redeemed') {
+        // A spent code is the one rejection a cashier has to explain to the
+        // customer, so it says when it was used rather than only that it failed.
+        setVoucherMsg({
+          tone: 'error',
+          text: res.usedAt
+            ? `${res.message} (${fmtDate(res.usedAt)})`
+            : res.message,
+        });
+        return;
+      }
+
       if (res.status === 'valid_applicable') {
         setVoucherCodes((prev) => [...prev, code]);
         // Remember what this code does, so several applied codes can be reflected
@@ -812,7 +977,14 @@ export default function NewOrderPage() {
         const shown = res.discountAmount
           ? `−${fmt(res.discountAmount)}`
           : t('pos.new.appliedFreeService', 'free service');
-        setVoucherMsg({ tone: 'ok', text: `${t('pos.new.applied', 'Applied:')} ${shown}` });
+        setVoucherMsg({
+          tone: 'ok',
+          text: autoAdded
+            // Say what was put in the cart on the cashier's behalf — a service
+            // appearing by itself is otherwise indistinguishable from a misclick.
+            ? `${t('pos.new.applied', 'Applied:')} ${shown} · ${t('pos.new.voucherAddedService', 'added')} ${autoAdded.name}`
+            : `${t('pos.new.applied', 'Applied:')} ${shown}`,
+        });
       } else if (res.status === 'valid_not_applicable') {
         // Real code, but not applicable to this cart (wrong outlet/brand/service or
         // min-order not met) — orange badge with the server's reason, not an error.
@@ -1003,11 +1175,33 @@ export default function NewOrderPage() {
       });
       const change = payMethod === 'cash' ? Math.max(0, Number(amountReceived) - order.total) : 0;
       await runPostPaymentSteps(order);
-      finishSale(order.orderNumber, order.total, change, order.membershipQuotaWarning);
+      finishSale(order.id, order.orderNumber, order.total, change, order.membershipQuotaWarning);
     } catch (e) {
       setError(e instanceof Error ? e.message : t('pos.new.paymentFailed', 'Payment failed'));
     } finally {
       setPaying(false);
+    }
+  };
+
+  /**
+   * Backing out of the payment screen discards the order it was collecting on.
+   *
+   * The order was only ever created to be paid for; leaving it behind as
+   * 'ordered' put a sale that never happened into the orders list and the unpaid
+   * column of every report (AIRIN-164). The cart is deliberately LEFT ALONE — the
+   * cashier is usually correcting something and about to place it again.
+   */
+  const cancelPayment = async () => {
+    const abandoned = order;
+    setOrder(null); setQr(null); setPolling(false); setReferenceNumber('');
+    setPendingRenewalId(null);
+    if (!abandoned) return;
+    try {
+      await api.post(`/orders/${abandoned.id}/discard`, {});
+    } catch (e) {
+      // The order is real and still unpaid — say so rather than pretending it
+      // vanished, or it will be settled twice from the Orders tab.
+      setError(e instanceof Error ? e.message : t('pos.new.failedDiscardOrder', 'Could not discard the unpaid order — cancel it from the Orders tab.'));
     }
   };
 
@@ -1056,8 +1250,9 @@ export default function NewOrderPage() {
     }
   };
 
-  const finishSale = (orderNumber: string, total: number, change: number, membershipQuotaWarning?: string) => {
-    setReceipt({ orderNumber, total, change, membershipQuotaWarning });
+  const finishSale = (orderId: string, orderNumber: string, total: number, change: number, membershipQuotaWarning?: string) => {
+    setReceipt({ orderId, orderNumber, total, change, membershipQuotaWarning });
+    setWaSend({ state: 'idle' });
     setCart([]);
     setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
     setVoucherCodes([]); setVoucherInfo({}); setVoucherInput(''); setVoucherMsg(null); setVoucherWarning(null);
@@ -1065,7 +1260,7 @@ export default function NewOrderPage() {
     setOrder(null); setQr(null); setPolling(false); setPaying(false); setSelectedPmId(null);
     setQueueEntryId(null); setMembershipId(null); setSelectedPlate(null); setMemberBanner(null);
     setMemberExpiry(null); setMemberAlert(null); setFindInput('');
-    setMemberDetail(null); setMemberPlateOptions([]);
+    setMemberDetail(null); setMemberPlateOptions([]); setCustomerNote(null);
     setReferenceNumber(''); setPayMethod('cash');
     setSellPlan(null); setSellVoucherTpl(null); setPendingRenewalId(null);
     setCatalogTab('services');
@@ -1080,7 +1275,7 @@ export default function NewOrderPage() {
         if (o.status === 'paid') {
           clearInterval(id);
           await runPostPaymentSteps(order);
-          finishSale(o.orderNumber, o.total, 0, order.membershipQuotaWarning);
+          finishSale(order.id, o.orderNumber, o.total, 0, order.membershipQuotaWarning);
         }
       } catch { /* keep polling */ }
     }, 3000);
@@ -1257,6 +1452,33 @@ export default function NewOrderPage() {
                     {plans.map((p) => <option key={p.id} value={p.id}>{p.name} — {fmt(p.price)}</option>)}
                   </select>
                 </div>
+                {/* Start of the next period. Bounded to the week after the
+                    current expiry, which is exactly the adjustment the counter
+                    needs — anything further is a new membership, not a renewal
+                    (AIRIN-157). */}
+                {(() => {
+                  const first = memberLookup.memberships[0];
+                  if (!first) return null;
+                  const end = new Date(first.endDate);
+                  const min = end.toISOString().slice(0, 10);
+                  const max = new Date(end.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+                  return (
+                    <div className="min-w-[9rem]">
+                      <label htmlFor="renew-start" className="block text-[11px] text-text-muted mb-1">
+                        {t('pos.sellpack.renewStart', 'Next period starts')}
+                      </label>
+                      <input
+                        id="renew-start"
+                        type="date"
+                        className="input-field py-1 text-xs"
+                        min={min}
+                        max={max}
+                        value={renewStartDate}
+                        onChange={(e) => setRenewStartDate(e.target.value)}
+                      />
+                    </div>
+                  );
+                })()}
                 <button
                   className="btn-secondary text-xs"
                   onClick={() => { const first = memberLookup.memberships[0]; if (first) startRenewal(first.id); }}
@@ -1299,8 +1521,28 @@ export default function NewOrderPage() {
                 </div>
               </div>
             )}
-            <input className="input-field" placeholder={t('pos.new.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
-            <input className="input-field" placeholder={t('pos.new.phone', 'Phone (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
+            {/* Everything above belongs to FINDING a customer; everything below
+                is the order's own vehicle + customer. The rule separates the two
+                so the cashier stops mistaking the search box for the name field
+                (AIRIN-162). */}
+            <div className="border-t border-border pt-3 mt-1" data-testid="pos-customer-divider" />
+            {/* What we already know about this customer, kept on screen for the
+                whole order (AIRIN-151/154/155). */}
+            {customerNote && (
+              <div
+                data-testid="customer-note"
+                className={`rounded-lg border p-2 text-xs ${
+                  customerNote.tone === 'warn'
+                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                    : 'bg-sky-50 border-sky-200 text-sky-800'
+                }`}
+              >
+                {customerNote.tone === 'warn' ? '⚠️ ' : 'ℹ️ '}{customerNote.text}
+              </div>
+            )}
+            {/* Field order follows how a car is actually received: the plate is
+                read off the bumper first, then the car, and only then the person
+                (AIRIN-169). */}
             <PlateInput
               placeholder={t('pos.new.licensePlate', 'License plate *')}
               value={plate}
@@ -1312,6 +1554,8 @@ export default function NewOrderPage() {
               <input className="input-field" placeholder={t('pos.new.vehicleType', 'Vehicle type')} list="veh-types" value={model} onChange={(e) => setModel(e.target.value)} />
               <datalist id="veh-types">{(vehicleBrands.find((b) => b.name === brand)?.types ?? []).map((t) => <option key={t.id} value={t.name} />)}</datalist>
             </div>
+            <input className="input-field" placeholder={t('pos.new.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
+            <input className="input-field" placeholder={t('pos.new.phone', 'Phone (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
             {employees.length > 0 ? (
               <select
                 className="input-field"
@@ -1399,11 +1643,14 @@ export default function NewOrderPage() {
                       aria-label={`${t('pos.new.discount', 'Discount')} — ${l.name}`}
                       data-testid={`line-discount-${l.serviceId}`}
                     />
-                    <span className="text-[11px] text-text-muted">
-                      {isPctRule(l)
-                        ? `${t('pos.new.discountMaxHint', 'max')} ${linePctCap(l)}%${l.manualDiscount ? ` = ${fmt(l.manualDiscount)}` : ''}`
-                        : `${t('pos.new.discountMaxHint', 'max')} ${fmt(lineDiscountCap(l))}`}
-                    </span>
+                    {/* The ceiling itself is no longer printed: it is the shop's
+                        internal limit, and reading "max 30%" off the till invites
+                        the customer to ask for exactly that (Samuel, AIRIN-159).
+                        The field still enforces it via min/max, and a percentage
+                        rule still shows what the cashier's own entry comes to. */}
+                    {isPctRule(l) && l.manualDiscount ? (
+                      <span className="text-[11px] text-text-muted">= {fmt(l.manualDiscount)}</span>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -1542,16 +1789,27 @@ export default function NewOrderPage() {
             {/* Subtotal is already NET of the member benefit and manual discount
                 (AIRIN-150), so the member saving is itemised above it rather than
                 subtracted again below. */}
+            {/* Gross first, then every saving already folded into Subtotal, then
+                Subtotal itself. The manual discount used to be printed BELOW a
+                subtotal that already excluded it, so the column read
+                "90.000 / −10.000 / total 90.000" and the discount looked as if it
+                had never been deducted (AIRIN-160). */}
+            {(memberPricing.total > 0 || totalManualDiscount > 0) && (
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-text-muted">{t('pos.new.itemsGross', 'Items')}</span>
+                <span className="text-text-muted">{fmt(subtotal + memberPricing.total + totalManualDiscount)}</span>
+              </div>
+            )}
             {memberPricing.total > 0 && (
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-text-secondary">{t('pos.new.memberBenefitLine', 'Member benefit')}</span>
                 <span className="font-medium text-green-600">−{fmt(memberPricing.total)}</span>
               </div>
             )}
-            <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium">{fmt(subtotal)}</span></div>
             {totalManualDiscount > 0 && (
-              <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.manualDiscount', 'Manual discount')}</span><span className="font-medium text-green-600">−{fmt(totalManualDiscount)}</span></div>
+              <div className="flex justify-between text-sm mb-1" data-testid="manual-discount-line"><span className="text-text-secondary">{t('pos.new.manualDiscount', 'Manual discount')}</span><span className="font-medium text-green-600">−{fmt(totalManualDiscount)}</span></div>
             )}
+            <div className="flex justify-between text-sm mb-1"><span className="text-text-secondary">{t('pos.new.subtotal', 'Subtotal')}</span><span className="font-medium" data-testid="cart-subtotal">{fmt(subtotal)}</span></div>
             {voucherDiscount > 0 && (
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-text-secondary">
@@ -1607,7 +1865,7 @@ export default function NewOrderPage() {
           polling={polling}
           paying={paying}
           onConfirm={confirmPayment}
-          onCancel={() => { setOrder(null); setQr(null); setPolling(false); setReferenceNumber(''); }}
+          onCancel={() => { void cancelPayment(); }}
         />
       )}
 
@@ -1662,7 +1920,35 @@ export default function NewOrderPage() {
                 ⚠️ {receipt.membershipQuotaWarning}
               </div>
             )}
-            <button className="btn-primary w-full mt-5" onClick={() => setReceipt(null)}>{t('pos.new.newOrder', 'New Order')}</button>
+            {/* Sending the receipt is a decision, not a reflex: each message is
+                billed, and only the cashier knows whether the customer wants one
+                (AIRIN-168). Re-sendable, for a mistyped number. */}
+            <button
+              className="btn-secondary w-full mt-4"
+              data-testid="send-receipt-wa"
+              disabled={waSend.state === 'sending'}
+              onClick={async () => {
+                setWaSend({ state: 'sending' });
+                try {
+                  const r = await api.post<{ sent: boolean; reason?: string }>(`/orders/${receipt.orderId}/send-receipt-wa`, {});
+                  setWaSend(r.sent
+                    ? { state: 'sent' }
+                    : { state: 'error', message: r.reason ?? t('pos.new.waNotSent', 'Not sent') });
+                } catch (e) {
+                  setWaSend({ state: 'error', message: e instanceof Error ? e.message : t('pos.new.waNotSent', 'Not sent') });
+                }
+              }}
+            >
+              {waSend.state === 'sending'
+                ? t('pos.new.waSending', 'Sending…')
+                : waSend.state === 'sent'
+                  ? `✓ ${t('pos.new.waSendAgain', 'Sent — send again')}`
+                  : `💬 ${t('pos.new.waSendReceipt', 'Send receipt to WhatsApp')}`}
+            </button>
+            {waSend.state === 'error' && (
+              <p className="mt-1 text-xs text-red-600" role="alert">{waSend.message}</p>
+            )}
+            <button className="btn-primary w-full mt-3" onClick={() => setReceipt(null)}>{t('pos.new.newOrder', 'New Order')}</button>
           </div>
         </div>
       )}
@@ -1693,7 +1979,7 @@ export default function NewOrderPage() {
       {showMemberPanel && memberLookup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowMemberPanel(false)}>
           <div className="w-full max-w-lg max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <MemberManagementPanel member={memberLookup} onChanged={() => findMember()} />
+            <MemberManagementPanel member={memberLookup} onChanged={() => findMember()} vehicleBrands={vehicleBrands} />
             <button className="btn-secondary w-full mt-3" onClick={() => setShowMemberPanel(false)}>{t('pos.sellpack.close', 'Close')}</button>
           </div>
         </div>

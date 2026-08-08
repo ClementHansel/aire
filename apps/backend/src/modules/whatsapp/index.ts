@@ -25,10 +25,13 @@ import { AuditModule } from '../audit';
     WhatsappService, CustomerContextService, CustomerAgentService, PendingBookingService, AgentRuntimeService,
     VoucherNotifyService, VoucherRedeemNotifyService, PaymentNotifyService, DatabasePoolProvider,
   ],
-  exports: [WhatsappService, CustomerContextService, CustomerAgentService, PendingBookingService],
+  // PaymentNotifyService is exported now that the receipt message is sent on the
+  // cashier's command rather than by an event subscription (AIRIN-168).
+  exports: [WhatsappService, CustomerContextService, CustomerAgentService, PendingBookingService, PaymentNotifyService],
 })
 export class WhatsappModule {}
 
 export { WhatsappService } from './whatsapp.service';
+export { PaymentNotifyService } from './payment-notify.service';
 export { CustomerContextService } from './customer-context.service';
 export { CustomerAgentService } from './customer-agent.service';

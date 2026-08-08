@@ -103,6 +103,44 @@ describe('MemberManagementPanel', () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
+  describe('brand picker (AIRIN-153)', () => {
+    const BRANDS = [
+      { id: 'b1', name: 'Toyota', types: [{ id: 't1', name: 'Avanza' }] },
+      { id: 'b2', name: 'Honda', types: [{ id: 't2', name: 'Brio' }] },
+    ];
+
+    it('offers the brand as a choice, not free text, when a catalog is given', () => {
+      render(<MemberManagementPanel member={makeMember()} onChanged={vi.fn()} vehicleBrands={BRANDS} />);
+      fireEvent.click(screen.getByText('Edit plates'));
+
+      const brand = screen.getByLabelText('Brand') as HTMLSelectElement;
+      expect(brand.tagName).toBe('SELECT');
+      expect(brand.value).toBe('Toyota');
+      expect(screen.getByRole('option', { name: 'Honda' })).toBeInTheDocument();
+    });
+
+    it('refuses to save a plate with no brand chosen', async () => {
+      render(<MemberManagementPanel member={makeMember()} onChanged={vi.fn()} vehicleBrands={BRANDS} />);
+      fireEvent.click(screen.getByText('Edit plates'));
+
+      fireEvent.change(screen.getByLabelText('Brand'), { target: { value: '' } });
+      fireEvent.click(screen.getByText('Save plates'));
+
+      expect(await screen.findByText('Pick a brand for every plate.')).toBeInTheDocument();
+      expect(mockApi.put).not.toHaveBeenCalled();
+    });
+
+    it('clears the type when the brand changes, so the two can never disagree', () => {
+      render(<MemberManagementPanel member={makeMember()} onChanged={vi.fn()} vehicleBrands={BRANDS} />);
+      fireEvent.click(screen.getByText('Edit plates'));
+
+      const model = screen.getByPlaceholderText('Model') as HTMLInputElement;
+      expect(model.value).toBe('Avanza');
+      fireEvent.change(screen.getByLabelText('Brand'), { target: { value: 'Honda' } });
+      expect((screen.getByPlaceholderText('Model') as HTMLInputElement).value).toBe('');
+    });
+  });
+
   it('cancels a membership via PATCH after confirm', async () => {
     mockApi.patch.mockResolvedValue({ ok: true });
     const onChanged = vi.fn();

@@ -79,7 +79,7 @@ describe('KioskService', () => {
       expect(result.estimatedWaitMinutes).toBe(30); // 2 * 15 min
     });
 
-    it('should map serving -> in_progress (no wait)', async () => {
+    it('should map serving -> in_progress, still showing its place on the board', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{
           id: 'order-id-2',
@@ -97,8 +97,11 @@ describe('KioskService', () => {
       const result = await service.getQueueStatus('ORD-002');
 
       expect(result.status).toBe('in_progress');
-      expect(result.position).toBe(0); // not waiting, so position = 0
-      expect(result.estimatedWaitMinutes).toBe(0);
+      // Since AIRIN-170 every car is 'serving' from arrival, so 'serving' can no
+      // longer mean "no longer queued" — the customer is first in line (0 ahead),
+      // which is a real position, not a blank.
+      expect(result.position).toBe(1);
+      expect(result.estimatedWaitMinutes).toBe(0); // nobody ahead
     });
 
     it('should map done -> completed', async () => {

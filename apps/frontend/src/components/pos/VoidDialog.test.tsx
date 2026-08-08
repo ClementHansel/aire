@@ -291,12 +291,24 @@ describe('VoidDialog', () => {
       expect(screen.getByTestId('void-request-pin-btn')).toBeDefined();
     });
 
-    it('calls onRequestPin when the button is clicked', () => {
+    it('calls onRequestPin with the typed reason', () => {
+      // The approver is asked to authorise a specific refund, so the reason
+      // travels with the request (AIRIN-165).
+      const onRequestPin = vi.fn();
+      render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={onRequestPin} />);
+
+      fireEvent.change(screen.getByTestId('void-reason-input'), { target: { value: 'Salah input harga' } });
+      fireEvent.click(screen.getByTestId('void-request-pin-btn'));
+      expect(onRequestPin).toHaveBeenCalledWith('Salah input harga');
+    });
+
+    it('will not request a PIN before a reason is given', () => {
       const onRequestPin = vi.fn();
       render(<VoidDialog {...defaultProps} requiresPin={true} onRequestPin={onRequestPin} />);
 
       fireEvent.click(screen.getByTestId('void-request-pin-btn'));
-      expect(onRequestPin).toHaveBeenCalledTimes(1);
+      expect(onRequestPin).not.toHaveBeenCalled();
+      expect(screen.getByTestId('void-error')).toBeDefined();
     });
 
     it('shows a sending label and disables the button while sending', () => {

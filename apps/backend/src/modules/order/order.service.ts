@@ -821,6 +821,29 @@ export class OrderService {
            WHERE id = $2 AND tenant_id = $3`,
           [order.id, request.queueEntryId, user.tenant_id],
         );
+      } else if (plateNormalized) {
+        // No "order from queue" was used, but the car may well be ON the board:
+        // the cashier typed the plate straight in and forgot to pull the queue
+        // entry. Matching on the plate links them anyway, so the board flips to
+        // paid instead of stranding a car that has already paid in the unpaid
+        // column (AIRIN-166).
+        //
+        // Narrow on purpose: same branch, still open, and not already tied to
+        // another order — so this can only ever adopt the entry the cashier
+        // meant to pick. The oldest open match wins (FIFO, like the board).
+        await client.query(
+          `UPDATE vehicle_queue SET order_id = $1, updated_at = NOW()
+            WHERE id = (
+              SELECT id FROM vehicle_queue
+               WHERE tenant_id = $2 AND outlet_id = $3
+                 AND plate = $4
+                 AND order_id IS NULL
+                 AND status IN ('waiting','serving')
+               ORDER BY position ASC, created_at ASC
+               LIMIT 1
+            )`,
+          [order.id, user.tenant_id, operatingOutletId, plateNormalized],
+        );
       }
 
       // Cashier activity audit: every rung-up order lands in the central audit log
@@ -1553,9 +1576,17 @@ export class OrderService {
   async requestVoidPin(
     orderId: string,
     user: JWTPayload,
+    input: { reason?: string } = {},
   ): Promise<{ sent: boolean; expiresInMinutes: number }> {
-    const cur = await this.pool.query<{ id: string; outlet_id: string | null; order_number: string }>(
-      `SELECT id, outlet_id, order_number FROM orders WHERE id = $1 AND tenant_id = $2`,
+    const cur = await this.pool.query<{
+      id: string; outlet_id: string | null; order_number: string;
+      total: string; outlet_name: string | null;
+      outlet_settings: { void_approver_phone?: string } | null;
+    }>(
+      `SELECT o.id, o.outlet_id, o.order_number, o.total,
+              ot.name AS outlet_name, ot.settings AS outlet_settings
+         FROM orders o LEFT JOIN outlets ot ON ot.id = o.outlet_id
+        WHERE o.id = $1 AND o.tenant_id = $2`,
       [orderId, user.tenant_id],
     );
     const order = cur.rows[0];
@@ -1574,7 +1605,29 @@ export class OrderService {
       `SELECT escalation_number FROM agent_configs WHERE tenant_id = $1`,
       [user.tenant_id],
     );
-    const ownerPhone = waRes.rows[0]?.escalation_number ?? null;
+    // The BRANCH's own approver wins over the tenant-wide escalation line: the
+    // person who can say whether this void is legitimate is the supervisor who
+    // was standing there, not the owner three branches away (AIRIN-165).
+    const branchApprover = (order.outlet_settings?.void_approver_phone ?? '').trim() || null;
+    const ownerPhone = branchApprover ?? waRes.rows[0]?.escalation_number ?? null;
+
+    // Who is asking, and for what. A bare PIN told the approver nothing — they
+    // were authorising a refund they could not see.
+    const requesterRes = await this.pool.query<{ name: string }>(
+      `SELECT name FROM users WHERE id = $1 AND tenant_id = $2`,
+      [user.sub, user.tenant_id],
+    );
+    const requesterName = requesterRes.rows[0]?.name ?? 'Kasir';
+    const branchName = order.outlet_name ?? '-';
+    const requestedAt = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+    const reasonText = (input.reason ?? '').trim() || '(tidak diisi)';
+    const context = [
+      `Order: ${order.order_number} (Rp ${Number(order.total).toLocaleString('id-ID')})`,
+      `Cabang: ${branchName}`,
+      `Diminta oleh: ${requesterName}`,
+      `Waktu: ${requestedAt}`,
+      `Alasan: ${reasonText}`,
+    ].join('\n');
 
     const pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const pinHash = bcrypt.hashSync(pin, 10);
@@ -1598,7 +1651,7 @@ export class OrderService {
     // free-text integration (the same path booking approvals use) — works today
     // without an approved Business-API template. Mirrors the refund PIN flow.
     if (ownerPhone && this.whatsapp) {
-      const text = `Kode PIN void untuk order ${order.order_number}: ${pin}\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Jangan bagikan kode ini.`;
+      const text = `Permintaan VOID (refund) perlu persetujuan Anda.\n\n${context}\n\nKode PIN: ${pin}\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas.`;
       const ok = await this.whatsapp.sendText(user.tenant_id, ownerPhone, text).catch(() => false);
       if (ok) delivered = true;
       else this.logger.warn(`Void PIN WhatsApp (WAHA) failed for order ${orderId}`);
@@ -1607,8 +1660,8 @@ export class OrderService {
     if (ownerEmail && this.notification) {
       const em = await this.notification.sendEmail({
         to: ownerEmail,
-        subject: `Kode PIN Void — Order ${order.order_number}`,
-        body: `Kode PIN void untuk order ${order.order_number}: ${pin}\n\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Jangan bagikan kode ini kepada siapa pun.`,
+        subject: `Persetujuan Void — Order ${order.order_number}`,
+        body: `Permintaan VOID (refund) perlu persetujuan Anda.\n\n${context}\n\nKode PIN: ${pin}\n\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas.`,
       });
       if (em.success) delivered = true;
       else this.logger.warn(`Void PIN email failed for order ${orderId}: ${em.error}`);
@@ -1758,6 +1811,82 @@ export class OrderService {
       showPaidWarning,
       paidWarningMessage: showPaidWarning ? VOID_PAID_WARNING_MESSAGE : undefined,
     };
+  }
+
+  /**
+   * Drop an order the cashier abandoned at the payment screen.
+   *
+   * "Place Order" then "Cancel" left a live `ordered` row behind — a sale that
+   * never happened, sitting in the orders list and in the unpaid column of every
+   * report until somebody voided it by hand (AIRIN-164). Backing it out is the
+   * honest outcome: no money moved, so there is nothing to reverse in the
+   * accounts, but the vouchers, promos and stock the order consumed at creation
+   * time DO have to go back — which is why this reuses the same
+   * reverseOrderSideEffects the void path uses rather than a bare status update.
+   *
+   * No PIN, no reason, no free-void window: those exist to police reversals of
+   * money that changed hands. This one is deliberately narrow instead —
+   * UNPAID only, and only the operator who created it — so it can never become a
+   * quiet way around the void rules.
+   */
+  async abandonUnpaidOrder(orderId: string, user: JWTPayload): Promise<{ id: string; status: string }> {
+    const cur = await this.pool.query<{ id: string; status: string; order_number: string; operator_id: string; total: string }>(
+      `SELECT id, status, order_number, operator_id, total FROM orders WHERE id = $1 AND tenant_id = $2`,
+      [orderId, user.tenant_id],
+    );
+    const row = cur.rows[0];
+    if (!row) throw new BadRequestException('Order not found');
+    if (row.status === OrderStatus.Cancelled) return { id: orderId, status: OrderStatus.Cancelled };
+    if (row.status !== OrderStatus.Ordered) {
+      // Anything that has been paid is a VOID, with everything that entails.
+      throw new BadRequestException('Only an unpaid order can be discarded — void the order instead.');
+    }
+    if (row.operator_id !== user.sub) {
+      throw new BadRequestException('Only the cashier who created this order can discard it.');
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.reverseOrderSideEffects(client, orderId, row.order_number, user, {
+        label: 'Discard',
+        emitStockAdjusted: false,
+      });
+      await client.query(
+        `UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [orderId, user.tenant_id],
+      );
+      // The car goes back to unpaid on the board — it is waiting again, not served.
+      await client.query(
+        `UPDATE vehicle_queue SET order_id = NULL, updated_at = NOW()
+          WHERE order_id = $1 AND tenant_id = $2`,
+        [orderId, user.tenant_id],
+      );
+      await client.query(
+        `INSERT INTO audit_logs (tenant_id, user_id, operation, entity_type, entity_id, before_value, after_value)
+         VALUES ($1, $2, 'order.discard', 'order', $3, $4, $5)`,
+        [
+          user.tenant_id, user.sub, orderId,
+          JSON.stringify({ status: row.status, total: row.total }),
+          JSON.stringify({ status: 'cancelled', reason: 'Payment cancelled at POS' }),
+        ],
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    void this.eventBus?.emit({
+      type: DomainEventType.OrderVoided,
+      tenantId: user.tenant_id,
+      actor: user.sub,
+      payload: { orderId, wasPaid: false },
+    });
+
+    return { id: orderId, status: OrderStatus.Cancelled };
   }
 
   /**

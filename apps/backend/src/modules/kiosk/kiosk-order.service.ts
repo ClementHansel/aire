@@ -106,10 +106,12 @@ export class KioskOrderService {
        WHERE outlet_id = $1 AND status IN ('waiting','serving')`,
       [ctx.outletId],
     );
+    // Same rule as the cashier's own board: the car is here, so service has
+    // started and the clock runs from now (AIRIN-170).
     await this.pool.query(
       `INSERT INTO vehicle_queue
-        (tenant_id, outlet_id, plate, brand, model, customer_name, customer_phone, business_unit, position, order_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        (tenant_id, outlet_id, plate, brand, model, customer_name, customer_phone, business_unit, position, order_id, status, started_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'serving',NOW())`,
       [
         ctx.tenantId, ctx.outletId, plate, dto.customer.brand ?? null, dto.customer.model ?? null,
         dto.customer.name, dto.customer.phone, dto.businessUnit ?? 'AIRE',

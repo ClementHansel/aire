@@ -200,26 +200,32 @@ export class KioskService {
       };
     }
 
-    // Entries ahead in the same outlet (vehicle_queue has no priority — FIFO by position).
+    // Entries ahead in the same outlet (vehicle_queue has no priority — FIFO by
+    // position). Both counts are "still on the board", not literally 'waiting':
+    // since AIRIN-170 a car is 'serving' from the moment it arrives, so counting
+    // only 'waiting' would report an empty queue to every kiosk customer.
     const aheadResult = await this.pool.query(
       `SELECT COUNT(*) as count FROM vehicle_queue
-       WHERE status = 'waiting' AND outlet_id = $1 AND position < $2`,
+       WHERE status IN ('waiting','serving') AND outlet_id = $1 AND position < $2`,
       [row.outlet_id, row.position],
     );
 
     const entriesAhead = parseInt(aheadResult.rows[0].count, 10);
 
-    // Count total waiting
+    // Count cars still on the board
     const totalResult = await this.pool.query(
       `SELECT COUNT(*) as count FROM vehicle_queue
-       WHERE status = 'waiting' AND outlet_id = $1`,
+       WHERE status IN ('waiting','serving') AND outlet_id = $1`,
       [row.outlet_id],
     );
 
     const totalWaiting = parseInt(totalResult.rows[0].count, 10);
 
-    // Estimate wait time based on position ahead
-    const estimatedWaitMinutes = queueStatus === 'waiting'
+    // Estimate wait time based on position ahead. Anything not yet completed
+    // still has cars in front of it — keying this on 'waiting' alone stopped
+    // meaning anything once arrival began service immediately (AIRIN-170).
+    const stillQueued = queueStatus !== 'completed';
+    const estimatedWaitMinutes = stillQueued
       ? entriesAhead * AVG_SERVICE_TIME_MINUTES
       : 0;
 
@@ -227,7 +233,7 @@ export class KioskService {
       orderNumber: row.order_number,
       orderId: row.id,
       customerName: row.customer_name,
-      position: queueStatus === 'waiting' ? entriesAhead + 1 : 0,
+      position: stillQueued ? entriesAhead + 1 : 0,
       totalWaiting,
       estimatedWaitMinutes,
       status: queueStatus,

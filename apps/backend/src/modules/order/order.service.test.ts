@@ -956,15 +956,26 @@ describe('OrderService — one-time emailed void PIN (requestVoidPin / voidOrder
   };
 
   describe('requestVoidPin', () => {
-    function setup(opts: { ownerEmail?: string | null } = {}) {
+    function setup(opts: { ownerEmail?: string | null; approverPhone?: string | null } = {}) {
       const sentEmails: { to: string; subject: string; body: string }[] = [];
       const poolSql: string[] = [];
       const pool = {
         query: vi.fn().mockImplementation((sql: string) => {
           const s = String(sql);
           poolSql.push(s);
-          if (s.includes('FROM orders WHERE id')) {
-            return Promise.resolve({ rows: [{ id: 'order-1', outlet_id: 'outlet-1', order_number: 'ORD-1' }] });
+          // The lookup now joins the outlet, to read the BRANCH's own void
+          // approver and name them in the approval message (AIRIN-165).
+          if (s.includes('FROM orders o LEFT JOIN outlets')) {
+            return Promise.resolve({
+              rows: [{
+                id: 'order-1', outlet_id: 'outlet-1', order_number: 'ORD-1', total: '100000.00',
+                outlet_name: 'Outlet Bintaro',
+                outlet_settings: opts.approverPhone === null ? {} : { void_approver_phone: opts.approverPhone ?? '628111' },
+              }],
+            });
+          }
+          if (s.includes('SELECT name FROM users')) {
+            return Promise.resolve({ rows: [{ name: 'Kasir Satu' }] });
           }
           if (s.includes("role = 'tenant_owner'")) {
             return Promise.resolve({ rows: opts.ownerEmail === null ? [] : [{ email: opts.ownerEmail ?? 'owner@tenant.com' }] });
@@ -981,7 +992,7 @@ describe('OrderService — one-time emailed void PIN (requestVoidPin / voidOrder
     it('generates a PIN, invalidates prior unconsumed PINs, and emails the owner', async () => {
       const { svc, poolSql, sentEmails } = setup();
 
-      const res = await svc.requestVoidPin('order-1', cashier);
+      const res = await svc.requestVoidPin('order-1', cashier, { reason: 'Salah input harga' });
 
       expect(res).toEqual({ sent: true, expiresInMinutes: 10 });
       expect(poolSql.some((s) => s.includes('UPDATE void_pin_requests SET consumed_at = NOW()') && s.includes('consumed_at IS NULL'))).toBe(true);
@@ -990,6 +1001,11 @@ describe('OrderService — one-time emailed void PIN (requestVoidPin / voidOrder
       expect(sentEmails[0]!.to).toBe('owner@tenant.com');
       expect(sentEmails[0]!.body).toMatch(/\d{6}/); // the plaintext PIN appears in the email body
       expect(sentEmails[0]!.subject).toContain('ORD-1');
+      // The approver is told WHAT they are approving — order, branch, who asked
+      // and why — not just a bare code (AIRIN-165).
+      expect(sentEmails[0]!.body).toContain('Outlet Bintaro');
+      expect(sentEmails[0]!.body).toContain('Kasir Satu');
+      expect(sentEmails[0]!.body).toContain('Salah input harga');
     });
 
     it('throws when the order is not found (tenant-scoped lookup)', async () => {
@@ -999,10 +1015,21 @@ describe('OrderService — one-time emailed void PIN (requestVoidPin / voidOrder
       await expect(svc.requestVoidPin('missing-order', cashier)).rejects.toThrow(BadRequestException);
     });
 
-    it('throws when no active tenant owner with an email exists', async () => {
-      const { svc } = setup({ ownerEmail: null });
+    it('throws when there is nobody to send the approval to at all', async () => {
+      // No owner email, no branch approver, and no tenant escalation number:
+      // there is no one who could authorise the void, so failing loudly beats
+      // minting a PIN nobody will ever see.
+      const { svc } = setup({ ownerEmail: null, approverPhone: null });
 
       await expect(svc.requestVoidPin('order-1', cashier)).rejects.toThrow(BadRequestException);
+    });
+
+    it('sends to the BRANCH approver even when no owner email exists (AIRIN-165)', async () => {
+      const { svc } = setup({ ownerEmail: null });
+
+      // The branch supervisor's WhatsApp number is a complete delivery target on
+      // its own — approving a void is their job, not the owner's.
+      await expect(svc.requestVoidPin('order-1', cashier)).resolves.toMatchObject({ expiresInMinutes: 10 });
     });
   });
 

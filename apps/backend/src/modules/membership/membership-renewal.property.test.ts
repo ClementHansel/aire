@@ -174,7 +174,7 @@ describe('Property 17: Membership Renewal Date Logic', () => {
     );
   });
 
-  it('same plan extension: start_date is NOT modified (retained from original)', async () => {
+  it('same plan extension: start_date is re-based ONLY when the term had already lapsed', async () => {
     await fc.assert(
       fc.asyncProperty(
         planArbitrary,
@@ -204,17 +204,23 @@ describe('Property 17: Membership Renewal Date Logic', () => {
 
           await service.renewMembership(customerId, plan.id, orderId, [existingMembership]);
 
-          // The UPDATE SQL should not mention start_date
           const updateQuery = queryCalls.find((q) => q.sql.includes('UPDATE'));
           expect(updateQuery).toBeDefined();
-          expect(updateQuery!.sql).not.toContain('start_date');
+
+          // A live term keeps the start it already has; a lapsed one starts over
+          // today, so the member is not charged for days that already passed
+          // (AIRIN-156).
+          const today = new Date(); today.setHours(0, 0, 0, 0);
+          const expiry = new Date(endDate); expiry.setHours(0, 0, 0, 0);
+          const shouldRebase = expiry.getTime() < today.getTime();
+          expect(updateQuery!.params[2] as boolean).toBe(shouldRebase);
         },
       ),
       { numRuns: 100 },
     );
   });
 
-  it('same plan extension: new end_date is extended FROM the current expiry (not from today)', async () => {
+  it('same plan extension: new end_date is one full term from the period start (expiry, or today if lapsed)', async () => {
     await fc.assert(
       fc.asyncProperty(
         planArbitrary,
@@ -248,7 +254,12 @@ describe('Property 17: Membership Renewal Date Logic', () => {
           expect(updateQuery).toBeDefined();
 
           const passedEndDate = updateQuery!.params[0] as Date;
-          const expectedEndDate = service.addMonths(endDate, plan.durationMonths);
+          // Renewing early stacks onto the expiry; renewing late starts today.
+          // Either way the member gets a WHOLE term — never a shortened one.
+          const expectedEndDate = service.addMonths(
+            service.renewalPeriodStart(endDate),
+            plan.durationMonths,
+          );
 
           expect(passedEndDate.getFullYear()).toBe(expectedEndDate.getFullYear());
           expect(passedEndDate.getMonth()).toBe(expectedEndDate.getMonth());

@@ -38,13 +38,17 @@ export class MembershipRenewalService {
    * (the fee) and applies the renewal (extend if active/grace, new if revoked).
    * Returns the unpaid order for the caller to collect payment on.
    */
-  async renewByMembershipId(user: JWTPayload, membershipId: string, planId: string) {
-    const m = await this.pool.query<{ customer_id: string }>(
-      `SELECT customer_id FROM memberships WHERE id = $1 AND tenant_id = $2`,
+  async renewByMembershipId(user: JWTPayload, membershipId: string, planId: string, nextStartDate?: string) {
+    const m = await this.pool.query<{ customer_id: string; end_date: string }>(
+      `SELECT customer_id, end_date::text AS end_date FROM memberships WHERE id = $1 AND tenant_id = $2`,
       [membershipId, user.tenant_id],
     );
     if (m.rows.length === 0) throw new NotFoundException('Membership not found');
     const customerId = m.rows[0]!.customer_id;
+    // Validate the requested start HERE, while the fee order is still being
+    // created: a rejection the cashier can act on beats one that surfaces after
+    // the customer has already paid.
+    const nextStart = this.validateNextStart(nextStartDate, m.rows[0]!.end_date);
 
     const cust = await this.pool.query<{ name: string; phone: string }>(
       `SELECT name, phone FROM customers WHERE id = $1 AND tenant_id = $2`,
@@ -74,9 +78,9 @@ export class MembershipRenewalService {
         businessUnit,
       });
       await client.query(
-        `INSERT INTO membership_renewals (tenant_id, order_id, membership_id, plan_id)
-         VALUES ($1, $2, $3, $4) ON CONFLICT (order_id) DO NOTHING`,
-        [user.tenant_id, order.id, membershipId, planId],
+        `INSERT INTO membership_renewals (tenant_id, order_id, membership_id, plan_id, next_start_date)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (order_id) DO NOTHING`,
+        [user.tenant_id, order.id, membershipId, planId, nextStart],
       );
       await client.query('COMMIT');
     } catch (err) {
@@ -94,8 +98,9 @@ export class MembershipRenewalService {
    * or creates a new membership (revoked). Idempotent; refuses if unpaid.
    */
   async applyRenewal(tenantId: string, orderId: string) {
-    const ren = await this.pool.query<{ id: string; membership_id: string; plan_id: string; applied: boolean }>(
-      `SELECT id, membership_id, plan_id, applied FROM membership_renewals WHERE order_id = $1 AND tenant_id = $2`,
+    const ren = await this.pool.query<{ id: string; membership_id: string; plan_id: string; applied: boolean; next_start_date: string | null }>(
+      `SELECT id, membership_id, plan_id, applied, next_start_date::text AS next_start_date
+         FROM membership_renewals WHERE order_id = $1 AND tenant_id = $2`,
       [orderId, tenantId],
     );
     const row = ren.rows[0];
@@ -116,7 +121,9 @@ export class MembershipRenewalService {
     }
 
     const existing = await this.getCustomerMemberships(tenantId, o.customer_id!);
-    const result = await this.renewMembership(o.customer_id!, row.plan_id, orderId, existing);
+    const result = await this.renewMembership(
+      o.customer_id!, row.plan_id, orderId, existing, row.next_start_date ?? undefined,
+    );
     await this.pool.query(`UPDATE membership_renewals SET applied = true, applied_at = NOW() WHERE id = $1`, [row.id]);
 
     // Tag the fee order: same-plan renewal -> 'renewal'; a different-plan or
@@ -146,6 +153,7 @@ export class MembershipRenewalService {
     planId: string,
     orderId: string,
     existingMemberships: Membership[],
+    nextStartDate?: string,
   ): Promise<RenewalResult> {
     const plan = await this.planService.getPlan(planId);
 
@@ -155,15 +163,24 @@ export class MembershipRenewalService {
     );
 
     if (samePlanMembership) {
-      // Extend end_date from current expiry and clear any grace/revoked markers.
-      const newEndDate = this.addMonths(new Date(samePlanMembership.endDate), plan.durationMonths);
+      const periodStart = this.renewalPeriodStart(samePlanMembership.endDate, nextStartDate);
+      const newEndDate = this.addMonths(periodStart, plan.durationMonths);
+      // A renewal taken AFTER the membership lapsed opens a fresh period from the
+      // day it is paid for, so start_date has to move with it. Extending only
+      // end_date left the member showing a start date from the previous term —
+      // "tanggal aktif mengikuti tanggal berakhirnya membership" (AIRIN-156) —
+      // and, worse, silently charged them for the days they had already lost. An
+      // EARLY renewal keeps its original start: that period is still running.
+      const lapsed = periodStart.getTime() > new Date(samePlanMembership.endDate).getTime();
 
       const result = await this.pool.query<MembershipRow>(
         `UPDATE memberships
-         SET end_date = $1, status = 'active', grace_until = NULL, revoked_at = NULL, updated_at = NOW()
+         SET end_date = $1,
+             start_date = CASE WHEN $3::boolean THEN $4::date ELSE start_date END,
+             status = 'active', grace_until = NULL, revoked_at = NULL, updated_at = NOW()
          WHERE id = $2
          RETURNING *`,
-        [newEndDate, samePlanMembership.id],
+        [newEndDate, samePlanMembership.id, lapsed, periodStart],
       );
       const row = result.rows[0]!;
       await this.lifecycle.recordEvent(this.pool, row.tenant_id, row.id, 'renewed', { orderId, planId, type: 'extension' }, null);
@@ -179,8 +196,10 @@ export class MembershipRenewalService {
       };
     }
 
-    // Different plan or no existing: create brand new membership
-    const startDate = new Date();
+    // Different plan or no existing: create brand new membership. An explicitly
+    // requested later start is honoured here too, so a customer who buys today
+    // for next week gets the full term they paid for.
+    const startDate = nextStartDate ? new Date(`${nextStartDate}T00:00:00`) : new Date();
     const endDate = this.addMonths(startDate, plan.durationMonths);
 
     const result = await this.pool.query<MembershipRow>(
@@ -208,6 +227,53 @@ export class MembershipRenewalService {
   }
 
   // ─── Private Helpers ──────────────────────────────────────────────────────────
+
+  /** Midnight of the given date, so period arithmetic never drifts by hours. */
+  private static atMidnight(d: Date): Date {
+    const c = new Date(d);
+    c.setHours(0, 0, 0, 0);
+    return c;
+  }
+
+  /**
+   * Where the renewed period begins.
+   *
+   * Renewing EARLY stacks onto the current expiry — no days are lost. Renewing
+   * LATE (during grace, after the membership already lapsed) starts today: the
+   * old rule glued the new period to an expiry that was already in the past, so
+   * a member who renewed five days late paid for a month and received twenty-five
+   * days (AIRIN-156). An explicit `nextStartDate` overrides both; it has already
+   * been bounds-checked by validateNextStart.
+   */
+  renewalPeriodStart(currentEndDate: string | Date, nextStartDate?: string): Date {
+    if (nextStartDate) return MembershipRenewalService.atMidnight(new Date(`${nextStartDate}T00:00:00`));
+    const end = MembershipRenewalService.atMidnight(new Date(currentEndDate));
+    const today = MembershipRenewalService.atMidnight(new Date());
+    return end.getTime() >= today.getTime() ? end : today;
+  }
+
+  /**
+   * Bound a requested next-period start: never before the current expiry (that
+   * would shorten a period the member has already paid for) and never more than
+   * 7 days after it (Samuel's rule — beyond a week it is a new membership, not a
+   * renewal; AIRIN-157). Returns null when nothing was requested.
+   */
+  validateNextStart(nextStartDate: string | undefined, currentEndDate: string): string | null {
+    if (!nextStartDate) return null;
+    const requested = new Date(`${nextStartDate}T00:00:00`);
+    if (Number.isNaN(requested.getTime())) {
+      throw new BadRequestException('nextStartDate must be a valid date (YYYY-MM-DD).');
+    }
+    const end = MembershipRenewalService.atMidnight(new Date(currentEndDate));
+    const latest = new Date(end.getTime() + 7 * 86_400_000);
+    if (requested.getTime() < end.getTime()) {
+      throw new BadRequestException('The next period cannot start before the current membership ends.');
+    }
+    if (requested.getTime() > latest.getTime()) {
+      throw new BadRequestException('The next period can start at most 7 days after the membership ends.');
+    }
+    return nextStartDate;
+  }
 
   /**
    * Adds the specified number of months to a date.

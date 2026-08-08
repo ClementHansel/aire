@@ -103,10 +103,12 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
         <LanguageToggle />
         <ThemeToggle className="h-8 w-8" />
         <span className="text-xs text-text-secondary">{user?.name}</span>
-        {/* Sign out the cashier but keep the terminal registered — the POS shell
-            guard then shows the cashier sign-in for the next operator. */}
+        {/* Sign out the cashier but keep the terminal registered (the device pin
+            lives outside the session). Signing out returns to the LOGIN page:
+            reloading in place left the operator staring at the POS shell's own
+            gate, which reads as "nothing happened" (AIRIN-173). */}
         <button
-          onClick={() => { clearSession(); if (typeof window !== 'undefined') window.location.reload(); }}
+          onClick={() => { clearSession(); if (typeof window !== 'undefined') window.location.href = '/'; }}
           className="text-xs text-text-secondary hover:text-text-primary"
         >
           {t('common.signOut', 'Sign out')}

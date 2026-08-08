@@ -7,7 +7,6 @@ import { isAuthenticated } from '@/lib/auth';
 import { getPosOutletName } from '@/lib/posDevice';
 import { PosNav } from '@/components/pos/PosNav';
 import { VoidDialog } from '@/components/pos/VoidDialog';
-import { RefundDialog } from '@/components/pos/RefundDialog';
 import { useI18n } from '@/lib/i18n';
 import { buildDocHtml, type DocTemplate, type DocData } from '@/components/dashboard/DocumentRenderer';
 
@@ -56,6 +55,18 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Grid (the cards this page has always shown) or a dense table. Cards read
+  // well for a handful of open orders; a table is what you want when scanning a
+  // whole shift (AIRIN-163). The choice is remembered per terminal.
+  const [view, setView] = useState<'grid' | 'table'>('grid');
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('aire_pos_orders_view') : null;
+    if (saved === 'table' || saved === 'grid') setView(saved);
+  }, []);
+  const chooseView = (v: 'grid' | 'table') => {
+    setView(v);
+    try { window.localStorage.setItem('aire_pos_orders_view', v); } catch { /* private mode */ }
+  };
   // Designed receipt layout (falls back to the built-in thermal HTML if absent).
   const [receiptTpl, setReceiptTpl] = useState<DocTemplate | null>(null);
 
@@ -65,8 +76,9 @@ export default function OrdersPage() {
   const [voidErr, setVoidErr] = useState('');
   const [pinRequestStatus, setPinRequestStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
-  // Refund flow state.
-  const [refundTarget, setRefundTarget] = useState<OrderCard | null>(null);
+  // Refunds are no longer a separate act at the till — a void of a paid order is
+  // the refund, and it is the flow that carries supervisor approval (AIRIN-165).
+  // The dashboard keeps a partial-refund surface for back-office cases.
 
   // Settle (pay) flow state — for an unpaid ('ordered') order rung up but not yet paid.
   const [payTarget, setPayTarget] = useState<OrderCard | null>(null);
@@ -100,12 +112,14 @@ export default function OrdersPage() {
 
   const openVoid = (o: OrderCard) => { setVoidTarget(o); setVoidRequiresPin(false); setVoidErr(''); setPinRequestStatus('idle'); };
 
-  // Generates + emails a one-time admin PIN to the tenant owner for this order.
-  const requestVoidPin = async () => {
+  // Sends a one-time approval PIN to the BRANCH's void approver (WhatsApp, with
+  // the order, branch, requester, time and reason), falling back to the tenant
+  // escalation line / owner email — AIRIN-165.
+  const requestVoidPin = async (reason: string) => {
     if (!voidTarget) return;
     setPinRequestStatus('sending');
     try {
-      await api.post(`/orders/${voidTarget.id}/void-pin`, {});
+      await api.post(`/orders/${voidTarget.id}/void-pin`, { reason });
       setPinRequestStatus('sent');
     } catch {
       setPinRequestStatus('error');
@@ -289,6 +303,19 @@ export default function OrdersPage() {
             {STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s === 'all' ? t('pos.orders.allStatuses', 'All statuses') : s}</option>)}
           </select>
           <button className="btn-secondary" onClick={load}>{t('pos.orders.refresh', 'Refresh')}</button>
+          <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 ml-auto" role="group" aria-label={t('pos.orders.viewMode', 'View')}>
+            {(['grid', 'table'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => chooseView(v)}
+                data-testid={`orders-view-${v}`}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${view === v ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'}`}
+              >
+                {v === 'grid' ? `▦ ${t('pos.orders.viewGrid', 'Grid')}` : `☰ ${t('pos.orders.viewTable', 'Table')}`}
+              </button>
+            ))}
+          </div>
         </div>
 
         {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
@@ -297,6 +324,66 @@ export default function OrdersPage() {
           <div className="card text-sm text-text-muted">{t('pos.orders.loading', 'Loading orders…')}</div>
         ) : orders.length === 0 ? (
           <div className="card text-sm text-text-muted">{t('pos.orders.noOrders', 'No orders found.')}</div>
+        ) : view === 'table' ? (
+          /* Same orders, same actions — one row each, for reading a whole shift
+             at a glance (AIRIN-163). */
+          <div className="card p-0 overflow-x-auto" data-testid="orders-table">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface-sunken/50 text-xs uppercase text-text-secondary">
+                  <th className="text-left px-4 py-2 font-medium">{t('pos.orders.colOrder', 'Order')}</th>
+                  <th className="text-left px-4 py-2 font-medium">{t('pos.orders.colCustomer', 'Customer')}</th>
+                  <th className="text-left px-4 py-2 font-medium">{t('pos.orders.colItems', 'Items')}</th>
+                  <th className="text-left px-4 py-2 font-medium">{t('pos.orders.colPayment', 'Payment')}</th>
+                  <th className="text-center px-4 py-2 font-medium">{t('pos.orders.colStatus', 'Status')}</th>
+                  <th className="text-right px-4 py-2 font-medium">{t('pos.orders.total', 'Total')}</th>
+                  <th className="text-right px-4 py-2 font-medium">{t('pos.orders.colActions', 'Actions')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {orders.map((o) => (
+                  <tr key={o.id} data-testid={`order-row-${o.id}`}>
+                    <td className="px-4 py-2.5">
+                      <div className="font-medium text-text-primary">{o.orderNumber}</div>
+                      <div className="text-xs text-text-muted">{new Date(o.createdAt).toLocaleString('id-ID')}</div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div>{o.customerName}</div>
+                      <div className="text-xs text-text-muted">{o.customerPhone}{o.licensePlate ? ` · ${o.licensePlate}` : ''}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-text-secondary">
+                      {o.items.length === 0
+                        ? t('pos.orders.noItems', 'No line items')
+                        : o.items.map((it) => `${it.quantity}× ${it.serviceName}`).join(', ')}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {o.paymentMethod
+                        ? (PAYMENT_METHOD_LABELS[o.paymentMethod] ?? o.paymentMethod)
+                        : <span className="badge bg-amber-50 text-amber-700">{t('pos.orders.unpaid', 'Unpaid')}</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-center"><span className={`badge ${STATUS_BADGE[o.status]} capitalize`}>{o.status}</span></td>
+                    <td className="px-4 py-2.5 text-right font-mono">{fmt(o.total)}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-1 justify-end flex-wrap">
+                        {o.status === 'ordered' && (
+                          <>
+                            <button className="btn-ghost text-xs text-primary-600" onClick={() => openSettle(o, 'cash')}>💵</button>
+                            <button className="btn-ghost text-xs text-primary-600" onClick={() => openSettle(o, 'qris_static')}>📱</button>
+                          </>
+                        )}
+                        <button className="btn-ghost text-xs" onClick={() => printReceipt(o)}>🖨</button>
+                        {o.status !== 'cancelled' && (
+                          <button className="btn-ghost text-xs text-red-600" onClick={() => openVoid(o)}>
+                            {isPaid(o.status) ? t('pos.orders.void', 'Void') : t('pos.orders.cancel', 'Cancel')}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {orders.map((o) => (
@@ -420,11 +507,9 @@ export default function OrdersPage() {
                     </button>
                   )}
                 </div>
-                {isPaid(o.status) && (
-                  <button className="btn-ghost text-xs w-full mt-2 text-amber-700 hover:bg-amber-50" onClick={() => setRefundTarget(o)}>
-                    ↩ {t('pos.orders.refund', 'Refund')}
-                  </button>
-                )}
+                {/* No separate Refund button any more: voiding a paid order IS
+                    the refund, and offering both invited a cashier to do one
+                    then the other on the same sale (AIRIN-165). */}
               </div>
             ))}
           </div>
@@ -474,14 +559,6 @@ export default function OrdersPage() {
             />
           </div>
         </div>
-      )}
-
-      {refundTarget && (
-        <RefundDialog
-          orderId={refundTarget.id}
-          onDone={() => { setRefundTarget(null); load(); }}
-          onCancel={() => setRefundTarget(null)}
-        />
       )}
 
       {/* Settle payment — Cash/QRIS for an unpaid ('ordered') order. */}

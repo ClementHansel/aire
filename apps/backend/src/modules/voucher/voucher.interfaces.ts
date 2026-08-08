@@ -107,4 +107,10 @@ export interface ValidateVoucherResult {
   benefitServiceIds?: string[];
   reason?: string;
   message: string;
+  /**
+   * When this code was redeemed, for a code that is already spent. The cashier's
+   * first question about a rejected voucher is "when was it used?", and answering
+   * it turns an argument at the counter into a fact (AIRIN-158).
+   */
+  usedAt?: string;
 }

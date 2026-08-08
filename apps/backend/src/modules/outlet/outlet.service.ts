@@ -14,6 +14,13 @@ export interface OutletSettings {
   /** Owner-set cap on the cashier's per-line manual discount, e.g. 0.2 = 20%.
    *  Enforced server-side in OrderService.createOrder — the POS UI cap is cosmetic only. */
   max_manual_discount_pct?: number;
+  /**
+   * WhatsApp number of the person who approves voids AT THIS BRANCH (AIRIN-165).
+   * A void is always a refund of somebody's money, and the person who should say
+   * yes is the supervisor on site — not the tenant owner, who may be three
+   * branches away. Falls back to the tenant escalation line when unset.
+   */
+  void_approver_phone?: string;
   [key: string]: unknown;
 }
 

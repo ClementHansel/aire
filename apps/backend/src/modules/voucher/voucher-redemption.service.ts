@@ -70,6 +70,11 @@ export class VoucherRedemptionService {
     const data = (await this.lookup(tenantId, codeHash))
       ?? (await this.lookupTicket(tenantId, code));
     const state = evaluateVoucher(data, context);
+    // Which service the code covers, whatever the verdict. A code entered before
+    // any service was picked is 'valid_not_applicable' — and that is exactly the
+    // moment the POS needs to know which service to select on the cashier's
+    // behalf, so this can no longer be reported only on success (AIRIN-161).
+    const benefitServiceIds = data?.serviceIds ?? undefined;
 
     if (state.status === 'valid_applicable') {
       const discountAmount = this.computeDiscount(state.type, state.discountValue, context.orderSubtotal);
@@ -81,7 +86,7 @@ export class VoucherRedemptionService {
         // Which service a free-service code covers. Its money value is 0 above
         // (the order pipeline prices it against the covered line), so the POS
         // needs the service id to reflect the code in its running total.
-        benefitServiceIds: data?.serviceIds ?? undefined,
+        benefitServiceIds,
         message: 'Voucher applied',
       };
     }
@@ -91,11 +96,48 @@ export class VoucherRedemptionService {
         type: state.type,
         discountValue: state.discountValue,
         discountAmount: 0,
+        benefitServiceIds,
         reason: state.reason,
         message: state.reason,
       };
     }
+    if (state.status === 'fully_redeemed') {
+      return {
+        status: state.status,
+        // The evaluator narrows a spent code to { status } only, so the benefit
+        // comes off the looked-up voucher rather than the verdict.
+        type: data?.type,
+        benefitServiceIds,
+        message: this.stateMessage(state),
+        usedAt: (await this.findRedeemedAt(tenantId, codeHash, code)) ?? undefined,
+      };
+    }
     return { status: state.status, message: this.stateMessage(state) };
+  }
+
+  /**
+   * When a spent code was redeemed, across both voucher models. Best-effort: a
+   * missing timestamp only costs the message its date, so any failure here must
+   * not turn a clear rejection into an error.
+   */
+  private async findRedeemedAt(tenantId: string, codeHash: string, code: string): Promise<string | null> {
+    try {
+      const packRes = await this.pool.query<{ used_at: string | null }>(
+        `SELECT vc.redeemed_at::text AS used_at
+           FROM voucher_codes vc JOIN voucher_packs vp ON vp.id = vc.pack_id
+          WHERE vc.code_hash = $1 AND vp.tenant_id = $2`,
+        [codeHash, tenantId],
+      );
+      if (packRes.rows[0]?.used_at) return packRes.rows[0].used_at;
+      const ticketRes = await this.pool.query<{ used_at: string | null }>(
+        `SELECT redeemed_at::text AS used_at FROM voucher_tickets
+          WHERE tenant_id = $1 AND code = $2`,
+        [tenantId, code.trim().toUpperCase()],
+      );
+      return ticketRes.rows[0]?.used_at ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** Look up a child code and assemble VoucherData; null if not found. */
@@ -199,7 +241,10 @@ export class VoucherRedemptionService {
       case 'inactive':
         return 'Voucher not found or not active';
       case 'fully_redeemed':
-        return 'Voucher fully redeemed';
+        // Named as the counter experiences it: the customer is holding a code
+        // that somebody already spent, which is a different conversation from
+        // "not found" or "expired" (AIRIN-158).
+        return 'Voucher ini sudah digunakan';
       case 'expired':
         return 'Voucher has expired';
       case 'not_yet_active':

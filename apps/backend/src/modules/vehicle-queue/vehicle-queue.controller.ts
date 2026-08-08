@@ -25,7 +25,13 @@ export class VehicleQueueController {
   }
 
   @Patch(':id/status')
-  setStatus(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { status: 'waiting' | 'serving' | 'done' | 'cancelled' }) {
-    return this.service.setStatus(user.tenant_id, id, body.status);
+  setStatus(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    // `reason` accompanies a cancellation: a car that leaves the board unserved
+    // has to say why (AIRIN-171).
+    @Body() body: { status: 'waiting' | 'serving' | 'done' | 'cancelled'; reason?: string },
+  ) {
+    return this.service.setStatus(user.tenant_id, id, body.status, body.reason);
   }
 }

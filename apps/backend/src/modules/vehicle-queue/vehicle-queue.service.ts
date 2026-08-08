@@ -12,6 +12,21 @@ export interface QueueEntry {
   orderId: string | null;
   /** Derived from the linked order: 'paid' once the order is settled, else 'unpaid'. */
   paymentStatus: 'paid' | 'unpaid';
+  /** When service began. Set on arrival — logging a car IS starting it (AIRIN-170). */
+  startedAt: string | null;
+  /** When it left the board, by hand or by the midnight sweep. */
+  closedAt: string | null;
+  /** Why it left without being served, when that is what happened (AIRIN-171). */
+  closeReason: string | null;
+  autoClosed: boolean;
+  /**
+   * The single stage the board shows, derived rather than stored: a cashier does
+   * not care whether a row says 'waiting' or 'serving' — only whether the car
+   * still owes money, is paid and awaiting handover, or is finished (AIRIN-170).
+   */
+  stage: 'waiting_payment' | 'paid' | 'done' | 'cancelled';
+  /** Seconds from arrival to payment, once paid — the number the board is for. */
+  serviceSeconds: number | null;
 }
 
 export interface AddArrivalDto {
@@ -59,7 +74,8 @@ export class VehicleQueueService {
     const res = await this.pool.query(
       `SELECT vq.*,
               CASE WHEN o.status IN ('paid','confirmed','completed') THEN 'paid'
-                   ELSE 'unpaid' END AS payment_status
+                   ELSE 'unpaid' END AS payment_status,
+              o.paid_at
        FROM vehicle_queue vq
        LEFT JOIN orders o ON o.id = vq.order_id
        WHERE vq.tenant_id = $1 AND vq.outlet_id = $2 ${statusFilter}
@@ -82,9 +98,13 @@ export class VehicleQueueService {
     // matching — could not resolve the queued car to its membership, and the same
     // vehicle appeared under two spellings across queue and orders (AIRIN-117).
     const plate = dto.plate ? (normalizePlate(dto.plate).normalized || null) : null;
+    // Arrival IS the start of service: a car is logged the moment it is taken in,
+    // so a separate "Start" tap only ever recorded when the cashier got round to
+    // pressing it. The status goes straight to 'serving' and the clock starts
+    // here, which is what makes the arrival→payment duration real (AIRIN-170).
     const res = await this.pool.query(
-      `INSERT INTO vehicle_queue (tenant_id, outlet_id, plate, brand, model, customer_name, customer_phone, business_unit, note, position)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO vehicle_queue (tenant_id, outlet_id, plate, brand, model, customer_name, customer_phone, business_unit, note, position, status, started_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'serving',NOW()) RETURNING *`,
       [tenantId, dto.outletId, plate, dto.brand ?? null, dto.model ?? null,
         dto.customerName ?? null, dto.customerPhone ?? null, dto.businessUnit ?? null, dto.note ?? null, position],
     );
@@ -93,7 +113,12 @@ export class VehicleQueueService {
     return entry;
   }
 
-  async setStatus(tenantId: string, id: string, status: 'waiting' | 'serving' | 'done' | 'cancelled'): Promise<QueueEntry> {
+  async setStatus(
+    tenantId: string,
+    id: string,
+    status: 'waiting' | 'serving' | 'done' | 'cancelled',
+    reason?: string,
+  ): Promise<QueueEntry> {
     // A car can't be marked done until it has been paid for (payment ≠ service,
     // but "done" is the hand-back point, so it gates on a paid linked order).
     if (status === 'done') {
@@ -108,9 +133,18 @@ export class VehicleQueueService {
         throw new BadRequestException('Collect payment before marking this car done.');
       }
     }
+    // A car leaving the board without being served owes an explanation — the
+    // reason is kept on the row so tomorrow's shift can answer "what happened to
+    // that Avanza?" (AIRIN-171).
+    const closing = status === 'done' || status === 'cancelled';
     const res = await this.pool.query(
-      `UPDATE vehicle_queue SET status = $3, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING *`,
-      [id, tenantId, status],
+      `UPDATE vehicle_queue
+          SET status = $3,
+              closed_at = CASE WHEN $4::boolean THEN NOW() ELSE closed_at END,
+              close_reason = COALESCE($5, close_reason),
+              updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+      [id, tenantId, status, closing, reason ?? null],
     );
     if (res.rows.length === 0) throw new NotFoundException('Queue entry not found');
     const entry = this.map(res.rows[0]);
@@ -118,12 +152,77 @@ export class VehicleQueueService {
     return entry;
   }
 
-  private map = (r: any): QueueEntry => ({
-    id: r.id, plate: r.plate ?? null, brand: r.brand ?? null, model: r.model ?? null,
-    customerName: r.customer_name ?? null, customerPhone: r.customer_phone ?? null,
-    businessUnit: r.business_unit ?? null, note: r.note ?? null, status: r.status,
-    position: r.position ?? 0, createdAt: r.created_at,
-    orderId: r.order_id ?? null,
-    paymentStatus: r.payment_status === 'paid' ? 'paid' : 'unpaid',
-  });
+  /**
+   * Close out every car still on the board, everywhere. Run at midnight: the
+   * queue is a record of ONE trading day, and yesterday's leftovers pushed
+   * today's positions along and made the board unreadable.
+   *
+   * Nothing is deleted. An unserved car is closed with an explicit reason so the
+   * row survives as an account of what happened, which is the whole point —
+   * "queue yang tidak diproses tetap perlu dicatat ke database beserta alasan
+   * pertanggungjawabannya" (AIRIN-171). Cars that WERE paid for close as 'done';
+   * only the ones nobody rang up are marked unserved.
+   */
+  async closeOutOpenEntries(reason = 'Auto-closed at end of day — never processed'): Promise<number> {
+    const res = await this.pool.query<{ outlet_id: string; tenant_id: string }>(
+      `UPDATE vehicle_queue vq
+          SET status = CASE WHEN vq.order_id IS NOT NULL
+                              AND (SELECT o.status FROM orders o WHERE o.id = vq.order_id)
+                                  IN ('paid','confirmed','completed')
+                            THEN 'done' ELSE 'cancelled' END,
+              closed_at = NOW(),
+              auto_closed = true,
+              close_reason = CASE WHEN vq.order_id IS NOT NULL
+                                   AND (SELECT o.status FROM orders o WHERE o.id = vq.order_id)
+                                       IN ('paid','confirmed','completed')
+                                  THEN COALESCE(vq.close_reason, 'Auto-closed at end of day — paid')
+                                  ELSE $1 END,
+              updated_at = NOW()
+        WHERE vq.status IN ('waiting','serving')
+      RETURNING vq.tenant_id, vq.outlet_id`,
+      [reason],
+    );
+    // Refresh every board that changed, so a POS left open overnight shows the
+    // cleared queue without a reload.
+    const seen = new Set<string>();
+    for (const row of res.rows) {
+      const key = `${row.tenant_id}:${row.outlet_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      void this.pushQueue(row.tenant_id, row.outlet_id);
+    }
+    return res.rowCount ?? 0;
+  }
+
+  /** The stage the board shows — see QueueEntry.stage. */
+  private stageOf(r: any, paid: boolean): QueueEntry['stage'] {
+    if (r.status === 'cancelled') return 'cancelled';
+    if (r.status === 'done') return 'done';
+    return paid ? 'paid' : 'waiting_payment';
+  }
+
+  private map = (r: any): QueueEntry => {
+    const paid = r.payment_status === 'paid';
+    const startedAt = r.started_at ?? r.created_at ?? null;
+    // Arrival → payment is the interval the shop actually manages. It stays
+    // recorded even though the board no longer shows a 'start' step (AIRIN-170).
+    const paidAt = r.paid_at ?? null;
+    const serviceSeconds = startedAt && paidAt
+      ? Math.max(0, Math.round((new Date(paidAt).getTime() - new Date(startedAt).getTime()) / 1000))
+      : null;
+    return {
+      id: r.id, plate: r.plate ?? null, brand: r.brand ?? null, model: r.model ?? null,
+      customerName: r.customer_name ?? null, customerPhone: r.customer_phone ?? null,
+      businessUnit: r.business_unit ?? null, note: r.note ?? null, status: r.status,
+      position: r.position ?? 0, createdAt: r.created_at,
+      orderId: r.order_id ?? null,
+      paymentStatus: paid ? 'paid' : 'unpaid',
+      startedAt,
+      closedAt: r.closed_at ?? null,
+      closeReason: r.close_reason ?? null,
+      autoClosed: r.auto_closed === true,
+      stage: this.stageOf(r, paid),
+      serviceSeconds,
+    };
+  };
 }

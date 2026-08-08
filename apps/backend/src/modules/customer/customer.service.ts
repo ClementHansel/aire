@@ -21,6 +21,25 @@ export interface CustomerProfile {
   recentVisits: CustomerVisit[];
   servicePreferences: ServicePreference[];
   voucherUsage: VoucherUsageSummary;
+  /**
+   * Every voucher registered to this customer — bought or granted — with the
+   * code, what it is worth and whether it is still spendable (AIRIN-167). The
+   * profile previously reported only a redeemed COUNT, so the one question the
+   * counter actually asks ("what does this customer still have?") had no answer
+   * anywhere in the dashboard.
+   */
+  vouchers: CustomerVoucher[];
+}
+
+export interface CustomerVoucher {
+  id: string;
+  /** Plaintext code for a book ticket; a pack prefix for the legacy hashed model. */
+  code: string;
+  type: string;
+  value: number;
+  expiresAt: string | null;
+  status: 'active' | 'used' | 'expired';
+  source: 'purchase' | 'campaign';
 }
 
 export interface CustomerMembershipInfo {
@@ -267,6 +286,39 @@ export class CustomerService {
 
     const voucher = voucherResult.rows[0]!;
 
+    // Every voucher TICKET this customer holds (AIRIN-167).
+    //
+    // A ticket belongs to a customer two ways, and both count: the book was
+    // minted by an order they paid for (a pack they bought), or a campaign
+    // granted it to them directly. EXISTS rather than joins, so a book that is
+    // both — a purchase that also triggered a bonus — cannot list its tickets
+    // twice.
+    //
+    // Deliberately books only: the legacy voucher_packs model stores SHA-256
+    // hashes, so there is no code to show — printing a prefix would look like a
+    // redeemable code that isn't one.
+    const ticketsResult = await this.pool.query<{
+      id: string; code: string; benefit_type: string; benefit_value: string;
+      expiry_date: string | null; status: string; source: string;
+    }>(
+      `SELECT t.id, t.code, b.benefit_type, b.benefit_value::text AS benefit_value,
+              COALESCE(t.expiry_date, b.expiry_date)::text AS expiry_date,
+              t.status, b.source
+         FROM voucher_tickets t
+         JOIN voucher_books b ON b.id = t.book_id
+        WHERE b.tenant_id = $1
+          AND (
+            EXISTS (SELECT 1 FROM orders o WHERE o.id = b.order_id AND o.customer_id = $2)
+            OR EXISTS (SELECT 1 FROM campaign_grants cg WHERE cg.voucher_book_id = b.id AND cg.customer_id = $2)
+          )
+          AND t.status <> 'void'
+        ORDER BY (t.status = 'active') DESC, t.created_at DESC
+        LIMIT 100`,
+      [tenantId, customerId],
+    );
+
+    const today = new Date().toISOString().slice(0, 10);
+
     return {
       id: customer.id,
       name: customer.name,
@@ -303,6 +355,19 @@ export class CustomerService {
         totalRedeemed: voucher.total_redeemed,
         totalSaved: parseFloat(voucher.total_saved),
       },
+      vouchers: ticketsResult.rows.map((v) => ({
+        id: v.id,
+        code: v.code,
+        type: v.benefit_type,
+        value: parseFloat(v.benefit_value),
+        expiresAt: v.expiry_date,
+        // An expired-but-unredeemed ticket usually still reads 'active' in the
+        // table (the sweep is periodic); the date is authoritative for display.
+        status: v.status === 'redeemed'
+          ? 'used'
+          : (v.expiry_date && v.expiry_date < today ? 'expired' : 'active'),
+        source: v.source === 'bonus' ? 'campaign' : 'purchase',
+      })),
     };
   }
 

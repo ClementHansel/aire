@@ -23,6 +23,14 @@ interface CustomerProfile {
   totalVisits: number; totalSpending: number; lastVisitDate: string | null;
   memberships: CustomerMembershipInfo[]; recentVisits: CustomerVisit[];
   servicePreferences: ServicePreference[]; voucherUsage: { totalRedeemed: number; totalSaved: number };
+  /** Vouchers registered to this customer — bought or granted (AIRIN-167). */
+  vouchers?: CustomerVoucher[];
+}
+
+interface CustomerVoucher {
+  id: string; code: string; type: string; value: number;
+  expiresAt: string | null; status: 'active' | 'used' | 'expired';
+  source: 'purchase' | 'campaign';
 }
 
 const fmtRp = (n: number) => `Rp ${(n ?? 0).toLocaleString('id-ID')}`;
@@ -239,6 +247,42 @@ function CustomerDetailModal({ customer, onClose, onEdit }: { customer: Customer
                     <li key={m.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
                       <div><span className="font-medium">{m.planName}</span><span className="text-xs text-text-muted"> · {m.startDate} → {m.endDate}</span></div>
                       <div className="flex items-center gap-2"><span className="text-xs text-text-muted">{m.usesCount}/{m.maxUses}</span><span className={`badge capitalize text-xs ${memberBadge(m.status).cls}`}>{m.status}</span></div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* What this customer still holds. The count tile above says how many
+                were redeemed; the counter's actual question is which codes are
+                left and until when (AIRIN-167). */}
+            <div className="mb-5">
+              <h4 className="text-sm font-semibold mb-2">{t('dash.crm.vouchers', 'Vouchers')}</h4>
+              {(profile.vouchers ?? []).length === 0 ? (
+                <p className="text-sm text-text-muted">{t('dash.crm.noVouchers', 'No vouchers registered to this customer.')}</p>
+              ) : (
+                <ul className="space-y-1.5 max-h-52 overflow-auto" data-testid="customer-vouchers">
+                  {(profile.vouchers ?? []).map((v) => (
+                    <li key={v.id} className="flex items-center justify-between text-sm border border-border rounded-lg px-3 py-2">
+                      <div className="min-w-0">
+                        <span className="font-mono font-medium">{v.code}</span>
+                        <span className="text-xs text-text-muted">
+                          {' · '}{v.type === 'service' ? t('dash.crm.voucherFreeService', 'Free service') : v.type === 'percentage' ? `${v.value}%` : fmtRp(v.value)}
+                          {v.expiresAt ? ` · ${t('dash.crm.voucherUntil', 'until')} ${v.expiresAt}` : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 ml-3">
+                        <span className="badge bg-surface-sunken text-text-secondary text-xs">
+                          {v.source === 'campaign' ? t('dash.crm.voucherFromCampaign', 'Bonus') : t('dash.crm.voucherFromPurchase', 'Purchased')}
+                        </span>
+                        <span className={`badge text-xs ${
+                          v.status === 'active' ? 'bg-green-50 text-green-700'
+                            : v.status === 'used' ? 'bg-surface-sunken text-text-muted'
+                              : 'bg-amber-50 text-amber-700'
+                        }`}>
+                          {v.status === 'active' ? t('dash.crm.voucherActive', 'Active') : v.status === 'used' ? t('dash.crm.voucherUsed', 'Used') : t('dash.crm.voucherExpired', 'Expired')}
+                        </span>
+                      </div>
                     </li>
                   ))}
                 </ul>

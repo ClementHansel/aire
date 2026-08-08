@@ -30,6 +30,7 @@ import { RolesGuard, PermissionsGuard, OnboardingCompleteGuard } from '../../com
 import { ScopeService } from '../../common/scope/scope.service';
 import { OrderListService } from './order-list.service';
 import { OrderService } from './order.service';
+import { PaymentNotifyService } from '../whatsapp';
 
 @Controller('api/orders')
 @UseGuards(JwtAuthGuard, PermissionsGuard, OnboardingCompleteGuard)
@@ -39,6 +40,7 @@ export class OrderController {
     private readonly orderListService: OrderListService,
     private readonly orderService: OrderService,
     private readonly scope: ScopeService,
+    private readonly paymentNotify: PaymentNotifyService,
   ) {}
 
   /**
@@ -226,8 +228,14 @@ export class OrderController {
    */
   @Post(':id/void-pin')
   @HttpCode(HttpStatus.OK)
-  async requestVoidPin(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
-    return this.orderService.requestVoidPin(id, user);
+  async requestVoidPin(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    // The reason travels WITH the request so the approver reads what they are
+    // approving, not just a code (AIRIN-165).
+    @Body() body: { reason?: string },
+  ) {
+    return this.orderService.requestVoidPin(id, user, { reason: body?.reason });
   }
 
   /**
@@ -245,6 +253,31 @@ export class OrderController {
     @Body() body: { reason?: string; adminPin?: string },
   ) {
     return this.orderService.voidOrder(id, user, { reason: body?.reason ?? '', adminPin: body?.adminPin });
+  }
+
+  /**
+   * POST /api/orders/:id/send-receipt-wa — send the customer their receipt on
+   * WhatsApp, on the cashier's command. Not automatic: every message costs the
+   * shop money, so the till decides one sale at a time (AIRIN-168).
+   *
+   * Never throws on a delivery problem — the sale is already settled, and a
+   * failed message must read as "not sent", not as a failed payment.
+   */
+  @Post(':id/send-receipt-wa')
+  @HttpCode(HttpStatus.OK)
+  async sendReceiptWhatsapp(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.paymentNotify.sendReceipt(user.tenant_id, id);
+  }
+
+  /**
+   * POST /api/orders/:id/discard — back out an order whose payment the cashier
+   * cancelled at the till. UNPAID + own-order only; see abandonUnpaidOrder for
+   * why this is not the void path (AIRIN-164).
+   */
+  @Post(':id/discard')
+  @HttpCode(HttpStatus.OK)
+  async discardOrder(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.orderService.abandonUnpaidOrder(id, user);
   }
 
   /**

@@ -92,6 +92,19 @@ describe('CustomerService', () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ total_redeemed: 3, total_saved: '75000' }],
       });
+      // Vouchers registered to this customer (AIRIN-167)
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'tkt-1', code: 'BTR-082026-000001', benefit_type: 'service',
+            benefit_value: '0', expiry_date: '2099-01-01', status: 'active', source: 'sale',
+          },
+          {
+            id: 'tkt-2', code: 'BTR-082026-000002', benefit_type: 'fixed',
+            benefit_value: '20000', expiry_date: null, status: 'redeemed', source: 'bonus',
+          },
+        ],
+      });
 
       const result = await service.getProfile(TENANT, 'cust-001');
 
@@ -113,6 +126,14 @@ describe('CustomerService', () => {
       expect(result.servicePreferences[0].timesUsed).toBe(10);
       expect(result.voucherUsage.totalRedeemed).toBe(3);
       expect(result.voucherUsage.totalSaved).toBe(75000);
+      // The customer's own codes, with a spendable/spent verdict per ticket.
+      expect(result.vouchers).toHaveLength(2);
+      expect(result.vouchers[0]).toMatchObject({
+        code: 'BTR-082026-000001', status: 'active', source: 'purchase',
+      });
+      expect(result.vouchers[1]).toMatchObject({
+        code: 'BTR-082026-000002', status: 'used', source: 'campaign', value: 20000,
+      });
     });
 
     it('should throw NotFoundException when customer does not exist', async () => {
@@ -146,6 +167,7 @@ describe('CustomerService', () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [{ total_redeemed: 0, total_saved: '0' }],
       });
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // vouchers
 
       const result = await service.getProfile(TENANT, 'cust-002');
 

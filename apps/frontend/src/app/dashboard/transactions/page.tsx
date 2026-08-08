@@ -325,6 +325,12 @@ export default function TransactionsPage() {
               <option value="">{t('dash.transactions.all', 'All')}</option><option value="AIRE">AIRE</option><option value="LEAD">LEAD</option>
             </select></div>
           <BranchFilter value={branch} onChange={setBranch} label={t('dash.transactions.branch', 'Branch')} />
+          {/* Overrides the From/To range with today — the shortcut the owner
+              reaches for most, so it sits with the dates it replaces. */}
+          <label className="flex items-center gap-1.5 text-sm text-text-secondary pb-2" data-testid="today-only-filter">
+            <input type="checkbox" checked={todayOnly} onChange={(e) => { setTodayOnly(e.target.checked); setPage(1); }} />
+            {t('dash.transactions.todayOnly', 'Today only')}
+          </label>
           <button className="btn-primary" onClick={() => { loadAnalytics(); loadOrders(); }} disabled={loading}>{loading ? t('dash.transactions.loading', 'Loading…') : t('dash.transactions.refresh', 'Refresh')}</button>
           <button className="btn-secondary" onClick={exportExcel}>{t('dash.transactions.exportExcel', 'Export Excel')}</button>
           <button className="btn-secondary" onClick={exportPdf}>{t('dash.transactions.executivePdf', 'Executive PDF')}</button>
@@ -472,7 +478,9 @@ export default function TransactionsPage() {
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">{t('dash.transactions.title', 'Transactions')} ({total})</h2>
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" checked={todayOnly} onChange={(e) => { setTodayOnly(e.target.checked); setPage(1); }} /> {t('dash.transactions.todayOnly', 'Today only')}</label>
+            {/* "Today only" lives with the other filters at the top of the page
+                now — it is a date filter, and buried down here beside the page
+                size nobody found it (AIRIN-172). */}
             <select aria-label={t('dash.transactions.pageSize', 'Page Size')} className="input-field py-1 text-xs" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
               <option value={20}>20</option><option value={50}>50</option><option value={100}>100</option>
             </select>

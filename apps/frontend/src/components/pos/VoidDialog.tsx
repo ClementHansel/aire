@@ -37,7 +37,7 @@ export interface VoidDialogProps {
    * backend to generate + email a one-time PIN to the tenant owner. Omit to
    * hide the button (e.g. when requiresPin is always false for this caller).
    */
-  onRequestPin?: () => void;
+  onRequestPin?: (reason: string) => void;
   /** Status of the last requestPin call, drives the button/status text. */
   pinRequestStatus?: 'idle' | 'sending' | 'sent' | 'error';
   /**
@@ -213,7 +213,13 @@ export function VoidDialog({
                 <button
                   type="button"
                   className="btn-ghost text-xs"
-                  onClick={onRequestPin}
+                  // The reason goes WITH the request: the supervisor is being
+                  // asked to approve a specific refund, and a PIN with no
+                  // context is not something anyone can judge (AIRIN-165).
+                  onClick={() => {
+                    if (!reason.trim()) { setError(L.reasonRequired); return; }
+                    onRequestPin(reason.trim());
+                  }}
                   disabled={pinRequestStatus === 'sending'}
                   data-testid="void-request-pin-btn"
                 >

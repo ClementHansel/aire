@@ -250,7 +250,10 @@ describe('MemberLookupService', () => {
       const result = await service.buildMemberResponse(customerId, tenantId);
 
       const sqls = mockPool.query.mock.calls.map((c: unknown[]) => String(c[0]));
-      expect(sqls.some((s) => s.includes('FROM orders'))).toBe(false);
+      // The PLATE-history fallback must not run. (Orders are still read for the
+      // last-visit note — AIRIN-155 — so the assertion names the vehicle columns
+      // rather than the table.)
+      expect(sqls.some((s) => s.includes('vehicle_brand'))).toBe(false);
       expect(result.customer.plates.length).toBe(mockPlateRows.length);
     });
 

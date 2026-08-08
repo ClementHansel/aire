@@ -221,12 +221,31 @@ export class MemberLookupService {
       [normalized, tenantId],
     );
 
-    if (result.rows.length === 0) {
-      return null;
+    if (result.rows.length > 0) {
+      return this.buildMemberResponse(result.rows[0]!.customer_id, tenantId);
     }
 
-    const customerId = result.rows[0]!.customer_id;
-    return this.buildMemberResponse(customerId, tenantId);
+    // No membership carries this plate. The car may still belong to a walk-in the
+    // shop has served before — their vehicle only ever lived on their orders — so
+    // fall back to order history and resolve the customer from there. Without
+    // this, typing a returning non-member's plate answered "no member found" and
+    // the cashier retyped a name, phone and car the system already had
+    // (AIRIN-151).
+    const fromOrders = await this.pool.query<{ customer_id: string }>(
+      `SELECT customer_id
+         FROM orders
+        WHERE tenant_id = $1
+          AND customer_id IS NOT NULL
+          AND status <> 'cancelled'
+          AND COALESCE(plate_normalized, license_plate) = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [tenantId, normalized],
+    );
+    if (fromOrders.rows.length === 0) {
+      return null;
+    }
+    return this.buildMemberResponse(fromOrders.rows[0]!.customer_id, tenantId);
   }
 
   /**
@@ -457,6 +476,16 @@ export class MemberLookupService {
       isUsed: v.is_used,
     }));
 
+    // 8. Last visit — the most recent order this customer was served on. The POS
+    // greets member and walk-in alike with it, so it is read from orders (which
+    // both have) rather than from membership usage (AIRIN-155).
+    const lastVisit = await this.pool.query<{ last_visit_at: string | null }>(
+      `SELECT MAX(created_at)::text AS last_visit_at
+         FROM orders
+        WHERE tenant_id = $1 AND customer_id = $2 AND status <> 'cancelled'`,
+      [tenantId, customerId],
+    );
+
     return {
       customer: {
         id: customer.id,
@@ -464,6 +493,7 @@ export class MemberLookupService {
         phone: customer.phone,
         membershipNumber: customer.membership_number ?? undefined,
         plates: customerPlates,
+        lastVisitAt: lastVisit.rows[0]?.last_visit_at ?? undefined,
       },
       memberships,
       vouchers: vouchers.length > 0 ? vouchers : undefined,

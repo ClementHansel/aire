@@ -77,9 +77,13 @@ export class MembershipSellController {
    */
   @Post(':id/renew')
   @HttpCode(HttpStatus.OK)
-  async renew(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: { planId: string }) {
+  async renew(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { planId: string; nextStartDate?: string },
+  ) {
     if (!body?.planId) throw new BadRequestException('planId is required');
-    return this.renewalService.renewByMembershipId(user, id, body.planId);
+    return this.renewalService.renewByMembershipId(user, id, body.planId, body.nextStartDate);
   }
 
   /**

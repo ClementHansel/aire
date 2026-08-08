@@ -32,6 +32,14 @@ export interface MemberManagementPanelProps {
   member: MemberLookupResponse;
   /** Called after any successful mutation so the caller can re-fetch the member. */
   onChanged: () => void;
+  /**
+   * Brand → type catalog. Registering a plate must go through a real brand, not
+   * free text: the brand decides which types are offered, and it is what voucher
+   * brand-scoping and the vehicle reports key off, so "Toyoya" typed once
+   * silently creates a car nothing can match (AIRIN-153). Optional so a caller
+   * without the catalog still renders (the field falls back to free text).
+   */
+  vehicleBrands?: { id: string; name: string; types: { id: string; name: string }[] }[];
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -44,7 +52,7 @@ const STATUS_STYLE: Record<string, string> = {
   cancelled: 'bg-surface-sunken text-text-muted',
 };
 
-export function MemberManagementPanel({ member, onChanged }: MemberManagementPanelProps) {
+export function MemberManagementPanel({ member, onChanged, vehicleBrands = [] }: MemberManagementPanelProps) {
   const { t } = useI18n();
 
   // Plate editor — one membership editable at a time.
@@ -81,6 +89,13 @@ export function MemberManagementPanel({ member, onChanged }: MemberManagementPan
     if (!editingId) return;
     const validation = validatePlateRows(editRows, t('pos.member.registerAtLeastOnePlate', 'Register at least one plate.'));
     if (!validation.ok) { setEditError(validation.error); return; }
+    // Every plate carries a brand once there is a catalog to pick one from — a
+    // brandless member car is invisible to brand-scoped vouchers and to the
+    // vehicle reports (AIRIN-153).
+    if (vehicleBrands.length > 0 && validation.plates.some((p) => !p.brand.trim())) {
+      setEditError(t('pos.member.brandRequired', 'Pick a brand for every plate.'));
+      return;
+    }
     setSaving(true); setEditError('');
     try {
       await api.put(`/memberships/${editingId}/plates`, {
@@ -140,8 +155,37 @@ export function MemberManagementPanel({ member, onChanged }: MemberManagementPan
                           onChange={(v) => updateRow(i, 'plate', v)}
                           testId={`edit-plate-input-${i}`}
                         />
-                        <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={r.brand} onChange={(e) => updateRow(i, 'brand', e.target.value)} />
-                        <input className="input-field" placeholder={t('pos.sellpack.model', 'Model')} value={r.model} onChange={(e) => updateRow(i, 'model', e.target.value)} />
+                        {/* Brand is CHOSEN, and the type list follows from it —
+                            adding a plate without picking a brand is what left
+                            member cars unmatchable (AIRIN-153). */}
+                        {vehicleBrands.length > 0 ? (
+                          <select
+                            className="input-field"
+                            aria-label={t('pos.sellpack.brand', 'Brand')}
+                            value={r.brand}
+                            onChange={(e) => {
+                              updateRow(i, 'brand', e.target.value);
+                              // The old type belongs to the old brand; keeping it
+                              // would pair a Honda with an Avanza.
+                              updateRow(i, 'model', '');
+                            }}
+                          >
+                            <option value="">{t('pos.sellpack.pickBrand', 'Select brand…')}</option>
+                            {vehicleBrands.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
+                          </select>
+                        ) : (
+                          <input className="input-field" placeholder={t('pos.sellpack.brand', 'Brand')} value={r.brand} onChange={(e) => updateRow(i, 'brand', e.target.value)} />
+                        )}
+                        <input
+                          className="input-field"
+                          placeholder={t('pos.sellpack.model', 'Model')}
+                          list={`mm-types-${i}`}
+                          value={r.model}
+                          onChange={(e) => updateRow(i, 'model', e.target.value)}
+                        />
+                        <datalist id={`mm-types-${i}`}>
+                          {(vehicleBrands.find((b) => b.name === r.brand)?.types ?? []).map((vt) => <option key={vt.id} value={vt.name} />)}
+                        </datalist>
                       </div>
                       {editRows.length > 1 && <button onClick={() => removeRow(i)} className="w-9 h-9 rounded bg-surface-sunken text-text-secondary shrink-0">✕</button>}
                     </div>
