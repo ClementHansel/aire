@@ -632,7 +632,59 @@ A **Label Designer** tab appears once barcodes are enabled — design the printe
 ![Barcodes — enable scanning and pick a symbology.](images/owner-barcode-settings.png)
 ![The barcode label designer.](images/owner-barcode-designer.png)
 
-### 11.2 Feedback setup (Feedback & NPS → Setup)
+### 11.2 Notifications (Settings → Notifications)
+
+**Sidebar → Settings → Notifications** (`/dashboard/settings?tab=notifications`). This tab lists
+**every automatic message the platform sends on your behalf** — 26 of them — and lets you rewrite the
+wording, switch a message off, preview the result, and send a test to your own number. No developer
+involvement and no redeployment is required; a saved change takes effect on the next message sent.
+
+Access is restricted to the **Tenant Owner** role. Changes are scoped to your business only.
+
+![Settings → Notifications — every automatic message, grouped by area.](images/settings-notifications-list.png)
+
+Messages are grouped by area: **Membership**, **Voucher**, **Transaksi & Pembayaran**, **Antrian**,
+**Booking**, **Feedback & Ulasan**, **Akun Pelanggan**, **Keamanan & Persetujuan**, and
+**Promo & Marketing**. Each row states its **recipient** (Pelanggan / Kasir / Pemilik) and the exact
+**trigger** — the condition that causes it to be sent.
+
+**To edit a message**, select it (or press **Ubah**). The editor opens with the message body on the
+left and a live **WhatsApp preview** on the right, rendered with sample data.
+
+![The editor, with the message body on the left and a live WhatsApp preview on the right.](images/settings-notifications-editor.png)
+
+**Variables.** Words in braces — for example `{customerName}` — are replaced with real data when the
+message is sent. Only the variables listed beneath the editor are permitted for that message; select
+one to insert it at the cursor. Variables marked **opsional** may be empty (a voucher without an
+expiry date, for instance); when one is empty, **the whole line containing it is omitted** from the
+message, so a customer never receives an incomplete sentence such as "Berlaku sampai .".
+
+**Validation.** A variable that does not belong to the message is rejected both in the editor and by
+the server, and **Simpan** stays disabled until it is corrected. This prevents a typo being delivered
+verbatim to a customer.
+
+![An unrecognised variable is rejected before it can be saved.](images/settings-notifications-validation.png)
+
+**Other controls on each row:**
+
+| Control | Effect |
+|---|---|
+| **Matikan** / **Aktifkan** | Stops or resumes that message. Messages that a transaction depends on (booking acknowledgements, security codes) cannot be switched off. |
+| **Kembalikan teks bawaan** | Discards your wording and restores the text the platform ships with. |
+| **Kirim uji coba** | Sends the current draft, filled with sample data, to a WhatsApp number you enter. |
+
+**Locked messages.** One-time codes — the customer portal **OTP**, the **refund PIN** and the
+**void PIN** — are shown read-only. Their wording carries a credential, and removing the code
+variable would silently break the flow that depends on it.
+
+> A complete reference of all 26 notifications — trigger, permitted variables, default wording and a
+> rendered example of each — is in the [Daftar Notifikasi](05-daftar-notifikasi.md) document.
+
+Two categories of message are deliberately **not** managed here: **broadcast campaigns**, whose text
+you compose each time you send one (§5.4), and the **AI assistant's conversational replies**, which
+are generated per conversation and governed by the assistant's persona settings (§10.2).
+
+### 11.3 Feedback setup (Feedback & NPS → Setup)
 **Sidebar → Feedback & NPS → Setup** (`/dashboard/feedback`). Tick **Enable customer feedback**, then
 optionally **send automatically when an order is paid** (a WhatsApp link goes out after payment). Write
 the **WhatsApp message**, set a **send delay** (0 = immediately) and how long the **link stays valid**
@@ -641,7 +693,7 @@ detractors** (0–6). You can also build the **survey questions** — the star *
 collected; you can add extra rating/NPS/text questions and toggle them on or off. (Results live on the
 **Overview** tab — see §8.)
 
-### 11.3 Audit log (Settings → Audit log)
+### 11.4 Audit log (Settings → Audit log)
 **Sidebar → Audit log** (`/dashboard/audit`). A read-only record of every security-relevant change in
 your business — order **voids**, cancellations, edits, shift openings — with **who, when, from which IP,
 and the before/after values**. Filter by **operation** (e.g. `order.void`), **entity** (e.g. `order`)

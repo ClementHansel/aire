@@ -1,67 +1,86 @@
 # Daftar Notifikasi Otomatis
 
-Dokumen ini memuat **semua pesan otomatis** yang dikirim sistem atas nama Anda: kapan pesan itu dikirim (trigger), siapa penerimanya, dan apa isinya.
+**Dokumen referensi untuk Pemilik Usaha (Tenant Owner)**
 
-Semua teks di bawah ini **dapat Anda ubah sendiri** lewat menu **Pengaturan → Notifications** di dashboard, tanpa perlu menghubungi tim teknis. Di sana Anda juga bisa mematikan sebagian notifikasi, melihat pratinjau, dan mengirim uji coba ke nomor Anda.
+Dokumen ini memuat seluruh pesan otomatis yang dikirimkan sistem atas nama usaha Anda. Untuk setiap pesan dicantumkan pemicunya (kondisi yang menyebabkan pesan dikirim), penerimanya, variabel yang tersedia, teks bawaan, serta contoh hasil yang diterima penerima.
 
-> ⚙️ Dokumen ini dihasilkan otomatis dari konfigurasi sistem, jadi isinya selalu sama dengan yang benar-benar dikirim.
+Seluruh teks dalam dokumen ini dapat diubah sendiri oleh Pemilik Usaha melalui menu **Pengaturan → Notifications** pada dashboard, tanpa memerlukan bantuan tim teknis dan tanpa pembaruan sistem. Perubahan yang disimpan berlaku pada pengiriman pesan berikutnya. Panduan penggunaan halaman tersebut terdapat pada [Panduan Pemilik Usaha §11.2](02-tenant-owner-manual.md#112-notifications-settings--notifications).
 
-## Cara membaca variabel
+> **Catatan.** Dokumen ini dihasilkan otomatis dari konfigurasi sistem. Isinya karena itu selalu identik dengan pesan yang benar-benar dikirimkan.
 
-Kata di dalam kurung kurawal seperti `{customerName}` adalah **variabel** — sistem menggantinya dengan data asli saat pesan dikirim.
+---
 
-- `Halo kak {customerName}!` → `Halo kak Budi!`
-- Variabel bertanda **opsional** kadang kosong (misalnya voucher tanpa tanggal kedaluwarsa). Bila kosong, **seluruh baris yang memakai variabel itu otomatis hilang** — jadi pelanggan tidak pernah menerima kalimat setengah jadi seperti "Berlaku sampai ."
-- Anda hanya boleh memakai variabel yang terdaftar pada masing-masing notifikasi. Variabel lain akan ditolak saat disimpan.
+## 1. Ketentuan penggunaan variabel
 
-## Ringkasan
+Kata yang ditulis di dalam kurung kurawal, misalnya `{customerName}`, merupakan **variabel**: sistem menggantinya dengan data sebenarnya pada saat pesan dikirim.
 
-| # | Notifikasi | Penerima | Trigger singkat | Bisa dimatikan? |
+Ketentuan yang berlaku:
+
+1. **Penggantian nilai.** `Halo kak {customerName}!` akan terkirim sebagai `Halo kak Budi!`.
+2. **Variabel opsional.** Variabel yang ditandai *opsional* dapat bernilai kosong, misalnya voucher tanpa tanggal kedaluwarsa. Apabila nilainya kosong, **seluruh baris yang memuat variabel tersebut tidak ikut dikirim**. Ketentuan ini mencegah penerima menerima kalimat tidak lengkap seperti "Berlaku sampai .".
+3. **Pembatasan variabel.** Hanya variabel yang terdaftar pada masing-masing notifikasi yang boleh digunakan. Variabel di luar daftar akan ditolak pada saat penyimpanan.
+4. **Pesan terkunci.** Sebagian pesan memuat kode keamanan sekali pakai dan teksnya tidak dapat diubah. Pesan tersebut ditandai 🔒 pada tabel ringkasan.
+
+---
+
+## 2. Ringkasan seluruh notifikasi
+
+Sistem mengirimkan 26 jenis pesan otomatis.
+
+| No. | Notifikasi | Penerima | Pemicu (ringkas) | Dapat dimatikan |
 |---|---|---|---|---|
-| 1 | [Membership aktif (selamat datang)](#membership-aktif-selamat-datang) | Pelanggan | Saat pembayaran membership berhasil dan membership pelanggan aktif. | Ya |
-| 2 | [Pengingat membership akan habis (H-30 / H-7 / hari-H)](#pengingat-membership-akan-habis-h-30-h-7-hari-h) | Pelanggan | Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. | Ya |
-| 3 | [Voucher dibeli — kode dikirim](#voucher-dibeli-kode-dikirim) | Pelanggan | Saat pelanggan membeli paket voucher di kasir dan nomor HP-nya tercatat. | Ya |
-| 4 | [Voucher bonus diberikan](#voucher-bonus-diberikan) | Pelanggan | Saat pelanggan mendapat voucher bonus dari sebuah campaign/promo (bukan pembelian). | Ya |
-| 5 | [Voucher terpakai — sisa saldo](#voucher-terpakai-sisa-saldo) | Pelanggan | Saat satu atau lebih kode voucher ditukarkan di kasir, dan masih ada sisa kode. | Ya |
-| 6 | [Voucher terpakai — dipakai orang lain](#voucher-terpakai-dipakai-orang-lain) | Pelanggan | Ketika kode voucher ditukarkan oleh orang yang bukan pemilik voucher (voucher memang bisa dibagikan). | Ya |
-| 7 | [Voucher terpakai — kode habis](#voucher-terpakai-kode-habis) | Pelanggan | Sama seperti di atas, tetapi dikirim ketika kode voucher pelanggan sudah habis semua. | Ya |
-| 8 | [Struk / invoice setelah pembayaran](#struk-invoice-setelah-pembayaran) | Pelanggan | Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. | Ya |
-| 9 | [Mobil selesai dicuci](#mobil-selesai-dicuci) | Pelanggan | Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. | Ya |
-| 10 | [Permintaan booking diterima](#permintaan-booking-diterima) | Pelanggan | Saat pelanggan mengajukan booking lewat WhatsApp dan permintaannya menunggu konfirmasi tim. | Tidak |
-| 11 | [Booking dikonfirmasi](#booking-dikonfirmasi) | Pelanggan | Saat tim cabang menyetujui booking — baik lewat balasan WhatsApp maupun lewat tautan konfirmasi dari portal pelanggan. | Tidak |
-| 12 | [Booking ditolak](#booking-ditolak) | Pelanggan | Saat tim cabang menolak permintaan booking pelanggan. | Tidak |
-| 13 | [Booking kedaluwarsa otomatis](#booking-kedaluwarsa-otomatis) | Pelanggan | Saat permintaan booking tidak dikonfirmasi tim sampai batas waktunya, sistem membatalkannya otomatis dan mengabari pelanggan. | Ya |
-| 14 | [Permintaan booking baru (untuk tim)](#permintaan-booking-baru-untuk-tim) | Kasir / Tim Cabang | Saat ada permintaan booking lewat WhatsApp. | Tidak |
-| 15 | [Booking baru dari portal pelanggan (untuk cabang)](#booking-baru-dari-portal-pelanggan-untuk-cabang) | Kasir / Tim Cabang | Saat pelanggan membuat booking lewat portal/aplikasi. | Tidak |
-| 16 | [Permintaan ulasan / feedback](#permintaan-ulasan-feedback) | Pelanggan | Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit). | Ya |
-| 17 | [Kode masuk akun pelanggan (OTP)](#kode-masuk-akun-pelanggan-otp) | Pelanggan | Saat pelanggan meminta kode masuk ke portal/aplikasi pelanggan. | 🔒 Terkunci |
-| 18 | [Nomor WhatsApp berhasil dikenali](#nomor-whatsapp-berhasil-dikenali) | Pelanggan | Saat pelanggan yang chat lewat WhatsApp berhasil dicocokkan dengan datanya di sistem, sehingga asisten bisa mengecek membership/voucher miliknya. | Ya |
-| 19 | [Percakapan diteruskan ke tim (balasan ke pelanggan)](#percakapan-diteruskan-ke-tim-balasan-ke-pelanggan) | Pelanggan | Saat asisten WhatsApp menyerahkan percakapan ke tim manusia. | Tidak |
-| 20 | [Peringatan eskalasi (untuk tim)](#peringatan-eskalasi-untuk-tim) | Kasir / Tim Cabang | Bersamaan dengan pesan di atas, dikirim ke nomor eskalasi tim yang diatur di pengaturan asisten. | Tidak |
-| 21 | [Kode PIN refund](#kode-pin-refund) | Pemilik | Saat kasir mengajukan refund. | 🔒 Terkunci |
-| 22 | [Kode PIN pembatalan transaksi (void)](#kode-pin-pembatalan-transaksi-void) | Pemilik | Saat kasir mengajukan pembatalan transaksi. | 🔒 Terkunci |
-| 23 | [Usulan tindakan AI menunggu persetujuan](#usulan-tindakan-ai-menunggu-persetujuan) | Pemilik | Saat asisten AI mengusulkan sebuah tindakan yang butuh persetujuan pemilik. | Ya |
-| 24 | [Pesan campaign / promo dari AI](#pesan-campaign-promo-dari-ai) | Pelanggan | Saat asisten AI menjalankan campaign ke segmen pelanggan tertentu (fitur ini harus diaktifkan dulu di pengaturan otomatisasi). | Ya |
-| 25 | [Penawaran untuk pelanggan lama (retensi)](#penawaran-untuk-pelanggan-lama-retensi) | Pelanggan | Saat asisten AI mendeteksi pelanggan sudah lama tidak datang dan mengirim penawaran (butuh toggle "retention offers" aktif). | Ya |
-| 26 | [Rekomendasi membership dari AI](#rekomendasi-membership-dari-ai) | Pelanggan | Saat asisten AI melihat pola cuci pelanggan lebih hemat bila memakai membership (butuh toggle "membership recommendations" aktif). | Ya |
+| 1 | Membership aktif (selamat datang) | Pelanggan | Saat pembayaran membership berhasil dan membership pelanggan aktif. | Ya |
+| 2 | Pengingat membership akan habis (H-30 / H-7 / hari-H) | Pelanggan | Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. | Ya |
+| 3 | Voucher dibeli — kode dikirim | Pelanggan | Saat pelanggan membeli paket voucher di kasir dan nomor HP-nya tercatat. | Ya |
+| 4 | Voucher bonus diberikan | Pelanggan | Saat pelanggan mendapat voucher bonus dari sebuah campaign/promo (bukan pembelian). | Ya |
+| 5 | Voucher terpakai — sisa saldo | Pelanggan | Saat satu atau lebih kode voucher ditukarkan di kasir, dan masih ada sisa kode. | Ya |
+| 6 | Voucher terpakai — dipakai orang lain | Pelanggan | Ketika kode voucher ditukarkan oleh orang yang bukan pemilik voucher (voucher memang bisa dibagikan). | Ya |
+| 7 | Voucher terpakai — kode habis | Pelanggan | Sama seperti di atas, tetapi dikirim ketika kode voucher pelanggan sudah habis semua. | Ya |
+| 8 | Struk / invoice setelah pembayaran | Pelanggan | Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. | Ya |
+| 9 | Mobil selesai dicuci | Pelanggan | Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. | Ya |
+| 10 | Permintaan booking diterima | Pelanggan | Saat pelanggan mengajukan booking lewat WhatsApp dan permintaannya menunggu konfirmasi tim. | Tidak |
+| 11 | Booking dikonfirmasi | Pelanggan | Saat tim cabang menyetujui booking — baik lewat balasan WhatsApp maupun lewat tautan konfirmasi dari portal pelanggan. | Tidak |
+| 12 | Booking ditolak | Pelanggan | Saat tim cabang menolak permintaan booking pelanggan. | Tidak |
+| 13 | Booking kedaluwarsa otomatis | Pelanggan | Saat permintaan booking tidak dikonfirmasi tim sampai batas waktunya, sistem membatalkannya otomatis dan mengabari pelanggan. | Ya |
+| 14 | Permintaan booking baru (untuk tim) | Kasir / Tim Cabang | Saat ada permintaan booking lewat WhatsApp. | Tidak |
+| 15 | Booking baru dari portal pelanggan (untuk cabang) | Kasir / Tim Cabang | Saat pelanggan membuat booking lewat portal/aplikasi. | Tidak |
+| 16 | Permintaan ulasan / feedback | Pelanggan | Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit). | Ya |
+| 17 | Kode masuk akun pelanggan (OTP) | Pelanggan | Saat pelanggan meminta kode masuk ke portal/aplikasi pelanggan. | 🔒 Tidak (terkunci) |
+| 18 | Nomor WhatsApp berhasil dikenali | Pelanggan | Saat pelanggan yang chat lewat WhatsApp berhasil dicocokkan dengan datanya di sistem, sehingga asisten bisa mengecek membership/voucher miliknya. | Ya |
+| 19 | Percakapan diteruskan ke tim (balasan ke pelanggan) | Pelanggan | Saat asisten WhatsApp menyerahkan percakapan ke tim manusia. | Tidak |
+| 20 | Peringatan eskalasi (untuk tim) | Kasir / Tim Cabang | Bersamaan dengan pesan di atas, dikirim ke nomor eskalasi tim yang diatur di pengaturan asisten. | Tidak |
+| 21 | Kode PIN refund | Pemilik | Saat kasir mengajukan refund. | 🔒 Tidak (terkunci) |
+| 22 | Kode PIN pembatalan transaksi (void) | Pemilik | Saat kasir mengajukan pembatalan transaksi. | 🔒 Tidak (terkunci) |
+| 23 | Usulan tindakan AI menunggu persetujuan | Pemilik | Saat asisten AI mengusulkan sebuah tindakan yang butuh persetujuan pemilik. | Ya |
+| 24 | Pesan campaign / promo dari AI | Pelanggan | Saat asisten AI menjalankan campaign ke segmen pelanggan tertentu (fitur ini harus diaktifkan dulu di pengaturan otomatisasi). | Ya |
+| 25 | Penawaran untuk pelanggan lama (retensi) | Pelanggan | Saat asisten AI mendeteksi pelanggan sudah lama tidak datang dan mengirim penawaran (butuh toggle "retention offers" aktif). | Ya |
+| 26 | Rekomendasi membership dari AI | Pelanggan | Saat asisten AI melihat pola cuci pelanggan lebih hemat bila memakai membership (butuh toggle "membership recommendations" aktif). | Ya |
 
-## Membership
+---
 
-### Membership aktif (selamat datang)
+## 3. Rincian per notifikasi
 
-**Penerima:** Pelanggan
+### 3.1 Membership
 
-**Trigger:** Saat pembayaran membership berhasil dan membership pelanggan aktif. Hanya dikirim bila paket membership tersebut mengaktifkan "kirim pesan selamat datang". Dikirim satu kali per membership.
+#### 3.1.1 Membership aktif (selamat datang)
 
-**Variabel yang tersedia:**
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `membership_welcome` |
 
-| Variabel | Isi | Contoh | Opsional |
+**Pemicu.** Saat pembayaran membership berhasil dan membership pelanggan aktif. Hanya dikirim bila paket membership tersebut mengaktifkan "kirim pesan selamat datang". Dikirim satu kali per membership.
+
+**Variabel yang tersedia.**
+
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{planName}` | Nama paket membership | Unlimited | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{planName}` | Nama paket membership | Unlimited | Tidak |
 | `{endDate}` | Tanggal berakhir membership | 06 September 2026 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 🎉
@@ -70,7 +89,7 @@ Berlaku sampai {endDate}.
 Tinggal sebutkan nomor HP atau plat mobil kakak di kasir untuk pakai benefitnya ya 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 🎉
@@ -79,22 +98,26 @@ Berlaku sampai 06 September 2026.
 Tinggal sebutkan nomor HP atau plat mobil kakak di kasir untuk pakai benefitnya ya 😊
 ```
 
-### Pengingat membership akan habis (H-30 / H-7 / hari-H)
+#### 3.1.2 Pengingat membership akan habis (H-30 / H-7 / hari-H)
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `membership_expiry_reminder` |
 
-**Trigger:** Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. Setiap tahap hanya dikirim satu kali.
+**Pemicu.** Otomatis setiap 6 jam, sistem mencari membership aktif yang berakhir dalam 30 hari, 7 hari, atau hari ini, lalu mengirim pengingat. Setiap tahap hanya dikirim satu kali.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{planName}` | Nama paket membership | Unlimited | — |
-| `{expiryPhrase}` | Keterangan waktu otomatis: "hari ini" atau "7 hari lagi" | 7 hari lagi | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{planName}` | Nama paket membership | Unlimited | Tidak |
+| `{expiryPhrase}` | Keterangan waktu otomatis: "hari ini" atau "7 hari lagi" | 7 hari lagi | Tidak |
 | `{endDate}` | Tanggal berakhir membership | 06 September 2026 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 🔔
@@ -103,7 +126,7 @@ Berlaku sampai {endDate}.
 Mau kami bantu perpanjang sekarang biar benefitnya jalan terus? 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 🔔
@@ -112,25 +135,29 @@ Berlaku sampai 06 September 2026.
 Mau kami bantu perpanjang sekarang biar benefitnya jalan terus? 😊
 ```
 
-## Voucher
+### 3.2 Voucher
 
-### Voucher dibeli — kode dikirim
+#### 3.2.1 Voucher dibeli — kode dikirim
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `voucher_purchased` |
 
-**Trigger:** Saat pelanggan membeli paket voucher di kasir dan nomor HP-nya tercatat. Berisi seluruh kode voucher yang baru terbit.
+**Pemicu.** Saat pelanggan membeli paket voucher di kasir dan nomor HP-nya tercatat. Berisi seluruh kode voucher yang baru terbit.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pembeli | Budi | — |
-| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | — |
-| `{codeCount}` | Jumlah kode voucher | 10 | — |
+| `{customerName}` | Nama pembeli | Budi | Tidak |
+| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | Tidak |
+| `{codeCount}` | Jumlah kode voucher | 10 | Tidak |
 | `{codeList}` | Daftar kode voucher (otomatis, satu per baris) | 1. AIRE-8F2K / 2. AIRE-9Q1M | Ya |
 | `{expiryDate}` | Tanggal kedaluwarsa voucher (kosong bila tanpa batas) | 31 Desember 2026 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! Terima kasih atas pembelian *{voucherName}* 🎫
@@ -141,7 +168,7 @@ Berlaku sampai {expiryDate}.
 Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! Terima kasih atas pembelian *Paket Cuci 10x* 🎫
@@ -153,23 +180,27 @@ Berlaku sampai 31 Desember 2026.
 Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊
 ```
 
-### Voucher bonus diberikan
+#### 3.2.2 Voucher bonus diberikan
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `voucher_bonus_granted` |
 
-**Trigger:** Saat pelanggan mendapat voucher bonus dari sebuah campaign/promo (bukan pembelian). Berisi kode voucher bonusnya.
+**Pemicu.** Saat pelanggan mendapat voucher bonus dari sebuah campaign/promo (bukan pembelian). Berisi kode voucher bonusnya.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{voucherName}` | Nama paket voucher bonus | Bonus Cuci Gratis | — |
-| `{codeCount}` | Jumlah kode voucher | 2 | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{voucherName}` | Nama paket voucher bonus | Bonus Cuci Gratis | Tidak |
+| `{codeCount}` | Jumlah kode voucher | 2 | Tidak |
 | `{codeList}` | Daftar kode voucher (otomatis, satu per baris) | 1. AIRE-BON1 / 2. AIRE-BON2 | Ya |
 | `{expiryDate}` | Tanggal kedaluwarsa voucher (kosong bila tanpa batas) | 31 Desember 2026 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 🎉 Selamat, kakak dapat bonus *{voucherName}*!
@@ -180,7 +211,7 @@ Berlaku sampai {expiryDate}.
 Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 🎉 Selamat, kakak dapat bonus *Bonus Cuci Gratis*!
@@ -192,23 +223,27 @@ Berlaku sampai 31 Desember 2026.
 Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊
 ```
 
-### Voucher terpakai — sisa saldo
+#### 3.2.3 Voucher terpakai — sisa saldo
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `voucher_used` |
 
-**Trigger:** Saat satu atau lebih kode voucher ditukarkan di kasir, dan masih ada sisa kode. Dikirim ke pemilik voucher.
+**Pemicu.** Saat satu atau lebih kode voucher ditukarkan di kasir, dan masih ada sisa kode. Dikirim ke pemilik voucher.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | Tidak |
 | `{usedDetail}` | Rincian pemakaian otomatis, mis. " (2 kode) di transaksi ORD-1042, hemat Rp100.000" |  di transaksi ORD-1042, hemat Rp50.000 | Ya |
-| `{remainingCount}` | Sisa kode voucher | 8 | — |
+| `{remainingCount}` | Sisa kode voucher | 8 | Tidak |
 | `{remainingCodes}` | Daftar sisa kode (hanya untuk pemilik voucher) | 1. AIRE-8F2K / 2. AIRE-9Q1M | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 😊 Voucher *{voucherName}* berhasil digunakan{usedDetail}.
@@ -219,7 +254,7 @@ Sisa voucher kakak: *{remainingCount}* kode
 Terima kasih ya kak! 🚗✨
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 😊 Voucher *Paket Cuci 10x* berhasil digunakan di transaksi ORD-1042, hemat Rp50.000.
@@ -231,21 +266,25 @@ Sisa voucher kakak: *8* kode
 Terima kasih ya kak! 🚗✨
 ```
 
-### Voucher terpakai — dipakai orang lain
+#### 3.2.4 Voucher terpakai — dipakai orang lain
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `voucher_used_shared` |
 
-**Trigger:** Ketika kode voucher ditukarkan oleh orang yang bukan pemilik voucher (voucher memang bisa dibagikan). Penerima hanya diberi tahu jumlah sisanya — daftar kodenya tidak ikut dikirim karena itu milik orang lain.
+**Pemicu.** Ketika kode voucher ditukarkan oleh orang yang bukan pemilik voucher (voucher memang bisa dibagikan). Penerima hanya diberi tahu jumlah sisanya — daftar kodenya tidak ikut dikirim karena itu milik orang lain.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | — |
+| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | Tidak |
 | `{usedDetail}` | Rincian pemakaian otomatis |  di transaksi ORD-1042, hemat Rp50.000 | Ya |
-| `{remainingCount}` | Sisa kode voucher | 8 | — |
+| `{remainingCount}` | Sisa kode voucher | 8 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak! 😊 Voucher *{voucherName}* berhasil digunakan{usedDetail}.
@@ -255,7 +294,7 @@ Sisa voucher: *{remainingCount}* kode.
 Terima kasih ya kak! 🚗✨
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak! 😊 Voucher *Paket Cuci 10x* berhasil digunakan di transaksi ORD-1042, hemat Rp50.000.
@@ -265,21 +304,25 @@ Sisa voucher: *8* kode.
 Terima kasih ya kak! 🚗✨
 ```
 
-### Voucher terpakai — kode habis
+#### 3.2.5 Voucher terpakai — kode habis
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `voucher_used_last` |
 
-**Trigger:** Sama seperti di atas, tetapi dikirim ketika kode voucher pelanggan sudah habis semua.
+**Pemicu.** Sama seperti di atas, tetapi dikirim ketika kode voucher pelanggan sudah habis semua.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{voucherName}` | Nama paket voucher | Paket Cuci 10x | Tidak |
 | `{usedDetail}` | Rincian pemakaian otomatis |  di transaksi ORD-1042, hemat Rp50.000 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 😊 Voucher *{voucherName}* berhasil digunakan{usedDetail}.
@@ -289,7 +332,7 @@ Voucher kakak sudah terpakai semua ya 🙏 Kalau mau beli lagi, tinggal bilang k
 Terima kasih ya kak! 🚗✨
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 😊 Voucher *Paket Cuci 10x* berhasil digunakan di transaksi ORD-1042, hemat Rp50.000.
@@ -299,24 +342,28 @@ Voucher kakak sudah terpakai semua ya 🙏 Kalau mau beli lagi, tinggal bilang k
 Terima kasih ya kak! 🚗✨
 ```
 
-## Transaksi & Pembayaran
+### 3.3 Transaksi & Pembayaran
 
-### Struk / invoice setelah pembayaran
+#### 3.3.1 Struk / invoice setelah pembayaran
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `payment_receipt` |
 
-**Trigger:** Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. Berisi tautan struk digital yang bisa dibuka pelanggan.
+**Pemicu.** Saat pesanan selesai dibayar dan nomor HP pelanggan tercatat. Berisi tautan struk digital yang bisa dibuka pelanggan.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{orderNumber}` | Nomor pesanan | ORD-1042 | — |
-| `{total}` | Total pembayaran | Rp150.000 | — |
-| `{receiptUrl}` | Tautan struk digital | https://app.useairin.id/receipt/abc123 | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{orderNumber}` | Nomor pesanan | ORD-1042 | Tidak |
+| `{total}` | Total pembayaran | Rp150.000 | Tidak |
+| `{receiptUrl}` | Tautan struk digital | https://app.useairin.id/receipt/abc123 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo {customerName}, terima kasih atas pembayaran Anda 🙏
@@ -324,7 +371,7 @@ Pesanan {orderNumber} — Total {total}.
 Lihat invoice: {receiptUrl}
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo Budi, terima kasih atas pembayaran Anda 🙏
@@ -332,23 +379,27 @@ Pesanan ORD-1042 — Total Rp150.000.
 Lihat invoice: https://app.useairin.id/receipt/abc123
 ```
 
-## Antrian
+### 3.4 Antrian
 
-### Mobil selesai dicuci
+#### 3.4.1 Mobil selesai dicuci
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `queue_completion` |
 
-**Trigger:** Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat.
+**Pemicu.** Saat kasir menandai mobil di papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
 | `{plate}` | Plat nomor kendaraan | B 1234 XYZ | Ya |
 | `{outletName}` | Nama cabang | Kencana Loka | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! ✨
@@ -358,7 +409,7 @@ Cabang: {outletName}
 Silakan menuju kasir ya kak. Terima kasih!
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! ✨
@@ -368,21 +419,25 @@ Cabang: Kencana Loka
 Silakan menuju kasir ya kak. Terima kasih!
 ```
 
-## Booking
+### 3.5 Booking
 
-### Permintaan booking diterima
+#### 3.5.1 Permintaan booking diterima
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `booking_received` |
 
-**Trigger:** Saat pelanggan mengajukan booking lewat WhatsApp dan permintaannya menunggu konfirmasi tim.
+**Pemicu.** Saat pelanggan mengajukan booking lewat WhatsApp dan permintaannya menunggu konfirmasi tim.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
 | `{bookingSummary}` | Ringkasan booking (layanan, waktu) | Cuci Premium · 10 Agustus 2026 14:00 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Terima kasih! Permintaan booking Anda kami terima ✅
@@ -390,7 +445,7 @@ Terima kasih! Permintaan booking Anda kami terima ✅
 Menunggu konfirmasi akhir dari tim kami — Anda akan kami kabari.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Terima kasih! Permintaan booking Anda kami terima ✅
@@ -398,21 +453,25 @@ Cuci Premium · 10 Agustus 2026 14:00
 Menunggu konfirmasi akhir dari tim kami — Anda akan kami kabari.
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### Booking dikonfirmasi
+#### 3.5.2 Booking dikonfirmasi
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `booking_confirmed` |
 
-**Trigger:** Saat tim cabang menyetujui booking — baik lewat balasan WhatsApp maupun lewat tautan konfirmasi dari portal pelanggan.
+**Pemicu.** Saat tim cabang menyetujui booking — baik lewat balasan WhatsApp maupun lewat tautan konfirmasi dari portal pelanggan.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
 | `{bookingSummary}` | Ringkasan booking (layanan, waktu) | Cuci Premium · 10 Agustus 2026 14:00 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Booking Anda telah DIKONFIRMASI tim kami ✅
@@ -420,7 +479,7 @@ Booking Anda telah DIKONFIRMASI tim kami ✅
 Sampai jumpa!
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Booking Anda telah DIKONFIRMASI tim kami ✅
@@ -428,21 +487,25 @@ Cuci Premium · 10 Agustus 2026 14:00
 Sampai jumpa!
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### Booking ditolak
+#### 3.5.3 Booking ditolak
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `booking_rejected` |
 
-**Trigger:** Saat tim cabang menolak permintaan booking pelanggan.
+**Pemicu.** Saat tim cabang menolak permintaan booking pelanggan.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
 | `{bookingSummary}` | Ringkasan booking (layanan, waktu) | Cuci Premium · 10 Agustus 2026 14:00 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Maaf, booking Anda belum dapat kami konfirmasi 🙏
@@ -450,7 +513,7 @@ Maaf, booking Anda belum dapat kami konfirmasi 🙏
 Silakan hubungi kami atau coba pilih waktu lain ya.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Maaf, booking Anda belum dapat kami konfirmasi 🙏
@@ -458,49 +521,57 @@ Cuci Premium · 10 Agustus 2026 14:00
 Silakan hubungi kami atau coba pilih waktu lain ya.
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### Booking kedaluwarsa otomatis
+#### 3.5.4 Booking kedaluwarsa otomatis
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `booking_expired` |
 
-**Trigger:** Saat permintaan booking tidak dikonfirmasi tim sampai batas waktunya, sistem membatalkannya otomatis dan mengabari pelanggan.
+**Pemicu.** Saat permintaan booking tidak dikonfirmasi tim sampai batas waktunya, sistem membatalkannya otomatis dan mengabari pelanggan.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
 | `{bookingSummary}` | Ringkasan booking (layanan, waktu) | Cuci Premium · 10 Agustus 2026 14:00 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak, maaf banget ya 🙏 Booking kakak ({bookingSummary}) belum sempat tim kami konfirmasi jadi otomatis kedaluwarsa.
 Kalau masih mau dijadwalkan, chat kami aja ya — nanti kami bantu atur ulang 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak, maaf banget ya 🙏 Booking kakak (Cuci Premium · 10 Agustus 2026 14:00) belum sempat tim kami konfirmasi jadi otomatis kedaluwarsa.
 Kalau masih mau dijadwalkan, chat kami aja ya — nanti kami bantu atur ulang 😊
 ```
 
-### Permintaan booking baru (untuk tim)
+#### 3.5.5 Permintaan booking baru (untuk tim)
 
-**Penerima:** Kasir / Tim Cabang
+| | |
+|---|---|
+| **Penerima** | Kasir / Tim Cabang |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `booking_approval_request` |
 
-**Trigger:** Saat ada permintaan booking lewat WhatsApp. Dikirim ke nomor eskalasi tim agar bisa dibalas TERIMA / TOLAK.
+**Pemicu.** Saat ada permintaan booking lewat WhatsApp. Dikirim ke nomor eskalasi tim agar bisa dibalas TERIMA / TOLAK.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{ref}` | Kode referensi booking untuk dibalas | B7K2 | — |
+| `{ref}` | Kode referensi booking untuk dibalas | B7K2 | Tidak |
 | `{bookingSummary}` | Ringkasan booking | Cuci Premium · 10 Agustus 2026 14:00 | Ya |
-| `{customerPhone}` | Nomor HP pelanggan | 628123456789 | — |
+| `{customerPhone}` | Nomor HP pelanggan | 628123456789 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 🆕 Booking baru menunggu persetujuan [{ref}]:
@@ -510,7 +581,7 @@ Pelanggan: {customerPhone}
 Balas TERIMA {ref} untuk konfirmasi atau TOLAK {ref} untuk menolak.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 🆕 Booking baru menunggu persetujuan [B7K2]:
@@ -520,26 +591,30 @@ Pelanggan: 628123456789
 Balas TERIMA B7K2 untuk konfirmasi atau TOLAK B7K2 untuk menolak.
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### Booking baru dari portal pelanggan (untuk cabang)
+#### 3.5.6 Booking baru dari portal pelanggan (untuk cabang)
 
-**Penerima:** Kasir / Tim Cabang
+| | |
+|---|---|
+| **Penerima** | Kasir / Tim Cabang |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `booking_branch_alert` |
 
-**Trigger:** Saat pelanggan membuat booking lewat portal/aplikasi. Dikirim ke nomor WhatsApp cabang beserta tautan konfirmasi.
+**Pemicu.** Saat pelanggan membuat booking lewat portal/aplikasi. Dikirim ke nomor WhatsApp cabang beserta tautan konfirmasi.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{outletName}` | Nama cabang | Kencana Loka | — |
-| `{customerName}` | Nama pelanggan | Budi | — |
+| `{outletName}` | Nama cabang | Kencana Loka | Tidak |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
 | `{plate}` | Plat nomor kendaraan | B 1234 XYZ | Ya |
 | `{serviceName}` | Layanan yang dipesan | Cuci Premium | Ya |
-| `{scheduledAt}` | Waktu booking | 10 Agu 2026, 14.00 | — |
-| `{confirmUrl}` | Tautan konfirmasi / tolak | https://app.useairin.id/confirm-booking/abc123 | — |
+| `{scheduledAt}` | Waktu booking | 10 Agu 2026, 14.00 | Tidak |
+| `{confirmUrl}` | Tautan konfirmasi / tolak | https://app.useairin.id/confirm-booking/abc123 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 📅 *Booking baru* — {outletName}
@@ -551,7 +626,7 @@ Waktu: {scheduledAt}
 Konfirmasi / tolak: {confirmUrl}
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 📅 *Booking baru* — Kencana Loka
@@ -563,59 +638,67 @@ Waktu: 10 Agu 2026, 14.00
 Konfirmasi / tolak: https://app.useairin.id/confirm-booking/abc123
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-## Feedback & Ulasan
+### 3.6 Feedback & Ulasan
 
-### Permintaan ulasan / feedback
+#### 3.6.1 Permintaan ulasan / feedback
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `feedback_request` |
 
-**Trigger:** Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit).
+**Pemicu.** Setelah transaksi selesai, sesuai jeda waktu yang diatur di halaman Feedback (langsung atau tertunda beberapa menit).
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{thanksMessage}` | Kalimat pembuka dari pengaturan Feedback | Terima kasih sudah mampir! Bagaimana layanan kami? | — |
-| `{feedbackUrl}` | Tautan formulir ulasan | https://app.useairin.id/feedback/abc123 | — |
+| `{thanksMessage}` | Kalimat pembuka dari pengaturan Feedback | Terima kasih sudah mampir! Bagaimana layanan kami? | Tidak |
+| `{feedbackUrl}` | Tautan formulir ulasan | https://app.useairin.id/feedback/abc123 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 {thanksMessage}
 {feedbackUrl}
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Terima kasih sudah mampir! Bagaimana layanan kami?
 https://app.useairin.id/feedback/abc123
 ```
 
-## Akun Pelanggan
+### 3.7 Akun Pelanggan
 
-### Kode masuk akun pelanggan (OTP)
+#### 3.7.1 Kode masuk akun pelanggan (OTP)
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Tidak (terkunci) |
+| **Kode sistem** | `portal_login_otp` |
 
-**Trigger:** Saat pelanggan meminta kode masuk ke portal/aplikasi pelanggan. Berlaku 5 menit.
+**Pemicu.** Saat pelanggan meminta kode masuk ke portal/aplikasi pelanggan. Berlaku 5 menit.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{code}` | Kode OTP 6 digit | 482915 | — |
+| `{code}` | Kode OTP 6 digit | 482915 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Kode masuk akun Anda: *{code}*
 Berlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Kode masuk akun Anda: *482915*
@@ -624,66 +707,80 @@ Berlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.
 
 > 🔒 **Teks terkunci.** Pesan ini membawa kode keamanan. Mengubahnya berisiko membuat pelanggan gagal masuk, jadi teksnya dikunci.
 
-### Nomor WhatsApp berhasil dikenali
+#### 3.7.2 Nomor WhatsApp berhasil dikenali
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `customer_linked_ack` |
 
-**Trigger:** Saat pelanggan yang chat lewat WhatsApp berhasil dicocokkan dengan datanya di sistem, sehingga asisten bisa mengecek membership/voucher miliknya.
+**Pemicu.** Saat pelanggan yang chat lewat WhatsApp berhasil dicocokkan dengan datanya di sistem, sehingga asisten bisa mengecek membership/voucher miliknya.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Makasih kak {customerName}! 😊 Sekarang kami sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa dibantu?
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Makasih kak Budi! 😊 Sekarang kami sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa dibantu?
 ```
 
-## Keamanan & Persetujuan
+### 3.8 Keamanan & Persetujuan
 
-### Percakapan diteruskan ke tim (balasan ke pelanggan)
+#### 3.8.1 Percakapan diteruskan ke tim (balasan ke pelanggan)
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `escalation_ack` |
 
-**Trigger:** Saat asisten WhatsApp menyerahkan percakapan ke tim manusia.
+**Pemicu.** Saat asisten WhatsApp menyerahkan percakapan ke tim manusia.
 
-**Isi pesan (bawaan):**
+**Variabel yang tersedia.** Tidak ada; pesan ini tidak memuat variabel.
+
+**Teks bawaan.**
 
 ```text
 Baik kak, ini kami teruskan dulu ke tim biar dibantu lebih lanjut ya 🙏 Mohon tunggu sebentar, nanti tim langsung menghubungi kakak. Sambil menunggu, ada lagi yang bisa dibantu? 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Baik kak, ini kami teruskan dulu ke tim biar dibantu lebih lanjut ya 🙏 Mohon tunggu sebentar, nanti tim langsung menghubungi kakak. Sambil menunggu, ada lagi yang bisa dibantu? 😊
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### Peringatan eskalasi (untuk tim)
+#### 3.8.2 Peringatan eskalasi (untuk tim)
 
-**Penerima:** Kasir / Tim Cabang
+| | |
+|---|---|
+| **Penerima** | Kasir / Tim Cabang |
+| **Dapat dimatikan** | Tidak |
+| **Kode sistem** | `escalation_alert` |
 
-**Trigger:** Bersamaan dengan pesan di atas, dikirim ke nomor eskalasi tim yang diatur di pengaturan asisten.
+**Pemicu.** Bersamaan dengan pesan di atas, dikirim ke nomor eskalasi tim yang diatur di pengaturan asisten.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
 | `{from}` | Nomor HP pelanggan | 628123456789 | Ya |
 | `{reason}` | Alasan eskalasi | Pelanggan minta bicara dengan staf | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 🚨 *Percakapan dieskalasi ke tim*
@@ -692,7 +789,7 @@ Alasan: {reason}
 Silakan balas customer ini langsung ya.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 🚨 *Percakapan dieskalasi ke tim*
@@ -701,23 +798,27 @@ Alasan: Pelanggan minta bicara dengan staf
 Silakan balas customer ini langsung ya.
 ```
 
-> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.
+> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat dinonaktifkan karena dibutuhkan oleh alur transaksi.
 
-### Kode PIN refund
+#### 3.8.3 Kode PIN refund
 
-**Penerima:** Pemilik
+| | |
+|---|---|
+| **Penerima** | Pemilik |
+| **Dapat dimatikan** | Tidak (terkunci) |
+| **Kode sistem** | `refund_pin` |
 
-**Trigger:** Saat kasir mengajukan refund. Kode dikirim ke nomor eskalasi tenant agar refund hanya bisa disetujui pemilik.
+**Pemicu.** Saat kasir mengajukan refund. Kode dikirim ke nomor eskalasi tenant agar refund hanya bisa disetujui pemilik.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{orderNumber}` | Nomor pesanan | ORD-1042 | — |
-| `{pin}` | Kode PIN sekali pakai | 482915 | — |
-| `{ttlMinutes}` | Masa berlaku kode (menit) | 10 | — |
+| `{orderNumber}` | Nomor pesanan | ORD-1042 | Tidak |
+| `{pin}` | Kode PIN sekali pakai | 482915 | Tidak |
+| `{ttlMinutes}` | Masa berlaku kode (menit) | 10 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Kode PIN refund untuk order {orderNumber}: {pin}
@@ -725,7 +826,7 @@ Kode PIN refund untuk order {orderNumber}: {pin}
 Berlaku {ttlMinutes} menit. Jangan bagikan kode ini kepada siapa pun.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Kode PIN refund untuk order ORD-1042: 482915
@@ -735,21 +836,25 @@ Berlaku 10 menit. Jangan bagikan kode ini kepada siapa pun.
 
 > 🔒 **Teks terkunci.** Pesan ini membawa kode persetujuan refund. Teksnya dikunci demi keamanan.
 
-### Kode PIN pembatalan transaksi (void)
+#### 3.8.4 Kode PIN pembatalan transaksi (void)
 
-**Penerima:** Pemilik
+| | |
+|---|---|
+| **Penerima** | Pemilik |
+| **Dapat dimatikan** | Tidak (terkunci) |
+| **Kode sistem** | `void_pin` |
 
-**Trigger:** Saat kasir mengajukan pembatalan transaksi. Kode dikirim ke nomor WhatsApp pemilik.
+**Pemicu.** Saat kasir mengajukan pembatalan transaksi. Kode dikirim ke nomor WhatsApp pemilik.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{context}` | Rincian transaksi yang akan dibatalkan | ORD-1042 · Rp150.000 · Kasir Andi | — |
-| `{pin}` | Kode PIN sekali pakai | 482915 | — |
-| `{ttlMinutes}` | Masa berlaku kode (menit) | 10 | — |
+| `{context}` | Rincian transaksi yang akan dibatalkan | ORD-1042 · Rp150.000 · Kasir Andi | Tidak |
+| `{pin}` | Kode PIN sekali pakai | 482915 | Tidak |
+| `{ttlMinutes}` | Masa berlaku kode (menit) | 10 | Tidak |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Permintaan VOID (refund) perlu persetujuan Anda.
@@ -760,7 +865,7 @@ Kode PIN: {pin}
 Berlaku {ttlMinutes} menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Permintaan VOID (refund) perlu persetujuan Anda.
@@ -773,21 +878,25 @@ Berlaku 10 menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas
 
 > 🔒 **Teks terkunci.** Pesan ini membawa kode persetujuan pembatalan. Teksnya dikunci demi keamanan.
 
-### Usulan tindakan AI menunggu persetujuan
+#### 3.8.5 Usulan tindakan AI menunggu persetujuan
 
-**Penerima:** Pemilik
+| | |
+|---|---|
+| **Penerima** | Pemilik |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `action_proposal_pending` |
 
-**Trigger:** Saat asisten AI mengusulkan sebuah tindakan yang butuh persetujuan pemilik.
+**Pemicu.** Saat asisten AI mengusulkan sebuah tindakan yang butuh persetujuan pemilik.
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
 | `{actionType}` | Jenis tindakan yang diusulkan | Kirim promo ke pelanggan lama | Ya |
 | `{reasoning}` | Alasan AI | Ada 42 pelanggan tidak kembali selama 60 hari | Ya |
 | `{confidence}` | Tingkat keyakinan AI | 78% | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 🤖 *Usulan tindakan menunggu persetujuan*
@@ -797,7 +906,7 @@ Keyakinan: {confidence}
 Buka dashboard untuk menyetujui atau menolak.
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 🤖 *Usulan tindakan menunggu persetujuan*
@@ -807,24 +916,28 @@ Keyakinan: 78%
 Buka dashboard untuk menyetujui atau menolak.
 ```
 
-## Promo & Marketing
+### 3.9 Promo & Marketing
 
-### Pesan campaign / promo dari AI
+#### 3.9.1 Pesan campaign / promo dari AI
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `campaign_bonus` |
 
-**Trigger:** Saat asisten AI menjalankan campaign ke segmen pelanggan tertentu (fitur ini harus diaktifkan dulu di pengaturan otomatisasi).
+**Pemicu.** Saat asisten AI menjalankan campaign ke segmen pelanggan tertentu (fitur ini harus diaktifkan dulu di pengaturan otomatisasi).
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
-| `{campaignName}` | Nama campaign | Promo Akhir Pekan | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
+| `{campaignName}` | Nama campaign | Promo Akhir Pekan | Tidak |
 | `{codes}` | Kode voucher bila ada | AIRE-PROMO1 | Ya |
 | `{expiryDate}` | Tanggal kedaluwarsa bila ada | 31 Agustus 2026 | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 🎉
@@ -834,7 +947,7 @@ Berlaku sampai {expiryDate}.
 Kalau mau tanya-tanya dulu, balas aja pesan ini ya kak 😊
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 🎉
@@ -844,20 +957,24 @@ Berlaku sampai 31 Agustus 2026.
 Kalau mau tanya-tanya dulu, balas aja pesan ini ya kak 😊
 ```
 
-### Penawaran untuk pelanggan lama (retensi)
+#### 3.9.2 Penawaran untuk pelanggan lama (retensi)
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `retention_offer` |
 
-**Trigger:** Saat asisten AI mendeteksi pelanggan sudah lama tidak datang dan mengirim penawaran (butuh toggle "retention offers" aktif).
+**Pemicu.** Saat asisten AI mendeteksi pelanggan sudah lama tidak datang dan mengirim penawaran (butuh toggle "retention offers" aktif).
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
 | `{offer}` | Isi penawaran | diskon 20% untuk cuci berikutnya | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 😊
@@ -866,7 +983,7 @@ Ada penawaran khusus buat kakak: {offer}
 Mau kami bantu jadwalkan cuci berikutnya?
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 😊
@@ -875,20 +992,24 @@ Ada penawaran khusus buat kakak: diskon 20% untuk cuci berikutnya
 Mau kami bantu jadwalkan cuci berikutnya?
 ```
 
-### Rekomendasi membership dari AI
+#### 3.9.3 Rekomendasi membership dari AI
 
-**Penerima:** Pelanggan
+| | |
+|---|---|
+| **Penerima** | Pelanggan |
+| **Dapat dimatikan** | Ya |
+| **Kode sistem** | `membership_recommendation` |
 
-**Trigger:** Saat asisten AI melihat pola cuci pelanggan lebih hemat bila memakai membership (butuh toggle "membership recommendations" aktif).
+**Pemicu.** Saat asisten AI melihat pola cuci pelanggan lebih hemat bila memakai membership (butuh toggle "membership recommendations" aktif).
 
-**Variabel yang tersedia:**
+**Variabel yang tersedia.**
 
-| Variabel | Isi | Contoh | Opsional |
+| Variabel | Keterangan | Contoh nilai | Opsional |
 |---|---|---|---|
-| `{customerName}` | Nama pelanggan | Budi | — |
+| `{customerName}` | Nama pelanggan | Budi | Tidak |
 | `{offer}` | Isi rekomendasi | Paket Unlimited hemat ±Rp200.000/bulan | Ya |
 
-**Isi pesan (bawaan):**
+**Teks bawaan.**
 
 ```text
 Halo kak {customerName}! 😊
@@ -897,7 +1018,7 @@ Dari pola cuci kakak, ada paket membership yang kelihatannya lebih hemat nih.
 Mau kami jelaskan detailnya kak?
 ```
 
-**Contoh hasil yang diterima:**
+**Contoh hasil yang diterima.**
 
 ```text
 Halo kak Budi! 😊
@@ -906,8 +1027,12 @@ Paket Unlimited hemat ±Rp200.000/bulan
 Mau kami jelaskan detailnya kak?
 ```
 
-## Yang tidak termasuk daftar ini
+---
 
-- **Broadcast / campaign manual** — isinya Anda tulis sendiri setiap kali mengirim, di menu Broadcast (mendukung variabel `{name}`).
-- **Balasan asisten WhatsApp (Irene)** — dibuat oleh AI mengikuti percakapan, bukan template tetap. Gaya bicaranya diatur di pengaturan asisten, bukan di sini.
-- **Notifikasi di dalam dashboard** (badge, papan antrian realtime) — tampil di layar, tidak dikirim ke WhatsApp.
+## 4. Pesan yang tidak tercakup dalam dokumen ini
+
+Tiga jenis pesan berikut tidak diatur melalui halaman **Pengaturan → Notifications** dan karena itu tidak tercantum di atas:
+
+1. **Broadcast / campaign manual.** Teksnya disusun sendiri oleh pengguna pada setiap pengiriman melalui menu **WA Broadcast**, dengan dukungan variabel `{name}`.
+2. **Balasan asisten WhatsApp.** Disusun oleh AI mengikuti jalannya percakapan, bukan berdasarkan template tetap. Gaya bahasanya diatur pada pengaturan asisten.
+3. **Notifikasi di dalam dashboard.** Misalnya penanda jumlah dan papan antrian waktu nyata; ditampilkan di layar dan tidak dikirimkan melalui WhatsApp.

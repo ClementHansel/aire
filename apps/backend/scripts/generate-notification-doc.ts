@@ -26,49 +26,75 @@ const lines: string[] = [];
 
 lines.push('# Daftar Notifikasi Otomatis');
 lines.push('');
+lines.push('**Dokumen referensi untuk Pemilik Usaha (Tenant Owner)**');
+lines.push('');
 lines.push(
-  'Dokumen ini memuat **semua pesan otomatis** yang dikirim sistem atas nama Anda: ' +
-    'kapan pesan itu dikirim (trigger), siapa penerimanya, dan apa isinya.',
+  'Dokumen ini memuat seluruh pesan otomatis yang dikirimkan sistem atas nama usaha Anda. ' +
+    'Untuk setiap pesan dicantumkan pemicunya (kondisi yang menyebabkan pesan dikirim), penerimanya, ' +
+    'variabel yang tersedia, teks bawaan, serta contoh hasil yang diterima penerima.',
 );
 lines.push('');
 lines.push(
-  'Semua teks di bawah ini **dapat Anda ubah sendiri** lewat menu ' +
-    '**Pengaturan → Notifications** di dashboard, tanpa perlu menghubungi tim teknis. ' +
-    'Di sana Anda juga bisa mematikan sebagian notifikasi, melihat pratinjau, dan mengirim uji coba ke nomor Anda.',
+  'Seluruh teks dalam dokumen ini dapat diubah sendiri oleh Pemilik Usaha melalui menu ' +
+    '**Pengaturan → Notifications** pada dashboard, tanpa memerlukan bantuan tim teknis dan tanpa ' +
+    'pembaruan sistem. Perubahan yang disimpan berlaku pada pengiriman pesan berikutnya. Panduan ' +
+    'penggunaan halaman tersebut terdapat pada ' +
+    '[Panduan Pemilik Usaha §11.2](02-tenant-owner-manual.md#112-notifications-settings--notifications).',
 );
 lines.push('');
-lines.push('> ⚙️ Dokumen ini dihasilkan otomatis dari konfigurasi sistem, jadi isinya selalu sama dengan yang benar-benar dikirim.');
+lines.push(
+  '> **Catatan.** Dokumen ini dihasilkan otomatis dari konfigurasi sistem. Isinya karena itu selalu ' +
+    'identik dengan pesan yang benar-benar dikirimkan.',
+);
+lines.push('');
+lines.push('---');
 lines.push('');
 
 // ── How variables work ──────────────────────────────────────────────────────
-lines.push('## Cara membaca variabel');
+lines.push('## 1. Ketentuan penggunaan variabel');
 lines.push('');
 lines.push(
-  'Kata di dalam kurung kurawal seperti `{customerName}` adalah **variabel** — ' +
-    'sistem menggantinya dengan data asli saat pesan dikirim.',
+  'Kata yang ditulis di dalam kurung kurawal, misalnya `{customerName}`, merupakan **variabel**: ' +
+    'sistem menggantinya dengan data sebenarnya pada saat pesan dikirim.',
 );
 lines.push('');
-lines.push('- `Halo kak {customerName}!` → `Halo kak Budi!`');
+lines.push('Ketentuan yang berlaku:');
+lines.push('');
 lines.push(
-  '- Variabel bertanda **opsional** kadang kosong (misalnya voucher tanpa tanggal kedaluwarsa). ' +
-    'Bila kosong, **seluruh baris yang memakai variabel itu otomatis hilang** — jadi pelanggan tidak pernah ' +
-    'menerima kalimat setengah jadi seperti "Berlaku sampai ."',
+  '1. **Penggantian nilai.** `Halo kak {customerName}!` akan terkirim sebagai `Halo kak Budi!`.',
 );
-lines.push('- Anda hanya boleh memakai variabel yang terdaftar pada masing-masing notifikasi. Variabel lain akan ditolak saat disimpan.');
+lines.push(
+  '2. **Variabel opsional.** Variabel yang ditandai *opsional* dapat bernilai kosong, misalnya voucher ' +
+    'tanpa tanggal kedaluwarsa. Apabila nilainya kosong, **seluruh baris yang memuat variabel tersebut ' +
+    'tidak ikut dikirim**. Ketentuan ini mencegah penerima menerima kalimat tidak lengkap seperti ' +
+    '"Berlaku sampai .".',
+);
+lines.push(
+  '3. **Pembatasan variabel.** Hanya variabel yang terdaftar pada masing-masing notifikasi yang boleh ' +
+    'digunakan. Variabel di luar daftar akan ditolak pada saat penyimpanan.',
+);
+lines.push(
+  '4. **Pesan terkunci.** Sebagian pesan memuat kode keamanan sekali pakai dan teksnya tidak dapat diubah. ' +
+    'Pesan tersebut ditandai 🔒 pada tabel ringkasan.',
+);
+lines.push('');
+lines.push('---');
 lines.push('');
 
 // ── Summary table ───────────────────────────────────────────────────────────
-lines.push('## Ringkasan');
+lines.push('## 2. Ringkasan seluruh notifikasi');
 lines.push('');
-lines.push('| # | Notifikasi | Penerima | Trigger singkat | Bisa dimatikan? |');
+lines.push(`Sistem mengirimkan ${NOTIFICATION_CATALOG.length} jenis pesan otomatis.`);
+lines.push('');
+lines.push('| No. | Notifikasi | Penerima | Pemicu (ringkas) | Dapat dimatikan |');
 lines.push('|---|---|---|---|---|');
 NOTIFICATION_CATALOG.forEach((d, i) => {
   // First sentence only, without its full stop — one is appended below, and a
   // single-sentence trigger would otherwise end up with "..".
   const short = d.trigger.split('. ')[0]!.replace(/\.$/, '').replace(/\|/g, '\\|');
   lines.push(
-    `| ${i + 1} | [${d.title}](#${anchor(d.title)}) | ${AUDIENCE_LABELS[d.audience]} | ${short}. | ${
-      d.lockedReason ? '🔒 Terkunci' : d.canDisable ? 'Ya' : 'Tidak'
+    `| ${i + 1} | ${d.title} | ${AUDIENCE_LABELS[d.audience]} | ${short}. | ${
+      d.lockedReason ? '🔒 Tidak (terkunci)' : d.canDisable ? 'Ya' : 'Tidak'
     } |`,
   );
 });
@@ -77,35 +103,47 @@ lines.push('');
 // ── Detail per category ─────────────────────────────────────────────────────
 const categories = [...new Set(NOTIFICATION_CATALOG.map((d) => d.category))] as NotificationCategory[];
 
-for (const cat of categories) {
-  lines.push(`## ${CATEGORY_LABELS[cat]}`);
+lines.push('---');
+lines.push('');
+lines.push('## 3. Rincian per notifikasi');
+lines.push('');
+
+categories.forEach((cat, ci) => {
+  lines.push(`### 3.${ci + 1} ${CATEGORY_LABELS[cat]}`);
   lines.push('');
 
-  for (const d of NOTIFICATION_CATALOG.filter((x) => x.category === cat)) {
-    lines.push(`### ${d.title}`);
+  NOTIFICATION_CATALOG.filter((x) => x.category === cat).forEach((d, di) => {
+    lines.push(`#### 3.${ci + 1}.${di + 1} ${d.title}`);
     lines.push('');
-    lines.push(`**Penerima:** ${AUDIENCE_LABELS[d.audience]}`);
+    lines.push('| | |');
+    lines.push('|---|---|');
+    lines.push(`| **Penerima** | ${AUDIENCE_LABELS[d.audience]} |`);
+    lines.push(`| **Dapat dimatikan** | ${d.lockedReason ? 'Tidak (terkunci)' : d.canDisable ? 'Ya' : 'Tidak'} |`);
+    lines.push(`| **Kode sistem** | \`${d.key}\` |`);
     lines.push('');
-    lines.push(`**Trigger:** ${d.trigger}`);
+    lines.push(`**Pemicu.** ${d.trigger}`);
     lines.push('');
 
     if (d.variables.length > 0) {
-      lines.push('**Variabel yang tersedia:**');
+      lines.push('**Variabel yang tersedia.**');
       lines.push('');
-      lines.push('| Variabel | Isi | Contoh | Opsional |');
+      lines.push('| Variabel | Keterangan | Contoh nilai | Opsional |');
       lines.push('|---|---|---|---|');
       for (const v of d.variables) {
         const sample = v.sample.replace(/\n/g, ' / ').replace(/\|/g, '\\|');
-        lines.push(`| \`{${v.name}}\` | ${v.description} | ${sample} | ${v.optional ? 'Ya' : '—'} |`);
+        lines.push(`| \`{${v.name}}\` | ${v.description} | ${sample} | ${v.optional ? 'Ya' : 'Tidak'} |`);
       }
+      lines.push('');
+    } else {
+      lines.push('**Variabel yang tersedia.** Tidak ada; pesan ini tidak memuat variabel.');
       lines.push('');
     }
 
-    lines.push('**Isi pesan (bawaan):**');
+    lines.push('**Teks bawaan.**');
     lines.push('');
     lines.push(block(d.defaultBody));
     lines.push('');
-    lines.push('**Contoh hasil yang diterima:**');
+    lines.push('**Contoh hasil yang diterima.**');
     lines.push('');
     lines.push(block(fillForKey(d.key, d.defaultBody, sampleVars(d))));
     lines.push('');
@@ -114,29 +152,40 @@ for (const cat of categories) {
       lines.push(`> 🔒 **Teks terkunci.** ${d.lockedReason}`);
       lines.push('');
     } else if (!d.canDisable) {
-      lines.push('> ℹ️ Teks bisa diubah, tetapi notifikasi ini tidak bisa dimatikan karena dibutuhkan oleh alur transaksi.');
+      lines.push(
+        '> **Tidak dapat dimatikan.** Teks pesan ini dapat diubah, namun pengirimannya tidak dapat ' +
+          'dinonaktifkan karena dibutuhkan oleh alur transaksi.',
+      );
       lines.push('');
     }
     if (d.inactive) {
-      lines.push('> ⚠️ Notifikasi ini belum aktif — belum ada pemicunya di sistem.');
+      lines.push('> **Belum aktif.** Notifikasi ini belum memiliki pemicu di sistem.');
       lines.push('');
     }
-  }
-}
+  });
+});
 
 // ── What is NOT in this list ────────────────────────────────────────────────
-lines.push('## Yang tidak termasuk daftar ini');
+lines.push('---');
+lines.push('');
+lines.push('## 4. Pesan yang tidak tercakup dalam dokumen ini');
 lines.push('');
 lines.push(
-  '- **Broadcast / campaign manual** — isinya Anda tulis sendiri setiap kali mengirim, di menu Broadcast ' +
-    '(mendukung variabel `{name}`).',
+  'Tiga jenis pesan berikut tidak diatur melalui halaman **Pengaturan → Notifications** dan karena itu ' +
+    'tidak tercantum di atas:',
+);
+lines.push('');
+lines.push(
+  '1. **Broadcast / campaign manual.** Teksnya disusun sendiri oleh pengguna pada setiap pengiriman ' +
+    'melalui menu **WA Broadcast**, dengan dukungan variabel `{name}`.',
 );
 lines.push(
-  '- **Balasan asisten WhatsApp (Irene)** — dibuat oleh AI mengikuti percakapan, bukan template tetap. ' +
-    'Gaya bicaranya diatur di pengaturan asisten, bukan di sini.',
+  '2. **Balasan asisten WhatsApp.** Disusun oleh AI mengikuti jalannya percakapan, bukan berdasarkan ' +
+    'template tetap. Gaya bahasanya diatur pada pengaturan asisten.',
 );
 lines.push(
-  '- **Notifikasi di dalam dashboard** (badge, papan antrian realtime) — tampil di layar, tidak dikirim ke WhatsApp.',
+  '3. **Notifikasi di dalam dashboard.** Misalnya penanda jumlah dan papan antrian waktu nyata; ' +
+    'ditampilkan di layar dan tidak dikirimkan melalui WhatsApp.',
 );
 lines.push('');
 
@@ -145,10 +194,3 @@ writeFileSync(OUT, lines.join('\n'), 'utf8');
 // eslint-disable-next-line no-console
 console.log(`Wrote ${OUT} (${NOTIFICATION_CATALOG.length} notifications)`);
 
-function anchor(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .trim()
-    .replace(/\s+/g, '-');
-}
