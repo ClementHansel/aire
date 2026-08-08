@@ -78,6 +78,26 @@ export class HrService {
     @Optional() private readonly eventBus?: EventBusService,
   ) {}
 
+  /**
+   * Names for the POS salesperson picker — see HrController.salespeople for why
+   * this exists separately from listEmployees. Deliberately narrow: id, name and
+   * the linked user id, nothing an HR record would consider private, and only
+   * staff who are actually active.
+   */
+  async listSalespeople(
+    tenantId: string,
+    outletId?: string,
+  ): Promise<Array<{ id: string; name: string; userId: string | null }>> {
+    const params: unknown[] = [tenantId];
+    let where = `e.tenant_id = $1 AND e.status = 'active'`;
+    if (outletId) { params.push(outletId); where += ` AND e.outlet_id = $${params.length}`; }
+    const res = await this.pool.query<{ id: string; name: string; user_id: string | null }>(
+      `SELECT e.id, e.name, e.user_id FROM employees e WHERE ${where} ORDER BY e.name ASC`,
+      params,
+    );
+    return res.rows.map((r) => ({ id: r.id, name: r.name, userId: r.user_id ?? null }));
+  }
+
   async listEmployees(tenantId: string, outletId?: string): Promise<unknown[]> {
     const params: unknown[] = [tenantId];
     let where = 'e.tenant_id = $1';

@@ -45,6 +45,24 @@ export class HrController {
     return this.service.linkUser(user.tenant_id, id, body?.userId ?? null);
   }
 
+  /**
+   * Who can be credited for a sale at a branch — NAMES ONLY, for the POS
+   * salesperson picker (AIRIN-152).
+   *
+   * The full employee list needs `hr.read`, which a cashier has no business
+   * holding: it carries salary, email and phone. But the cashier is exactly who
+   * needs to say "this wash was Budi's sale" — so `/hr/employees` returned 403
+   * and the picker silently degraded to a free-text box for every till in the
+   * shop. This returns id + name + the link to their login (so the field can
+   * preselect whoever is signed in) and nothing else, branch-scoped, behind the
+   * same POS-critical exemption `my/branch-context` uses.
+   */
+  @Get('pos/salespeople')
+  @RequirePermission() /* POS-critical: crediting a sale is a till action, not an HR one */
+  salespeople(@CurrentUser() user: JWTPayload, @Query('outletId') outletId?: string) {
+    return this.service.listSalespeople(user.tenant_id, this.scope(user, outletId));
+  }
+
   @Get('employees')
   employees(@CurrentUser() user: JWTPayload, @Query('outletId') outletId?: string) {
     return this.service.listEmployees(user.tenant_id, this.scope(user, outletId));

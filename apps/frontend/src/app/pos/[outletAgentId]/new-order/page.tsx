@@ -291,8 +291,11 @@ export default function NewOrderPage() {
     // to whoever actually served the car, and only this branch's staff can have
     // (AIRIN-152). The signed-in cashier is preselected below, so an untouched
     // field still books the order to them.
+    // POS-scoped names endpoint, not /hr/employees — that one requires hr.read,
+    // which a cashier does not have, so the picker used to 403 and silently
+    // degrade to a free-text box at every till (AIRIN-152).
     api.get<{ id: string; name: string; userId?: string | null }[]>(
-      outletId ? `/hr/employees?outletId=${outletId}` : '/hr/employees',
+      outletId ? `/hr/pos/salespeople?outletId=${outletId}` : '/hr/pos/salespeople',
     )
       .then((rows) => {
         setEmployees(rows);
