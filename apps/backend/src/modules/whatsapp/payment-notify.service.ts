@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { WhatsappService } from './whatsapp.service';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 const fmtRp = (n: number) => `Rp ${Math.round(n).toLocaleString('id-ID')}`;
 
@@ -29,6 +30,7 @@ export class PaymentNotifyService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   /**
@@ -88,10 +90,13 @@ export class PaymentNotifyService {
     // production without extra env config.
     const base = process.env.APP_PUBLIC_URL || process.env.PUBLIC_APP_URL || 'https://app.useairin.id';
     const url = `${base}/receipt/${token}`;
-    const text =
-      `Terima kasih atas pembayaran Anda 🙏\n` +
-      `Pesanan ${o.order_number} — Total ${fmtRp(Number(o.total))}.\n` +
-      `Lihat invoice: ${url}`;
+    const text = await renderNotification(this.renderer, tenantId, 'payment_receipt', {
+      customerName: o.customer_name ?? '',
+      orderNumber: o.order_number,
+      total: fmtRp(Number(o.total)),
+      receiptUrl: url,
+    });
+    if (!text) return { sent: false, reason: 'Receipt notification is switched off' };
 
     const ok = await this.whatsapp
       .sendText(tenantId, o.customer_phone, text, o.outlet_id ?? outletIdHint ?? null)

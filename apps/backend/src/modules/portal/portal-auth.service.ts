@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { normalizePhone } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { WhatsappService } from '../whatsapp';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 const OTP_TTL_MS = 5 * 60 * 1000; // code valid 5 minutes
 const RESEND_COOLDOWN_MS = 30 * 1000; // min gap between sends
@@ -31,6 +32,7 @@ export class PortalAuthService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly whatsapp: WhatsappService,
     private readonly jwt: JwtService,
+    private readonly renderer: NotificationRendererService,
   ) {}
 
   private hash(tenantId: string, phone: string, code: string): string {
@@ -83,11 +85,10 @@ export class PortalAuthService {
       [tenantId, phone, codeHash, expiresAt],
     );
 
-    const sent = await this.whatsapp.sendText(
-      tenantId,
-      customer.rows[0]!.phone,
-      `Kode masuk akun Anda: *${code}*\nBerlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.`,
-    );
+    // Wording comes from the notification catalogue (locked there — an owner who
+    // edited `{code}` out would silently break login for every customer).
+    const text = await renderNotification(this.renderer, tenantId, 'portal_login_otp', { code });
+    const sent = text ? await this.whatsapp.sendText(tenantId, customer.rows[0]!.phone, text) : false;
     if (!sent) this.logger.warn(`WhatsApp OTP send failed for tenant ${tenantId} (WhatsApp may be disconnected)`);
     return { ok: true };
   }

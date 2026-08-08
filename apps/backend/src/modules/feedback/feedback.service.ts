@@ -15,6 +15,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from '../whatsapp';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 export type FeedbackQuestionType = 'rating' | 'nps' | 'text';
 /** A single survey question shown on the public form. */
@@ -98,6 +99,7 @@ export class FeedbackService implements OnModuleInit, OnModuleDestroy {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
     @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   private sweepTimer?: ReturnType<typeof setInterval>;
@@ -246,7 +248,15 @@ export class FeedbackService implements OnModuleInit, OnModuleDestroy {
     if (!this.whatsapp) return;
     const base = process.env.PUBLIC_APP_URL || '';
     const link = `${base}/feedback/${token}`;
-    const text = `${thanksMessage}\n${link}`;
+    // `thanksMessage` (from the Feedback page) stays a variable rather than being
+    // absorbed into the template, so the two settings keep working together: the
+    // Feedback page still owns the opening line, the notification editor owns how
+    // it is laid out around the link.
+    const text = await renderNotification(this.renderer, tenantId, 'feedback_request', {
+      thanksMessage,
+      feedbackUrl: link,
+    });
+    if (!text) return;
     try {
       await this.whatsapp.sendText(tenantId, phone, text);
     } catch (e) {

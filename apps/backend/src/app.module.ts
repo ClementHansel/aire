@@ -10,7 +10,7 @@ import { AdminModule } from './modules/admin';
 import { BayModule } from './modules/bay';
 import { CctvModule } from './modules/cctv';
 import { MembershipModule } from './modules/membership';
-import { NotificationModule } from './modules/notification';
+import { NotificationModule, NotificationRendererModule } from './modules/notification';
 import { OrderModule } from './modules/order';
 import { ReportModule } from './modules/report';
 import { ServiceModule } from './modules/service';
@@ -88,6 +88,8 @@ import { LprModule } from './modules/lpr';
     CustomerModule,
     KioskModule,
     MembershipModule,
+    // Global: supplies NotificationRendererService to every sending module.
+    NotificationRendererModule,
     NotificationModule,
     OrderModule,
     PaymentModule,

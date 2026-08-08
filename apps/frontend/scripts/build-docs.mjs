@@ -33,6 +33,7 @@ const REGISTRY = [
   { file: 'manuals/02-tenant-owner-manual.md', slug: 'tenant-owner-manual', category: 'manual', audience: 'Tenant Owner / Manager', blurb: 'Configure and run one business end to end — the biggest manual.' },
   { file: 'manuals/03-employee-manual.md', slug: 'employee-manual', category: 'manual', audience: 'Employee', blurb: 'POS, arrival queue, shifts, memberships, stock and HR.' },
   { file: 'manuals/04-customer-manual.md', slug: 'customer-manual', category: 'manual', audience: 'Customer', blurb: 'eMenu, kiosk, queue, member portal, bookings and WhatsApp.' },
+  { file: 'manuals/05-daftar-notifikasi.md', slug: 'daftar-notifikasi', category: 'manual', audience: 'Tenant Owner / Manager', blurb: 'Setiap pesan otomatis: pemicunya, isinya, dan cara mengubahnya sendiri.' },
   // Technical — gated to admin/staff roles.
   { file: 'tech/01-architecture.md', slug: 'tech-architecture', category: 'tech', audience: 'Technical', blurb: 'System overview, stack, topology, integrations.' },
   { file: 'tech/02-backend.md', slug: 'tech-backend', category: 'tech', audience: 'Technical', blurb: 'NestJS modules, auth, multi-tenancy, core flows.' },

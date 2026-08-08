@@ -5,6 +5,7 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from './whatsapp.service';
 import { loadBookSummary, loadActiveCodes, formatCodeList } from './voucher-book.query';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 const fmtRp = (n: number) => `Rp ${Math.round(n).toLocaleString('id-ID')}`;
 
@@ -45,6 +46,7 @@ export class VoucherRedeemNotifyService implements OnModuleInit, OnModuleDestroy
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
     @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   onModuleInit(): void {
@@ -88,21 +90,32 @@ export class VoucherRedeemNotifyService implements OnModuleInit, OnModuleDestroy
 
       const remaining = await loadActiveCodes(this.pool, tenantId, bookId);
 
-      const usedLine = [
-        `Halo kak! 😊 Voucher *${book.name}* berhasil digunakan`,
+      // "(2 kode) di transaksi ORD-1042, hemat Rp100.000" — assembled here because
+      // each clause is conditional; the owner edits where it sits in the sentence,
+      // not which parts appear.
+      const usedDetail = [
         usedHere > 1 ? ` (${usedHere} kode)` : '',
         payload.orderNumber ? ` di transaksi ${payload.orderNumber}` : '',
         payload.discount ? `, hemat ${fmtRp(Number(payload.discount))}` : '',
-        '.',
       ].join('');
 
-      const balance = remaining.length === 0
-        ? 'Voucher kakak sudah terpakai semua ya 🙏 Kalau mau beli lagi, tinggal bilang ke Irene aja kak!'
-        : toOwner
-          ? [`Sisa voucher kakak: *${remaining.length}* kode`, formatCodeList(remaining)].join('\n')
-          : `Sisa voucher: *${remaining.length}* kode.`;
+      const text = await renderNotification(
+        this.renderer,
+        tenantId,
+        // Three cases, three editable texts: nothing left, the owner (who gets
+        // their codes listed), and a third party who redeemed a shared code and
+        // must NOT be handed the rest of someone else's codes.
+        remaining.length === 0 ? 'voucher_used_last' : toOwner ? 'voucher_used' : 'voucher_used_shared',
+        {
+          customerName: book.buyerName?.trim() ?? '',
+          voucherName: book.name,
+          usedDetail,
+          remainingCount: remaining.length,
+          remainingCodes: toOwner ? formatCodeList(remaining) : '',
+        },
+      );
+      if (!text) continue;
 
-      const text = [usedLine, '', balance, '', 'Terima kasih ya kak! 🚗✨'].join('\n');
       await this.whatsapp.sendText(tenantId, phone, text, book.outletId ?? order?.outletId ?? eventOutletId ?? null);
     }
   }

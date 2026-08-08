@@ -1,8 +1,10 @@
-import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, Optional, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 export interface QueueEntry {
   id: string; plate: string | null; brand: string | null; model: string | null;
@@ -43,7 +45,11 @@ export class VehicleQueueService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly realtime?: RealtimeGateway,
+    @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
+
+  private readonly logger = new Logger(VehicleQueueService.name);
 
   /**
    * Push the current live queue for an outlet to the board / POS clients over
@@ -149,7 +155,36 @@ export class VehicleQueueService {
     if (res.rows.length === 0) throw new NotFoundException('Queue entry not found');
     const entry = this.map(res.rows[0]);
     void this.pushQueue(tenantId, res.rows[0].outlet_id);
+    // "Mobil kakak sudah selesai" — the catalogue has always defined this message
+    // (queue_completion) but nothing ever fired it. Marking the car done IS the
+    // trigger. Best-effort: the board must update whether or not WhatsApp is up.
+    if (status === 'done') void this.notifyCompletion(tenantId, res.rows[0]);
     return entry;
+  }
+
+  /**
+   * Tell the customer their car is ready. Never throws and never blocks the
+   * status change — a WhatsApp outage must not stop a cashier handing a car back.
+   */
+  private async notifyCompletion(
+    tenantId: string,
+    row: { customer_phone: string | null; customer_name: string | null; plate: string | null; outlet_id: string },
+  ): Promise<void> {
+    if (!this.whatsapp || !row.customer_phone) return;
+    try {
+      const outlet = await this.pool.query<{ name: string }>(
+        `SELECT name FROM outlets WHERE id = $1`,
+        [row.outlet_id],
+      );
+      const text = await renderNotification(this.renderer, tenantId, 'queue_completion', {
+        customerName: row.customer_name ?? '',
+        plate: row.plate ?? '',
+        outletName: outlet.rows[0]?.name ?? '',
+      });
+      if (text) await this.whatsapp.sendText(tenantId, row.customer_phone, text, row.outlet_id);
+    } catch (e) {
+      this.logger.warn(`Queue completion notice failed: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   /**

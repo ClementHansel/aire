@@ -9,6 +9,10 @@ that matches your role and follow it top to bottom.
 | [2 · Tenant Owner / Manager](02-tenant-owner-manual.md) | The owner/manager of one business | `/dashboard` (incl. Branches) |
 | [3 · Employee](03-employee-manual.md) | Cashier, outlet admin, or HR staff | `/pos`, parts of `/dashboard` |
 | [4 · Customer](04-customer-manual.md) | A paying customer of a business | eMenu, kiosk, member portal |
+| [5 · Daftar Notifikasi](05-daftar-notifikasi.md) | Any owner wanting to reword the automatic messages | `Pengaturan → Notifications` |
+
+> **5 · Daftar Notifikasi** is **generated** from the notification catalogue in code
+> (`pnpm --filter @aire/backend doc:notifications`). Edit the catalogue, not the Markdown.
 
 > **Screenshots** live in [`images/`](images/) and are embedded throughout each manual. They were
 > captured from the running app, so what you see in the guides matches what you'll see on screen.

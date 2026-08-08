@@ -5,6 +5,7 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from './whatsapp.service';
 import { loadBookSummary, loadActiveCodes, formatCodeList } from './voucher-book.query';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 /**
  * VoucherNotifyService — sends the customer the voucher NAME and the full list
@@ -35,6 +36,7 @@ export class VoucherNotifyService implements OnModuleInit, OnModuleDestroy {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly eventBus?: EventBusService,
     @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   onModuleInit(): void {
@@ -70,19 +72,17 @@ export class VoucherNotifyService implements OnModuleInit, OnModuleDestroy {
     const codes = await loadActiveCodes(this.pool, tenantId, bookId);
     if (codes.length === 0) return;
 
-    const greeting = book.buyerName?.trim() ? `Halo kak ${book.buyerName.trim()}! ` : 'Halo kak! ';
-    const opening = book.source === 'bonus'
-      ? `${greeting}🎉 Selamat, kakak dapat bonus *${book.name}*!`
-      : `${greeting}Terima kasih atas pembelian *${book.name}* 🎫`;
-
-    const text = [
-      opening,
-      '',
-      `Berikut ${codes.length} kode voucher yang bisa kakak gunakan:`,
-      formatCodeList(codes),
-      book.expiryDate ? `\nBerlaku sampai ${book.expiryDate}.` : '',
-      'Tunjukkan kodenya ke kasir saat mau dipakai ya kak 😊',
-    ].filter((l) => l !== '').join('\n');
+    // A purchase and a bonus read differently enough to be two entries the owner
+    // can word separately; everything after the opening line is shared.
+    const key = book.source === 'bonus' ? 'voucher_bonus_granted' : 'voucher_purchased';
+    const text = await renderNotification(this.renderer, tenantId, key, {
+      customerName: book.buyerName?.trim() ?? '',
+      voucherName: book.name,
+      codeCount: codes.length,
+      codeList: formatCodeList(codes),
+      expiryDate: book.expiryDate ?? '',
+    });
+    if (!text) return; // unknown key, or the owner switched this notification off
 
     await this.whatsapp.sendText(tenantId, book.buyerPhone, text, book.outletId ?? eventOutletId ?? null);
   }

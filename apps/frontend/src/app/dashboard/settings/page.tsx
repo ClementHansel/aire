@@ -18,6 +18,7 @@ import { DeviceDiscoverySection, type OutletOption } from './DeviceDiscoverySect
 import { BranchBridgesSection } from './BranchBridgesSection';
 import PaymentGatewaySection from './PaymentGatewaySection';
 import { AccountingPeriodsSection } from './AccountingPeriodsSection';
+import NotificationsSection from './NotificationsSection';
 
 /**
  * Tenant Settings — a tabbed console. Every tab is wired to a real backend and
@@ -25,7 +26,7 @@ import { AccountingPeriodsSection } from './AccountingPeriodsSection';
  * WhatsApp agent, payment gateway). "Payment Gateway" is folded in here.
  */
 
-type TabId = 'general' | 'whatsapp' | 'automation' | 'devices' | 'payment' | 'accounting';
+type TabId = 'general' | 'whatsapp' | 'notifications' | 'automation' | 'devices' | 'payment' | 'accounting';
 
 // NOTE: the AI "brain" (provider, API key, model, prompt, AI on/off) is owned by
 // the super-admin only — see the "AI configuration" panel on the admin tenant page
@@ -33,6 +34,7 @@ type TabId = 'general' | 'whatsapp' | 'automation' | 'devices' | 'payment' | 'ac
 const TABS: { id: TabId; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'whatsapp', label: 'WhatsApp' },
+  { id: 'notifications', label: 'Notifications' },
   { id: 'automation', label: 'Automation Controls' },
   { id: 'devices', label: 'Devices' },
   { id: 'payment', label: 'Payment Gateway' },
@@ -175,6 +177,8 @@ export default function SettingsPage() {
             <DeviceDiscoverySection tenantId={safeTenantId()} outlets={outlets} />
           </>
         )}
+
+        {tab === 'notifications' && <NotificationsSection />}
 
         {tab === 'payment' && <PaymentGatewaySection />}
 

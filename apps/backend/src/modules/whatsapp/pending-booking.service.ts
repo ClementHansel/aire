@@ -4,6 +4,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { BookingService } from '../booking/booking.service';
 import { AuditService } from '../audit/audit.service';
 import type { ResolvedCustomer } from './customer-context.service';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 /** A booking the AI has proposed but the customer has not yet confirmed. */
 export interface PendingBooking {
@@ -83,6 +84,7 @@ export class PendingBookingService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     @Optional() private readonly booking?: BookingService,
     @Optional() private readonly audit?: AuditService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   /** Normalize the stored ack column (array now; tolerate a legacy single object). */
@@ -179,7 +181,9 @@ export class PendingBookingService {
         return {
           handled: true,
           committed: true,
-          reply: `Terima kasih! Permintaan booking Anda kami terima ✅\n${summary}\nMenunggu konfirmasi akhir dari tim kami — Anda akan kami kabari.`,
+          reply: (await renderNotification(this.renderer, tenantId, 'booking_received', {
+            bookingSummary: summary,
+          })) ?? '',
           staffApproval: { bookingId: record.id, summary, customerPhone: fromPhone },
         };
       } catch (e) {
@@ -258,12 +262,22 @@ export class PendingBookingService {
         ? {
             handled: true,
             reply: `Booking dikonfirmasi ✅ (${target.summary}). Pelanggan sudah kami beri tahu.${more}`,
-            notifyCustomer: { phone: target.customerPhone, text: `Booking Anda telah DIKONFIRMASI tim kami ✅\n${target.summary}\nSampai jumpa!` },
+            notifyCustomer: {
+              phone: target.customerPhone,
+              text: (await renderNotification(this.renderer, tenantId, 'booking_confirmed', {
+                bookingSummary: target.summary,
+              })) ?? '',
+            },
           }
         : {
             handled: true,
             reply: `Booking ditolak (${target.summary}). Pelanggan sudah kami beri tahu.${more}`,
-            notifyCustomer: { phone: target.customerPhone, text: `Mohon maaf, booking Anda belum dapat kami konfirmasi saat ini.\n${target.summary}\nTim kami akan menghubungi Anda untuk alternatif jadwal.` },
+            notifyCustomer: {
+              phone: target.customerPhone,
+              text: (await renderNotification(this.renderer, tenantId, 'booking_rejected', {
+                bookingSummary: target.summary,
+              })) ?? '',
+            },
           };
     } catch (e) {
       this.logger.error(`Failed to resolve staff ack for booking ${target.bookingId}: ${String(e)}`);
@@ -322,12 +336,22 @@ export class PendingBookingService {
       ? {
           handled: true,
           reply: `Booking dikonfirmasi ✅ (${ack.summary}).`,
-          notifyCustomer: { phone: ack.customerPhone, text: `Booking Anda telah DIKONFIRMASI tim kami ✅\n${ack.summary}\nSampai jumpa!` },
+          notifyCustomer: {
+            phone: ack.customerPhone,
+            text: (await renderNotification(this.renderer, tenantId, 'booking_confirmed', {
+              bookingSummary: ack.summary,
+            })) ?? '',
+          },
         }
       : {
           handled: true,
           reply: `Booking ditolak (${ack.summary}).`,
-          notifyCustomer: { phone: ack.customerPhone, text: `Mohon maaf, booking Anda belum dapat kami konfirmasi saat ini.\n${ack.summary}\nTim kami akan menghubungi Anda untuk alternatif jadwal.` },
+          notifyCustomer: {
+            phone: ack.customerPhone,
+            text: (await renderNotification(this.renderer, tenantId, 'booking_rejected', {
+              bookingSummary: ack.summary,
+            })) ?? '',
+          },
         };
   }
 

@@ -10,6 +10,7 @@ import { JobMonitorService } from '../job-monitor';
 import { normalizePhone } from '@aire/shared';
 import { formatForWhatsApp } from './whatsapp-format';
 import { looksLikeReasoning } from '../../common/looks-like-reasoning';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 /** Once-per-chat identity request, appended after the first reply to an unknown sender. */
 const IDENTITY_ASK =
@@ -102,6 +103,9 @@ export class WhatsappService implements OnModuleInit {
     @Optional() private readonly pendingBooking?: PendingBookingService,
     @Optional() private readonly customerContext?: CustomerContextService,
     @Optional() private readonly jobMonitor?: JobMonitorService,
+    // Optional: the many unit tests that construct this service directly fall
+    // back to the catalogue defaults.
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   onModuleInit(): void {
@@ -127,7 +131,10 @@ export class WhatsappService implements OnModuleInit {
     try {
       const expired = await this.pendingBooking.sweepExpired();
       for (const e of expired) {
-        const text = `Halo kak, maaf banget ya 🙏 Booking kakak (${e.summary}) belum sempat tim kami konfirmasi jadi otomatis kedaluwarsa. Kalau masih mau dijadwalkan, chat Irene aja ya — nanti Irene bantu atur ulang 😊`;
+        const text = await renderNotification(this.renderer, e.tenantId, 'booking_expired', {
+          bookingSummary: e.summary,
+        });
+        if (!text) continue;
         const conv = await this.upsertConversation(e.tenantId, e.customerPhone);
         await this.addMessage(e.tenantId, conv.id, 'outbound', text, true, 'Booking');
         await this.sendText(e.tenantId, e.customerPhone, text);
@@ -620,7 +627,9 @@ export class WhatsappService implements OnModuleInit {
           await this.addMessage(tenantId, conv.id, 'outbound', ack.reply, true, 'Booking');
           await this.sendText(tenantId, params.from, ack.reply, outletId);
         }
-        if (ack.notifyCustomer) {
+        // Empty text = the owner switched that notification off; skip rather than
+        // sending an empty bubble.
+        if (ack.notifyCustomer?.text) {
           const custConv = await this.upsertConversation(tenantId, ack.notifyCustomer.phone, undefined, outletId);
           await this.addMessage(tenantId, custConv.id, 'outbound', ack.notifyCustomer.text, true, 'Booking');
           await this.sendText(tenantId, ack.notifyCustomer.phone, ack.notifyCustomer.text, outletId);
@@ -703,9 +712,13 @@ export class WhatsappService implements OnModuleInit {
     // their own phone simply matched a member on a normal question, DON'T stop:
     // fall through so the agent answers that question in the same turn.
     if (justIdentified && boundCustomer && identifiedFromText) {
-      const ack = `Makasih kak ${boundCustomer.name}! 😊 Sekarang Irene sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa Irene bantu?`;
-      await this.addMessage(tenantId, conv.id, 'outbound', ack, true, 'Irene');
-      await this.sendText(tenantId, params.from, ack, outletId);
+      const ack = await renderNotification(this.renderer, tenantId, 'customer_linked_ack', {
+        customerName: boundCustomer.name,
+      });
+      if (ack) {
+        await this.addMessage(tenantId, conv.id, 'outbound', ack, true, 'Irene');
+        await this.sendText(tenantId, params.from, ack, outletId);
+      }
       return;
     }
 
@@ -817,7 +830,12 @@ export class WhatsappService implements OnModuleInit {
     // Short code lets staff disambiguate when several bookings are pending at once.
     const ref = PendingBookingService.refFor(approval.bookingId);
     await this.pendingBooking.setStaffAck(staffConv.id, { ...approval, ref });
-    const text = `🆕 Booking baru menunggu persetujuan [${ref}]:\n${approval.summary}\nPelanggan: ${approval.customerPhone}\n\nBalas TERIMA ${ref} untuk konfirmasi atau TOLAK ${ref} untuk menolak.`;
+    const text = (await renderNotification(this.renderer, tenantId, 'booking_approval_request', {
+      ref,
+      bookingSummary: approval.summary,
+      customerPhone: approval.customerPhone,
+    })) ?? '';
+    if (!text) return;
     await this.addMessage(tenantId, staffConv.id, 'outbound', text, true, 'Booking');
     await this.sendButtons(tenantId, staffNumber, text, [{ id: `TERIMA ${ref}`, title: `TERIMA ${ref}` }, { id: `TOLAK ${ref}`, title: `TOLAK ${ref}` }], outletId);
   }
@@ -897,22 +915,19 @@ export class WhatsappService implements OnModuleInit {
 
   private async escalate(tenantId: string, convId: string, cfg: AgentCfgRow | null, from: string, reason: string, outletId?: string | null): Promise<void> {
     await this.pool.query(`UPDATE wa_conversations SET status = 'escalated' WHERE id = $1`, [convId]);
-    const ack = 'Baik kak, ini Irene teruskan dulu ke tim biar dibantu lebih lanjut ya 🙏 Mohon tunggu sebentar, nanti tim langsung menghubungi kakak. Sambil menunggu, ada lagi yang bisa Irene bantu? 😊';
-    await this.addMessage(tenantId, convId, 'outbound', ack, true, 'Escalation');
-    await this.sendText(tenantId, from, ack, outletId);
+    const ack = await renderNotification(this.renderer, tenantId, 'escalation_ack', {});
+    if (ack) {
+      await this.addMessage(tenantId, convId, 'outbound', ack, true, 'Escalation');
+      await this.sendText(tenantId, from, ack, outletId);
+    }
     // Alert the tenant's escalation number on their OWN line. This used to go
     // through NotificationService.sendWhatsApp, i.e. the unconfigured Meta
     // Business API — so the team was never actually paged when a customer got
     // escalated. sendText is right here anyway: it is this very class.
     if (cfg?.escalation_number) {
       try {
-        const alert = [
-          '🚨 *Percakapan dieskalasi ke tim*',
-          `Dari: ${from}`,
-          `Alasan: ${reason}`,
-          'Silakan balas customer ini langsung ya.',
-        ].join('\n');
-        await this.sendText(tenantId, cfg.escalation_number, alert, outletId);
+        const alert = await renderNotification(this.renderer, tenantId, 'escalation_alert', { from, reason });
+        if (alert) await this.sendText(tenantId, cfg.escalation_number, alert, outletId);
       } catch { /* best-effort */ }
     }
   }
@@ -1097,7 +1112,7 @@ export class WhatsappService implements OnModuleInit {
     if (!this.pendingBooking) return { ok: false };
     const outcome = await this.pendingBooking.resolveByBookingId(tenantId, bookingId, accept, decidedBy);
     if (!outcome) return { ok: false };
-    if (outcome.notifyCustomer) {
+    if (outcome.notifyCustomer?.text) {
       const conv = await this.upsertConversation(tenantId, outcome.notifyCustomer.phone);
       await this.addMessage(tenantId, conv.id, 'outbound', outcome.notifyCustomer.text, true, 'Booking');
       await this.sendText(tenantId, outcome.notifyCustomer.phone, outcome.notifyCustomer.text);

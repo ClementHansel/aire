@@ -344,6 +344,9 @@ export class ProposalService {
       if (owner.phone) {
         await this.notificationService.sendWhatsApp({
           to: owner.phone,
+          // Without this the message cannot be routed to the tenant's WhatsApp
+          // line and falls through to the unconfigured Meta branch.
+          tenantId,
           templateName: 'action_proposal_pending',
           params: {
             actionType: proposal.action_type,

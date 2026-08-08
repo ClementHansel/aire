@@ -4,6 +4,28 @@ import { SettingsService } from '../settings/settings.service';
 import { JobMonitorService } from '../job-monitor';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { renderNotificationText } from './notification-templates';
+import { NotificationRendererService } from './notification-renderer.service';
+
+/**
+ * The `templateName` values callers have always passed, mapped onto the keys in
+ * NOTIFICATION_CATALOG. Kept as an alias table rather than renamed at every call
+ * site so existing callers (and the AI tool layer, which passes these names as
+ * data) keep working while the catalogue uses clearer names.
+ */
+const CATALOG_KEY_ALIASES: Record<string, string> = {
+  membership_welcome: 'membership_welcome',
+  expiry_reminder: 'membership_expiry_reminder',
+  voucher_delivery: 'voucher_purchased',
+  campaign_bonus: 'campaign_bonus',
+  queue_completion: 'queue_completion',
+  retention_offer: 'retention_offer',
+  membership_recommendation: 'membership_recommendation',
+  action_proposal_pending: 'action_proposal_pending',
+  escalation: 'escalation_alert',
+};
+
+/** Sentinel distinguishing "owner switched this off" from "no such template". */
+const DISABLED = Symbol('notification-disabled');
 
 /**
  * WhatsApp message payload to be sent via the WhatsApp Business API.
@@ -143,6 +165,9 @@ export class NotificationService {
     // so the two modules genuinely reference each other. Same pattern as
     // AgentService <-> ScheduledAnalysisService.
     @Optional() @Inject(forwardRef(() => WhatsappService)) private readonly whatsapp?: WhatsappService,
+    // Optional so the existing unit tests, which construct this service by hand,
+    // keep working against the built-in texts.
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {
     this.whatsappApiUrl =
       this.configService.get<string>('WHATSAPP_API_URL') ?? 'https://api.whatsapp.business/v1';
@@ -189,7 +214,11 @@ export class NotificationService {
     // expiry reminders, agent retention offers, proposal alerts. The Meta branch
     // is kept for a deployment that genuinely registers templates with Meta.
     if (this.whatsapp && message.tenantId) {
-      const text = renderNotificationText(message.templateName, message.params);
+      const text = await this.renderText(message);
+      if (text === DISABLED) {
+        this.logger.log(`Notification '${message.templateName}' is switched off for tenant ${message.tenantId} — not sent`);
+        return { success: false, error: 'Notification disabled by tenant' };
+      }
       if (!text) {
         this.logger.warn(`No text body defined for notification template '${message.templateName}' — not sent`);
         return { success: false, error: `Unknown template: ${message.templateName}` };
@@ -261,6 +290,26 @@ export class NotificationService {
       );
       return { success: false, error: errorMessage };
     }
+  }
+
+  /**
+   * The text for a message: the tenant's own wording when they have edited it,
+   * otherwise the catalogue default. Returns DISABLED when the owner has
+   * switched this notification off, and null when the template is unknown.
+   */
+  private async renderText(message: WhatsAppMessage): Promise<string | null | typeof DISABLED> {
+    const catalogKey = CATALOG_KEY_ALIASES[message.templateName];
+    if (this.renderer && catalogKey && message.tenantId) {
+      const text = await this.renderer.render(message.tenantId, catalogKey, message.params);
+      if (text === null) {
+        // Either switched off, or the key vanished from the catalogue. Only the
+        // former is expected; distinguish so the log is honest.
+        return (await this.renderer.isEnabled(message.tenantId, catalogKey)) ? null : DISABLED;
+      }
+      return text;
+    }
+    // No renderer wired (unit tests) or a template outside the catalogue.
+    return renderNotificationText(message.templateName, message.params);
   }
 
   /**
@@ -462,10 +511,17 @@ export class NotificationService {
     const phone = data.phone as string | undefined;
     if (!phone) return null;
 
+    // Every caller passes tenantId in `data` (it is what routes the message to the
+    // tenant's WhatsApp line). Dropping it here sent every queued notification —
+    // membership welcome, H-30/H-7/H-0 expiry reminders — down the unconfigured
+    // Meta branch, where it silently failed while the caller recorded it as sent.
+    const tenantId = (data.tenantId as string | undefined) ?? undefined;
+
     switch (type) {
       case NotificationType.MembershipWelcome:
         return {
           to: phone,
+          tenantId,
           templateName: 'membership_welcome',
           params: {
             customerName: (data.customerName as string) ?? '',
@@ -477,6 +533,7 @@ export class NotificationService {
       case NotificationType.VoucherDelivery:
         return {
           to: phone,
+          tenantId,
           templateName: 'voucher_delivery',
           params: {
             customerName: (data.customerName as string) ?? '',
@@ -488,6 +545,7 @@ export class NotificationService {
       case NotificationType.CampaignBonus:
         return {
           to: phone,
+          tenantId,
           templateName: 'campaign_bonus',
           params: {
             customerName: (data.customerName as string) ?? '',
@@ -497,26 +555,38 @@ export class NotificationService {
           },
         };
 
-      case NotificationType.ExpiryReminder:
+      case NotificationType.ExpiryReminder: {
+        // The owner edits one body for all three milestones, so the "hari ini" /
+        // "7 hari lagi" wording is computed here and handed over as a variable
+        // rather than expressed as a conditional they would have to write.
+        const days = Number(data.daysRemaining);
+        const expiryPhrase = days === 0
+          ? 'hari ini'
+          : Number.isFinite(days) ? `${days} hari lagi` : 'sebentar lagi';
         return {
           to: phone,
+          tenantId,
           templateName: 'expiry_reminder',
           params: {
             customerName: (data.customerName as string) ?? '',
             planName: (data.planName as string) ?? '',
             daysRemaining: (data.daysRemaining as string) ?? '',
+            expiryPhrase,
             endDate: (data.endDate as string) ?? '',
           },
         };
+      }
 
       case NotificationType.QueueCompletion:
         return {
           to: phone,
+          tenantId,
           templateName: 'queue_completion',
           params: {
             customerName: (data.customerName as string) ?? '',
+            plate: (data.plate as string) ?? '',
+            outletName: (data.outletName as string) ?? '',
             orderNumber: (data.orderNumber as string) ?? '',
-            bayName: (data.bayName as string) ?? '',
           },
         };
 

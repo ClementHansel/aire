@@ -4,9 +4,11 @@ import { VehicleQueueService } from './vehicle-queue.service';
 import { QueueDailyCloseService } from './queue-daily-close.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { WhatsappModule } from '../whatsapp';
 
 @Module({
-  imports: [RealtimeModule],
+  // WhatsappModule: marking a car done now messages the customer that it's ready.
+  imports: [RealtimeModule, WhatsappModule],
   controllers: [VehicleQueueController],
   providers: [VehicleQueueService, QueueDailyCloseService, DatabasePoolProvider],
   exports: [VehicleQueueService],

@@ -6,6 +6,7 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { NotificationService } from '../notification/notification.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 import { JWTPayload, Role, checkVoidAuthorization } from '@aire/shared';
 import * as bcrypt from 'bcrypt';
 
@@ -51,6 +52,7 @@ export class RefundService {
     @Optional() private readonly eventBus?: EventBusService,
     @Optional() private readonly notification?: NotificationService,
     @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   /**
@@ -106,9 +108,11 @@ export class RefundService {
     orderNumber: string,
     pin: string,
   ): Promise<'whatsapp' | 'email'> {
-    const text =
-      `Kode PIN refund untuk order ${orderNumber}: ${pin}\n\n` +
-      `Berlaku ${RefundService.REFUND_PIN_TTL_MINUTES} menit. Jangan bagikan kode ini kepada siapa pun.`;
+    const text = (await renderNotification(this.renderer, tenantId, 'refund_pin', {
+      orderNumber,
+      pin,
+      ttlMinutes: RefundService.REFUND_PIN_TTL_MINUTES,
+    })) ?? '';
 
     if (this.whatsapp) {
       const cfg = await this.pool.query<{ escalation_number: string | null }>(

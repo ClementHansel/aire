@@ -4,8 +4,20 @@ import { randomBytes } from 'node:crypto';
 import { normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { WhatsappService } from '../whatsapp';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 
 const APP_URL = process.env.APP_PUBLIC_URL || 'https://app.useairin.id';
+
+/**
+ * The one-line "Cuci Premium · 10 Agu 2026, 14.00" the customer sees echoed back
+ * in every booking message. Shared by confirm and reject so the two never drift.
+ */
+function bookingSummary(serviceName: string | null, scheduledAt: Date | string | null): string {
+  const when = scheduledAt
+    ? new Date(scheduledAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
+  return [serviceName, when].filter(Boolean).join(' · ');
+}
 
 export interface CreatePortalBookingDto {
   outletId: string;
@@ -31,6 +43,7 @@ export class PortalBookingService {
   constructor(
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly whatsapp: WhatsappService,
+    private readonly renderer: NotificationRendererService,
   ) {}
 
   async list(tenantId: string, customerId: string) {
@@ -81,16 +94,16 @@ export class PortalBookingService {
     const cashierPhone = outlet.rows[0]!.phone;
     if (cashierPhone) {
       const link = `${APP_URL}/confirm-booking/${token}`;
-      const msg = [
-        `📅 *Booking baru* — ${outlet.rows[0]!.name}`,
+      const msg = await renderNotification(this.renderer, tenantId, 'booking_branch_alert', {
+        outletName: outlet.rows[0]!.name,
+        customerName: cust.rows[0]!.name,
         // Canonical plate, so the cashier sees the same spelling that was stored.
-        `${cust.rows[0]!.name}${plate ? ` · ${plate}` : ''}`,
-        serviceName ? `Layanan: ${serviceName}` : null,
-        `Waktu: ${when}`,
-        ``,
-        `Konfirmasi / tolak: ${link}`,
-      ].filter(Boolean).join('\n');
-      const sent = await this.whatsapp.sendText(tenantId, cashierPhone, msg);
+        plate: plate ?? '',
+        serviceName: serviceName ?? '',
+        scheduledAt: when,
+        confirmUrl: link,
+      });
+      const sent = msg ? await this.whatsapp.sendText(tenantId, cashierPhone, msg) : false;
       if (!sent) this.logger.warn(`Booking confirm WA not sent for tenant ${tenantId} (WhatsApp disconnected) — confirm via dashboard`);
     } else {
       this.logger.warn(`Branch ${dto.outletId} has no WhatsApp number — booking must be confirmed from the dashboard`);
@@ -118,7 +131,7 @@ export class PortalBookingService {
   /** Cashier confirms → create the queue entry + notify the customer. Idempotent. */
   async confirm(token: string): Promise<{ ok: true; status: string }> {
     const r = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, customer_name, customer_phone, license_plate, service_name, status, queue_entry_id
+      `SELECT id, tenant_id, outlet_id, customer_name, customer_phone, license_plate, service_name, scheduled_at, status, queue_entry_id
          FROM bookings WHERE confirmation_token = $1 LIMIT 1`,
       [token],
     );
@@ -142,15 +155,24 @@ export class PortalBookingService {
       [b.id, q.rows[0]!.id],
     );
     if (b.customer_phone) {
-      await this.whatsapp.sendText(b.tenant_id, b.customer_phone, `✅ Booking Anda dikonfirmasi. Mobil Anda telah masuk antrian. Sampai jumpa!`).catch(() => undefined);
+      // Same catalogue entry as the WhatsApp approval path, so the customer gets
+      // one consistent confirmation however the booking was approved.
+      const text = await renderNotification(this.renderer, b.tenant_id, 'booking_confirmed', {
+        bookingSummary: bookingSummary(b.service_name, b.scheduled_at),
+      });
+      if (text) await this.whatsapp.sendText(b.tenant_id, b.customer_phone, text).catch(() => undefined);
     }
     return { ok: true, status: 'confirmed' };
   }
 
   /** Cashier rejects → notify the customer. */
   async reject(token: string): Promise<{ ok: true; status: string }> {
-    const r = await this.pool.query<{ id: string; tenant_id: string; customer_phone: string | null; status: string }>(
-      `SELECT id, tenant_id, customer_phone, status FROM bookings WHERE confirmation_token = $1 LIMIT 1`,
+    const r = await this.pool.query<{
+      id: string; tenant_id: string; customer_phone: string | null; status: string;
+      service_name: string | null; scheduled_at: Date | string | null;
+    }>(
+      `SELECT id, tenant_id, customer_phone, status, service_name, scheduled_at
+         FROM bookings WHERE confirmation_token = $1 LIMIT 1`,
       [token],
     );
     if (r.rows.length === 0) throw new NotFoundException('Booking not found');
@@ -158,7 +180,10 @@ export class PortalBookingService {
     if (b.status === 'confirmed') throw new BadRequestException('This booking was already confirmed.');
     await this.pool.query(`UPDATE bookings SET status = 'rejected', updated_at = NOW() WHERE id = $1`, [b.id]);
     if (b.customer_phone) {
-      await this.whatsapp.sendText(b.tenant_id, b.customer_phone, `Maaf, booking Anda belum dapat dikonfirmasi. Silakan hubungi kami atau coba waktu lain.`).catch(() => undefined);
+      const text = await renderNotification(this.renderer, b.tenant_id, 'booking_rejected', {
+        bookingSummary: bookingSummary(b.service_name, b.scheduled_at),
+      });
+      if (text) await this.whatsapp.sendText(b.tenant_id, b.customer_phone, text).catch(() => undefined);
     }
     return { ok: true, status: 'rejected' };
   }

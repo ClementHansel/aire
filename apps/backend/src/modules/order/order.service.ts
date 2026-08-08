@@ -12,6 +12,7 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { NotificationService } from '../notification/notification.service';
 import { WhatsappService } from '../whatsapp';
+import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 import {
   CreateOrderRequest,
   OrderStatus,
@@ -190,6 +191,7 @@ export class OrderService {
     @Optional() private readonly eventBus?: EventBusService,
     @Optional() private readonly notification?: NotificationService,
     @Optional() private readonly whatsapp?: WhatsappService,
+    @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
   ) {}
 
   /**
@@ -1647,11 +1649,17 @@ export class OrderService {
     );
 
     let delivered = false;
+    // One rendered body for both channels — the WhatsApp message and the email
+    // used to be two copies of the same sentence that could drift apart.
+    const text = (await renderNotification(this.renderer, user.tenant_id, 'void_pin', {
+      context,
+      pin,
+      ttlMinutes: OrderService.VOID_PIN_TTL_MINUTES,
+    })) ?? '';
     // Primary channel: WhatsApp to the owner/escalation line via the LIVE WAHA
     // free-text integration (the same path booking approvals use) — works today
     // without an approved Business-API template. Mirrors the refund PIN flow.
     if (ownerPhone && this.whatsapp) {
-      const text = `Permintaan VOID (refund) perlu persetujuan Anda.\n\n${context}\n\nKode PIN: ${pin}\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas.`;
       const ok = await this.whatsapp.sendText(user.tenant_id, ownerPhone, text).catch(() => false);
       if (ok) delivered = true;
       else this.logger.warn(`Void PIN WhatsApp (WAHA) failed for order ${orderId}`);
@@ -1661,7 +1669,7 @@ export class OrderService {
       const em = await this.notification.sendEmail({
         to: ownerEmail,
         subject: `Persetujuan Void — Order ${order.order_number}`,
-        body: `Permintaan VOID (refund) perlu persetujuan Anda.\n\n${context}\n\nKode PIN: ${pin}\n\nBerlaku ${OrderService.VOID_PIN_TTL_MINUTES} menit. Berikan kode ini hanya jika Anda menyetujui pembatalan di atas.`,
+        body: text,
       });
       if (em.success) delivered = true;
       else this.logger.warn(`Void PIN email failed for order ${orderId}: ${em.error}`);
