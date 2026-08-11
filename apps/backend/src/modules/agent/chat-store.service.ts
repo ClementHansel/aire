@@ -279,7 +279,9 @@ export class ChatStoreService {
           {
             role: 'system',
             content:
-              'You name chat threads. Reply with ONLY a title of at most 6 words that describes the topic. No quotes, no punctuation at the end, no prefix like "Title:". Use the same language as the user.',
+              'You name chat threads. Reply with ONLY a title of at most 6 words naming what the USER asked about.'
+              + ' Never describe your own process — "Thinking", "Analysis", "Answer" and the like are wrong answers.'
+              + ' No quotes, no punctuation at the end, no prefix like "Title:". Use the same language as the user.',
           },
           { role: 'user', content: `${params.userMessage}\n\n---\n${params.assistantReply}`.slice(0, 1500) },
         ],
@@ -315,9 +317,28 @@ export function truncateTitle(text: string, max = 60): string {
 }
 
 /**
+ * Titles that name the MODEL'S OWN PROCESS rather than the conversation.
+ *
+ * A small model asked to name a thread will sometimes hand back the heading of
+ * its own scratchpad — the live deploy produced a thread called "Thinking
+ * Process". These are short and clean, so nothing else rejects them. Matched as
+ * a WHOLE title only: "Thinking Process" is junk, "Thinking about pricing" is a
+ * perfectly good name.
+ */
+const PROCESS_LABELS = new Set([
+  'thinking', 'thinking process', 'thought', 'thoughts', 'thought process',
+  'reasoning', 'reason', 'chain of thought', 'analysis', 'analisis',
+  'answer', 'final answer', 'response', 'reply', 'output', 'result',
+  'summary', 'ringkasan', 'jawaban', 'proses berpikir', 'pemikiran',
+  'user question', 'user request', 'question', 'pertanyaan',
+  'title', 'judul', 'untitled', 'chat', 'conversation', 'assistant',
+]);
+
+/**
  * Strip what small models wrap titles in: surrounding quotes, a "Title:" prefix,
  * trailing punctuation, and any second line. Returns '' when nothing usable is
- * left (e.g. the model answered the question instead of naming it).
+ * left — the model answered the question instead of naming it, or named its own
+ * thought process — so the caller falls back to the user's own words.
  */
 export function cleanTitle(raw: string): string {
   let t = (raw ?? '').split('\n').find((l) => l.trim() !== '') ?? '';
@@ -325,5 +346,8 @@ export function cleanTitle(raw: string): string {
   t = t.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim();
   t = t.replace(/[.,;:!?]+$/, '').trim();
   if (!t || t.length > 80) return '';
+  // "My analysis" / "The answer" are the same thing wearing a hat.
+  const bare = t.toLowerCase().replace(/^(my|the|our)\s+/, '').replace(/\s+/g, ' ');
+  if (PROCESS_LABELS.has(bare)) return '';
   return t;
 }

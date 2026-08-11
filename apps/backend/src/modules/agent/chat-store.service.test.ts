@@ -175,6 +175,27 @@ describe('cleanTitle', () => {
   it('rejects empty output', () => {
     expect(cleanTitle('   ')).toBe('');
   });
+
+  // The live deploy produced a thread called "Thinking Process": qwen handed back
+  // the heading of its own scratchpad. It is short and tidy, so nothing else
+  // catches it — the user's own words are a better title than the model's mood.
+  it.each([
+    'Thinking Process', 'thinking', 'Thought Process', 'Reasoning', 'Analysis',
+    'My analysis', 'The Answer', 'Final answer', 'Summary', 'Ringkasan',
+    'Proses berpikir', 'Untitled', 'Judul',
+  ])('rejects the process label %j', (raw) => {
+    expect(cleanTitle(raw)).toBe('');
+  });
+
+  // Whole-title match only — a real topic that happens to start with one of
+  // those words must survive.
+  it.each([
+    ['Thinking about pricing', 'Thinking about pricing'],
+    ['Analysis of July churn', 'Analysis of July churn'],
+    ['Ringkasan bisnis hari ini', 'Ringkasan bisnis hari ini'],
+  ])('keeps %j', (raw, expected) => {
+    expect(cleanTitle(raw)).toBe(expected);
+  });
 });
 
 describe('truncateTitle', () => {
