@@ -12,7 +12,9 @@ import { formatForWhatsApp } from './whatsapp-format';
 import { looksLikeReasoning } from '../../common/looks-like-reasoning';
 import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 import { WaWhitelistService } from './wa-whitelist.service';
-import { AgentChatService } from '../agent/agent-chat.service';
+// Token + type only — importing AgentChatService itself would close a runtime
+// import cycle (see agent/staff-chat.port.ts for the full explanation).
+import { STAFF_CHAT, type StaffChatPort } from '../agent/staff-chat.port';
 
 /** Once-per-chat identity request, appended after the first reply to an unknown sender. */
 const IDENTITY_ASK =
@@ -112,7 +114,7 @@ export class WhatsappService implements OnModuleInit {
     // unit tests keep constructing this service with a short argument list;
     // without them, every inbound message simply takes the customer path.
     @Optional() private readonly whitelist?: WaWhitelistService,
-    @Optional() private readonly staffChat?: AgentChatService,
+    @Optional() @Inject(STAFF_CHAT) private readonly staffChat?: StaffChatPort,
   ) {}
 
   onModuleInit(): void {

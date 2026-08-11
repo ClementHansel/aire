@@ -9,6 +9,7 @@ import { ScheduledAnalysisService } from './scheduled-analysis.service';
 import { AgentToolsService } from './agent-tools.service';
 import { AgentChatService } from './agent-chat.service';
 import { ChatStoreService } from './chat-store.service';
+import { STAFF_CHAT } from './staff-chat.port';
 import { SettingsModule } from '../settings/settings.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -31,7 +32,11 @@ import { DatabasePoolProvider } from '../auth/database.provider';
 @Module({
   imports: [SettingsModule, AuditModule, NotificationModule, InventoryModule, FinanceModule, SalesModule, HrModule, ProcurementModule],
   controllers: [AgentController],
-  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, ChatStoreService, DatabasePoolProvider],
-  exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, ChatStoreService],
+  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, ChatStoreService, DatabasePoolProvider,
+    // The WhatsApp staff path resolves the chat agent through this token so it
+    // never has to import the class (which would create an import cycle).
+    // `useExisting` keeps it the SAME instance the dashboard chat uses.
+    { provide: STAFF_CHAT, useExisting: AgentChatService }],
+  exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, ChatStoreService, STAFF_CHAT],
 })
 export class AgentModule {}
