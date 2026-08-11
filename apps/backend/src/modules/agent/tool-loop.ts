@@ -49,6 +49,7 @@ export const TOOL_PROTOCOL = `PROTOCOL — you MUST reply with a single JSON obj
 Rules:
 - Prefer read tools to ground answers in real data before responding.
 - Use at most a few tool calls, then give a clear, concise final answer.
+- NEVER say you are waiting for, or awaiting, a tool result. You are not waiting — you are driving. If part of the question still needs a tool, emit the tool call as this turn's JSON; only answer once you have what you need (or say plainly which part you could not check).
 - Never invent numbers, prices, order numbers, or membership details — rely only on tool results.
 - When a TOOL_RESULT message is provided, use it to decide the next step.`;
 
