@@ -158,7 +158,9 @@ export interface ToolLoopResult {
 
 export interface RunToolLoopOptions {
   llm: LLMRouterService;
-  tenantId: string;
+  /** Null for platform-scoped surfaces (the super-admin console), which belong
+   *  to no tenant — the tenant only ever labels the monitoring record. */
+  tenantId: string | null;
   outletId?: string | null;
   /** Full message list INCLUDING the system prompt as the first entry. */
   messages: ChatMessage[];

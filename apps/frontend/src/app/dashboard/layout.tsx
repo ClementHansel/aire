@@ -14,6 +14,8 @@ import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import AnnouncementsBanner from '@/components/dashboard/AnnouncementsBanner';
 import { OfflineIndicator } from '@/components/shared/OfflineIndicator';
+import { FloatingChat } from '@/components/shared/ai-chat/FloatingChat';
+import { TENANT_CHAT } from '@/components/shared/ai-chat/useAiChat';
 import {
   Home, LayoutDashboard, Receipt, Calculator, FileText, TrendingUp,
   Users, CalendarDays, Ticket, TicketPercent, Building2, Droplets,
@@ -108,7 +110,7 @@ const navSections: NavSection[] = [
   {
     title: 'AI',
     items: [
-      { id: 'assistant', label: 'AI Assistant', href: '/dashboard/assistant', icon: Bot, module: 'ai_assistant' },
+      { id: 'assistant', label: 'Airin AI Assistant', href: '/dashboard/assistant', icon: Bot, module: 'ai_assistant' },
       { id: 'agents', label: 'Agent Workflow', href: '/dashboard/agents', icon: Workflow, module: 'ai_assistant' },
       { id: 'ai-agent', label: 'WhatsApp', href: '/dashboard/ai-agent', icon: BrainCircuit, module: 'whatsapp' },
       { id: 'knowledge', label: 'AI Knowledge', href: '/dashboard/knowledge', icon: Brain, module: 'whatsapp', roles: ['tenant_owner'] },
@@ -135,7 +137,7 @@ const mobileItems: NavItem[] = [
   { id: 'overview', label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
   { id: 'transactions', label: 'Transactions', href: '/dashboard/transactions', icon: Receipt, module: 'analytics' },
   { id: 'crm', label: 'CRM', href: '/dashboard/crm', icon: Users, module: 'crm' },
-  { id: 'assistant', label: 'Assistant', href: '/dashboard/assistant', icon: Bot, module: 'ai_assistant' },
+  { id: 'assistant', label: 'Airin AI', href: '/dashboard/assistant', icon: Bot, module: 'ai_assistant' },
 ];
 
 function initials(name: string): string {
@@ -220,6 +222,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       ),
     }))
     .filter((section) => section.items.length > 0);
+  // The floating assistant follows the same gate as its nav item: the tenant's
+  // ai_assistant module, and lean mode's hold list.
+  const assistantAvailable = !isHeld('assistant') && moduleEnabled(modules, 'ai_assistant');
   const visibleMobileItems = mobileItems.filter(
     (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
   );
@@ -337,6 +342,26 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           <AnnouncementsBanner />
           {children}
         </main>
+
+        {/* Floating mini assistant — the same threads as /dashboard/assistant, so
+            a question asked here is in the history there. Hidden on that page
+            (duplicate surface) and when the tenant has the AI module switched off. */}
+        {assistantAvailable && !pathname.startsWith('/dashboard/assistant') && (
+          <FloatingChat
+            endpoints={TENANT_CHAT}
+            fullPageHref="/dashboard/assistant"
+            title={t('dash.assistant.title', 'Airin AI Assistant')}
+            introTitle={t('dash.assistant.introTitle', 'Ask me about your business')}
+            introBody={t('dash.assistant.introShort', 'Orders, revenue, memberships, queue and recent activity.')}
+            suggestions={[
+              t('dash.assistant.suggestBusiness', 'How is business doing today?'),
+              t('dash.assistant.suggestOrders', 'Show me the last 10 orders'),
+            ]}
+            placeholder={t('dash.assistant.inputPlaceholder', 'Ask the assistant…')}
+            thinkingLabel={t('dash.assistant.thinking', 'Thinking…')}
+            emptyHistoryLabel={t('dash.assistant.noHistory', 'No conversations yet.')}
+          />
+        )}
 
         {/* Mobile bottom nav */}
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-surface-raised border-t border-border flex justify-around py-2 px-4" data-testid="dashboard-bottom-nav" aria-label="Mobile navigation">

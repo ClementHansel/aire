@@ -1,120 +1,46 @@
 'use client';
 
 /**
- * AI Assistant — conversational co-pilot.
- * Chats with the tenant's configured LLM (AI settings) via /api/agent/chat.
- * The assistant can read business data and operate the app through tools.
+ * AI Assistant — the tenant's conversational co-pilot.
+ *
+ * Chats with the configured LLM via /api/agent/chat: the assistant reads live
+ * business data through tools and can operate the app through governed ones.
+ * Threads (history, rename, pin, delete) are shared with the floating mini chat
+ * in the dashboard shell — same conversations, two places to have them.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { Bot } from 'lucide-react';
-import { api } from '@/lib/api';
+import { AiChatWorkspace } from '@/components/shared/ai-chat/AiChatWorkspace';
+import { TENANT_CHAT } from '@/components/shared/ai-chat/useAiChat';
 import { useI18n } from '@/lib/i18n';
-
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-interface ChatResponse {
-  sessionId: string;
-  reply: string;
-  toolsUsed: { tool: string; ok: boolean }[];
-}
 
 export default function AssistantPage() {
   const { t } = useI18n();
-  const SUGGESTIONS = [
-    t('dash.assistant.suggestBusiness', 'How is business doing today?'),
-    t('dash.assistant.suggestExpiring', 'Which memberships expire in the next 30 days?'),
-    t('dash.assistant.suggestOrders', 'Show me the last 10 orders'),
-    t('dash.assistant.suggestLastHour', 'What happened in the last hour?'),
-  ];
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState('');
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, sending]);
-
-  const send = async (text: string) => {
-    const message = text.trim();
-    if (!message || sending) return;
-    setError('');
-    setMessages((prev) => [...prev, { role: 'user', content: message }]);
-    setInput('');
-    setSending(true);
-    try {
-      const res = await api.post<ChatResponse>('/agent/chat', { message, sessionId });
-      setSessionId(res.sessionId);
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.reply }]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('dash.assistant.failedToReach', 'Failed to reach the assistant'));
-    } finally {
-      setSending(false);
-    }
-  };
 
   return (
-    <div className="max-w-3xl mx-auto flex flex-col h-full min-h-0">
-      <div className="mb-4 shrink-0">
-        <h1 className="text-xl font-semibold text-text-primary">{t('dash.assistant.title', 'AI Assistant')}</h1>
-        <p className="text-sm text-text-muted">{t('dash.assistant.subtitle', 'Ask about your business or tell the assistant what to automate. It reads live data and can act through governed tools.')}</p>
-      </div>
-
-      <div className="card flex-1 flex flex-col overflow-hidden p-0 min-h-0">
-        <div className="flex-1 overflow-auto p-4 space-y-4">
-          {messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-center gap-4">
-              <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center text-primary-600"><Bot className="w-6 h-6" /></div>
-              <p className="text-sm text-text-muted max-w-sm">{t('dash.assistant.intro', 'I can see your orders, revenue, memberships, queue, and recent activity. Try one of these:')}</p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} onClick={() => send(s)} className="badge bg-surface-sunken text-text-secondary hover:bg-primary-50 hover:text-primary-700">{s}</button>
-                ))}
-              </div>
-            </div>
-          )}
-          {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${m.role === 'user' ? 'bg-primary-500 text-white' : 'bg-surface-sunken text-text-primary'}`}>
-                {m.content}
-              </div>
-            </div>
-          ))}
-          {sending && (
-            <div className="flex justify-start">
-              <div className="bg-surface-sunken rounded-2xl px-4 py-2.5 text-sm text-text-muted flex items-center gap-2">
-                <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
-                {t('dash.assistant.thinking', 'Thinking…')}
-              </div>
-            </div>
-          )}
-          <div ref={endRef} />
-        </div>
-
-        {error && <div className="mx-4 mb-2 rounded-lg bg-red-50 border border-red-200 p-2 text-xs text-red-700">{error}</div>}
-
-        <div className="border-t border-border p-3">
-          <form
-            onSubmit={(e) => { e.preventDefault(); send(input); }}
-            className="flex gap-2"
-          >
-            <input
-              className="input-field flex-1"
-              placeholder={t('dash.assistant.inputPlaceholder', 'Ask the assistant…')}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              disabled={sending}
-            />
-            <button type="submit" className="btn-primary" disabled={sending || !input.trim()}>{t('dash.assistant.send', 'Send')}</button>
-          </form>
-        </div>
-      </div>
-    </div>
+    <AiChatWorkspace
+      endpoints={TENANT_CHAT}
+      testId="assistant-page"
+      title={t('dash.assistant.title', 'Airin AI Assistant')}
+      subtitle={t(
+        'dash.assistant.subtitle',
+        'Ask about your business or tell the assistant what to automate. It reads live data and can act through governed tools.',
+      )}
+      introTitle={t('dash.assistant.introTitle', 'Ask me about your business')}
+      introBody={t(
+        'dash.assistant.intro',
+        'I can see your orders, revenue, memberships, queue, and recent activity. Try one of these:',
+      )}
+      suggestions={[
+        t('dash.assistant.suggestBusiness', 'How is business doing today?'),
+        t('dash.assistant.suggestExpiring', 'Which memberships expire in the next 30 days?'),
+        t('dash.assistant.suggestOrders', 'Show me the last 10 orders'),
+        t('dash.assistant.suggestLastHour', 'What happened in the last hour?'),
+      ]}
+      placeholder={t('dash.assistant.inputPlaceholder', 'Ask the assistant…')}
+      thinkingLabel={t('dash.assistant.thinking', 'Thinking…')}
+      historyLabel={t('dash.assistant.history', 'Conversations')}
+      newChatLabel={t('dash.assistant.newChat', 'New chat')}
+      emptyHistoryLabel={t('dash.assistant.noHistory', 'No conversations yet.')}
+    />
   );
 }

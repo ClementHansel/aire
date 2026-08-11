@@ -14,6 +14,7 @@ import { TenantBillingService } from './tenant-billing.service';
 import { TenantBillingController, PlatformPaymentWebhookController } from './tenant-billing.controller';
 import { PlatformOpsService } from './platform-ops.service';
 import { PlatformTaxService } from './platform-tax.service';
+import { PlatformChatService } from './platform-chat.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
 import { AuthModule } from '../auth';
 import { AuditModule } from '../audit';
@@ -23,9 +24,12 @@ import { EntitlementModule } from '../entitlement';
 import { PaymentModule } from '../payment/payment.module';
 import { AgentConfigModule } from '../agent-config';
 import { SettingsModule } from '../settings/settings.module';
+// AgentModule supplies the shared brain pieces the platform AI console reuses:
+// LLMRouterService (the model) and ChatStoreService (threads/titles).
+import { AgentModule } from '../agent';
 
 @Module({
-  imports: [AuthModule, AuditModule, LegalEntityModule, OutletModule, EntitlementModule, PaymentModule, AgentConfigModule, SettingsModule],
+  imports: [AuthModule, AuditModule, LegalEntityModule, OutletModule, EntitlementModule, PaymentModule, AgentConfigModule, SettingsModule, AgentModule],
   controllers: [AdminController, PlatformFeedController, TenantBillingController, PlatformPaymentWebhookController],
   providers: [
     AdminService,
@@ -40,6 +44,7 @@ import { SettingsModule } from '../settings/settings.module';
     TenantBillingService,
     PlatformOpsService,
     PlatformTaxService,
+    PlatformChatService,
     DatabasePoolProvider,
   ],
   exports: [AdminService],

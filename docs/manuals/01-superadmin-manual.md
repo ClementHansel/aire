@@ -24,7 +24,7 @@ Your workspace is the **Platform Admin** area at `/admin`. Everything in this ma
 7. [Subscription plans & pricing](#7-subscription-plans--pricing)
 8. [Billing & invoices](#8-billing--invoices)
 9. [Monitoring & system health](#9-monitoring--system-health)
-10. [AI usage & the AI flow catalog](#10-ai-usage--the-ai-flow-catalog)
+10. [Airin AI Console, AI usage & the AI flow catalog](#10-airin-ai-console-ai-usage--the-ai-flow-catalog)
 11. [Support, impersonation & "view as"](#11-support--impersonation)
 12. [Announcements, Config & Platform Users](#12-announcements-config--platform-users)
 13. [Everyday checklists](#13-everyday-checklists)
@@ -246,7 +246,30 @@ untouched.
 
 ---
 
-## 10. AI usage & the AI flow catalog
+## 10. Airin AI Console, AI usage & the AI flow catalog
+
+- **Menu → Airin AI Console** (`/admin/assistant`) — the same **Airin AI Assistant** tenants use, seated
+  at the control plane: it reads the **whole platform,
+  across every tenant**. Ask *"which tenants have overdue invoices?"*, *"what went wrong in the last 24
+  hours?"*, *"are any background jobs stale?"*, *"how is the platform doing this month?"*.
+
+  It reads the same control-plane data these pages show: tenant accounts and their metrics, subscription
+  billing and invoices, the ops event feed and alert counts, background-job heartbeats, AI usage and
+  system health. Every answer is grounded in a tool result — the small chips under a reply name the data
+  it actually read.
+
+  **It is read-only, on purpose.** It cannot suspend a tenant, edit an invoice, change a plan or touch
+  tenant data; those consequences land on paying customers, so they stay a human click on the matching
+  admin page, where they're audited. Ask it to act and it will say so and point you at the page.
+
+  Conversations are saved: the left rail lists them, titles are generated automatically and can be
+  **renamed**, **pinned** or **deleted**. A **floating mini console** (bottom-right of every admin page)
+  shares the same threads, so you can ask without leaving the page you're reading — its **expand** icon
+  moves the conversation you're in onto the full page. Super-admins only.
+
+  > Needs the platform LLM key (**Platform Config → AI**). Without it the console says so instead of
+  > guessing.
+
 
 - **Menu → AI Usage** (`/admin/ai-usage`) — how much AI is being used: number of calls, errors,
   tokens, and the top tools, globally or per tenant.

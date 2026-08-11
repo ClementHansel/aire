@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Patch, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus, Logger,
+  Controller, Get, Post, Patch, Delete, Body, Param, Query, Req, UseGuards, HttpCode, HttpStatus, Logger,
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
@@ -8,6 +8,7 @@ import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
 import { WhatsappService } from './whatsapp.service';
+import { WaWhitelistService, type WhitelistInput } from './wa-whitelist.service';
 
 /** Public webhook for WAHA/kirimdev to deliver inbound messages. */
 @Controller('api/whatsapp')
@@ -96,7 +97,35 @@ function extractMentions(p: Record<string, any> | undefined): string[] {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.TenantOwner)
 export class WhatsappController {
-  constructor(private readonly service: WhatsappService) {}
+  constructor(
+    private readonly service: WhatsappService,
+    private readonly whitelist: WaWhitelistService,
+  ) {}
+
+  // ─── Staff whitelist ──────────────────────────────────────────────────────
+  // Numbers that reach the FULL business agent instead of the customer bot.
+  // Owner-only (the class-level @Roles gate): each row grants access to the
+  // tenant's business data from a phone.
+
+  @Get('whitelist') listWhitelist(@CurrentUser() u: JWTPayload) {
+    return this.whitelist.list(u.tenant_id);
+  }
+
+  @Post('whitelist')
+  @HttpCode(HttpStatus.CREATED)
+  addWhitelist(@CurrentUser() u: JWTPayload, @Body() body: WhitelistInput) {
+    return this.whitelist.create(u.tenant_id, body ?? {}, u.sub);
+  }
+
+  @Patch('whitelist/:id')
+  updateWhitelist(@CurrentUser() u: JWTPayload, @Param('id') id: string, @Body() body: WhitelistInput) {
+    return this.whitelist.update(u.tenant_id, id, body ?? {});
+  }
+
+  @Delete('whitelist/:id')
+  removeWhitelist(@CurrentUser() u: JWTPayload, @Param('id') id: string) {
+    return this.whitelist.remove(u.tenant_id, id);
+  }
 
   // outletId (optional) targets a specific branch line when per-branch WhatsApp
   // is on; omit it for the tenant central line.

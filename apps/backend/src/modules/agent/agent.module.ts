@@ -8,6 +8,7 @@ import { SchedulerService } from './scheduler.service';
 import { ScheduledAnalysisService } from './scheduled-analysis.service';
 import { AgentToolsService } from './agent-tools.service';
 import { AgentChatService } from './agent-chat.service';
+import { ChatStoreService } from './chat-store.service';
 import { SettingsModule } from '../settings/settings.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -30,7 +31,7 @@ import { DatabasePoolProvider } from '../auth/database.provider';
 @Module({
   imports: [SettingsModule, AuditModule, NotificationModule, InventoryModule, FinanceModule, SalesModule, HrModule, ProcurementModule],
   controllers: [AgentController],
-  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, DatabasePoolProvider],
-  exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService],
+  providers: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, ChatStoreService, DatabasePoolProvider],
+  exports: [AgentService, ProposalService, LLMRouterService, AgentGateway, SchedulerService, ScheduledAnalysisService, AgentToolsService, AgentChatService, ChatStoreService],
 })
 export class AgentModule {}

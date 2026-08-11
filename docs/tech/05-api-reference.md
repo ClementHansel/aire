@@ -174,7 +174,8 @@ staff user (JWT, no role gate). "Public" = no auth. "Portal" = customer JWT (`ty
 | Method · Path | Role | Purpose |
 |---|---|---|
 | GET `/agent/tools` | Public | Tool catalog |
-| POST `/agent/chat` · GET `/agent/chat/sessions[/:id]` · POST `/agent/validate-connection` · GET `/agent/monitoring/{summary,recent,events}` | Auth | Co-pilot chat + monitoring |
+| POST `/agent/chat` · GET/POST `/agent/chat/sessions` · GET/PATCH/DELETE `/agent/chat/sessions/:id` · POST `/agent/validate-connection` · GET `/agent/monitoring/{summary,recent,events}` | Auth | Co-pilot chat, thread history (rename/pin/archive) + monitoring |
+| POST `/admin/ai/chat` · GET/POST `/admin/ai/chat/sessions` · GET/PATCH/DELETE `/admin/ai/chat/sessions/:id` · GET `/admin/ai/chat/tools` | SuperAdmin | Platform AI console (cross-tenant, READ-ONLY tools) |
 | GET `/agent/:tenantId/proposals` · POST `…/proposals/:id/{approve,reject}` | TenantOwner | AI action proposals |
 | GET/PUT `/agent-config` | TenantOwner | WhatsApp/AI agent config |
 | GET/POST `/agents` · PUT/DELETE `/agents/:id` | TenantOwner | Agent personas |
@@ -182,6 +183,7 @@ staff user (JWT, no role gate). "Public" = no auth. "Portal" = customer JWT (`ty
 | GET `/public/branding` · `/public/branding/logo` | Public | Public branding (default on unknown tenant) |
 | POST `/whatsapp/webhook` | Public | WAHA/Kapso inbound webhook |
 | GET `/whatsapp/status` · POST `/whatsapp/connect` · GET `/whatsapp/qr` · conversations endpoints · POST `/whatsapp/simulate-inbound` | TenantOwner | WhatsApp connect + conversation log |
+| GET/POST `/whatsapp/whitelist` · PATCH/DELETE `/whatsapp/whitelist/:id` | TenantOwner | Staff numbers routed to the FULL business agent (`accessLevel` full/read_only) |
 | GET/POST/PUT/PATCH/DELETE `/agent-flows[/:id]` | SuperAdmin | n8n flow catalog |
 | GET/PUT `/agent-flow-selection` · GET `/agent-flow-selection/available` · POST `/agent-flow-selection/token` | TenantOwner | Tenant flow selection + bridge token |
 | POST `/bridge/{context,llm,tool,whatsapp/send}` | Bridge token | n8n callback surface |

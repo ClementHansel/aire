@@ -134,7 +134,194 @@ export default function AiAgentPage() {
           <label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.escalationNumber', 'Escalation number')}</label>
           <input className="input-field" value={cfg.escalationNumber ?? ''} onChange={(e) => set('escalationNumber', e.target.value)} placeholder={t('dash.aiAgent.escalationPlaceholder', '628xxxx (admin/supervisor)')} />
         </div>
+
+        {/* Staff whitelist — saves per row, independent of the page's Save button. */}
+        <StaffWhitelist />
       </div>
+    </div>
+  );
+}
+
+/* ── Staff whitelist ─────────────────────────────────────────────────── */
+
+interface WhitelistEntry {
+  id: string;
+  phone: string;
+  label: string;
+  accessLevel: 'full' | 'read_only';
+  notes: string | null;
+  isActive: boolean;
+  lastUsedAt: string | null;
+}
+
+const BLANK: { phone: string; label: string; accessLevel: 'full' | 'read_only'; notes: string } = {
+  phone: '', label: '', accessLevel: 'full', notes: '',
+};
+
+/**
+ * Numbers that talk to the FULL business assistant over WhatsApp instead of the
+ * customer bot. Each row is a grant of access to the business's own data from a
+ * phone, so the UI states that plainly and keeps revoke (deactivate) one click
+ * away from delete.
+ */
+function StaffWhitelist() {
+  const { t } = useI18n();
+  const [rows, setRows] = useState<WhitelistEntry[] | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState(BLANK);
+  const [editing, setEditing] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const res = await api.get<WhitelistEntry[]>('/whatsapp/whitelist');
+      // A non-array response (an older backend, a proxy error page) must not blank
+      // the whole WhatsApp settings page — treat it as "nothing configured".
+      setRows(Array.isArray(res) ? res : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('dash.aiAgent.failedToLoad', 'Failed to load'));
+      setRows([]);
+    }
+  }, [t]);
+  useEffect(() => { load(); }, [load]);
+
+  const reset = () => { setForm(BLANK); setEditing(null); };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const body = { phone: form.phone, label: form.label, accessLevel: form.accessLevel, notes: form.notes || null };
+      if (editing) await api.patch(`/whatsapp/whitelist/${editing}`, body);
+      else await api.post('/whatsapp/whitelist', body);
+      reset();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('dash.aiAgent.saveFailed', 'Save failed'));
+    } finally { setBusy(false); }
+  };
+
+  const patch = async (id: string, body: Record<string, unknown>) => {
+    setError('');
+    try { await api.patch(`/whatsapp/whitelist/${id}`, body); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : t('dash.aiAgent.saveFailed', 'Save failed')); }
+  };
+
+  const remove = async (id: string) => {
+    if (!window.confirm(t('dash.aiAgent.whitelistConfirmDelete', 'Remove this number from the whitelist? It will go back to being treated as a customer.'))) return;
+    setError('');
+    try { await api.delete(`/whatsapp/whitelist/${id}`); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : t('dash.aiAgent.saveFailed', 'Delete failed')); }
+  };
+
+  return (
+    <div className="card" data-testid="wa-whitelist">
+      <h2 className="section-title">{t('dash.aiAgent.whitelistTitle', 'Staff WhatsApp numbers')}</h2>
+      <p className="section-description">
+        {t('dash.aiAgent.whitelistDesc', 'These numbers chat with the FULL business assistant over WhatsApp — the same one as the dashboard, with your live business data — instead of the customer bot. Everyone else stays a customer. Only add numbers you trust.')}
+      </p>
+
+      {error && <div className="rounded-lg bg-red-50 border border-red-200 p-2 text-xs text-red-700 mt-3">{error}</div>}
+
+      {rows === null ? (
+        <p className="text-sm text-text-muted mt-3">{t('dash.aiAgent.loading', 'Loading…')}</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-text-muted mt-3">{t('dash.aiAgent.whitelistEmpty', 'No staff numbers yet. Add yours below to ask the assistant from WhatsApp.')}</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-border rounded-lg border border-border">
+          {rows.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center gap-2 p-3">
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                  {r.label}
+                  {!r.isActive && (
+                    <span className="badge bg-surface-sunken text-text-muted">{t('dash.aiAgent.whitelistInactive', 'revoked')}</span>
+                  )}
+                  <span className={`badge ${r.accessLevel === 'full' ? 'bg-primary-50 text-primary-700' : 'bg-surface-sunken text-text-secondary'}`}>
+                    {r.accessLevel === 'full'
+                      ? t('dash.aiAgent.whitelistFull', 'full access')
+                      : t('dash.aiAgent.whitelistReadOnly', 'read only')}
+                  </span>
+                </p>
+                <p className="text-xs text-text-muted">
+                  +{r.phone}
+                  {r.notes ? ` · ${r.notes}` : ''}
+                  {r.lastUsedAt ? ` · ${t('dash.aiAgent.whitelistLastUsed', 'last used')} ${new Date(r.lastUsedAt).toLocaleDateString()}` : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <button type="button" className="btn-ghost text-xs" onClick={() => patch(r.id, { isActive: !r.isActive })}>
+                  {r.isActive ? t('dash.aiAgent.whitelistRevoke', 'Revoke') : t('dash.aiAgent.whitelistRestore', 'Restore')}
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  onClick={() => {
+                    setEditing(r.id);
+                    setForm({ phone: r.phone, label: r.label, accessLevel: r.accessLevel, notes: r.notes ?? '' });
+                  }}
+                >
+                  {t('common.edit', 'Edit')}
+                </button>
+                <button type="button" className="btn-ghost text-xs text-red-600" onClick={() => remove(r.id)}>
+                  {t('common.delete', 'Delete')}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <form onSubmit={submit} className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.whitelistPhone', 'WhatsApp number')}</label>
+          <input
+            className="input-field"
+            value={form.phone}
+            onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+            placeholder="0812xxxxxxx"
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.whitelistLabel', 'Who is this?')}</label>
+          <input
+            className="input-field"
+            value={form.label}
+            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+            placeholder={t('dash.aiAgent.whitelistLabelPlaceholder', 'e.g. Pak Samuel (owner)')}
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.whitelistAccess', 'Access')}</label>
+          <select
+            className="input-field"
+            value={form.accessLevel}
+            onChange={(e) => setForm((f) => ({ ...f, accessLevel: e.target.value as 'full' | 'read_only' }))}
+          >
+            <option value="full">{t('dash.aiAgent.whitelistFullOption', 'Full — can read and act')}</option>
+            <option value="read_only">{t('dash.aiAgent.whitelistReadOnlyOption', 'Read only — can look, not change')}</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.whitelistNotes', 'Note (optional)')}</label>
+          <input className="input-field" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+        </div>
+        <div className="sm:col-span-2 flex gap-2">
+          <button type="submit" className="btn-primary text-sm" disabled={busy}>
+            {busy
+              ? t('dash.aiAgent.saving', 'Saving…')
+              : editing
+                ? t('dash.aiAgent.whitelistUpdate', 'Update number')
+                : t('dash.aiAgent.whitelistAdd', 'Add number')}
+          </button>
+          {editing && (
+            <button type="button" className="btn-ghost text-sm" onClick={reset}>{t('common.cancel', 'Cancel')}</button>
+          )}
+        </div>
+      </form>
     </div>
   );
 }

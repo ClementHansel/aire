@@ -39,6 +39,7 @@ import { PlatformAnnouncementService, CreateAnnouncementDto } from './platform-a
 import { TenantLifecycleService } from './tenant-lifecycle.service';
 import { PlatformOpsService, OpsSeverity } from './platform-ops.service';
 import { PlatformTaxService, PlatformTaxConfig } from './platform-tax.service';
+import { PlatformChatService } from './platform-chat.service';
 import { EntitlementService } from '../entitlement';
 import { JobMonitorService } from '../job-monitor';
 import { AgentConfigService } from '../agent-config/agent-config.service';
@@ -76,6 +77,7 @@ export class AdminController {
     private readonly audit: AuditService,
     private readonly agentConfig: AgentConfigService,
     private readonly settings: SettingsService,
+    private readonly aiConsole: PlatformChatService,
   ) {}
 
   /** Super-admin may target any tenant (or all); a tenant owner is pinned to their own. */
@@ -97,6 +99,80 @@ export class AdminController {
   private effScope(user: JWTPayload, requested: MetricScope): MetricScope {
     if (user.role === Role.PlatformSuperAdmin) return requested;
     return requested === 'branch' ? 'branch' : 'tenant';
+  }
+
+  // ── Platform AI console ─────────────────────────────────────────────────────
+  // Super-admin only: the assistant reads ACROSS tenants, so a tenant owner must
+  // never reach it (the class-level @Roles allows owners for the metrics routes).
+
+  /** POST /api/admin/ai/chat — one turn with the cross-tenant platform analyst. */
+  @Post('ai/chat')
+  @Roles(Role.PlatformSuperAdmin)
+  async platformChat(
+    @CurrentUser() user: JWTPayload,
+    @Body() body: { message: string; sessionId?: string },
+  ) {
+    if (!body?.message?.trim()) throw new BadRequestException('message is required');
+    return this.aiConsole.chat(user.sub, body.sessionId ?? null, body.message.trim());
+  }
+
+  /** GET /api/admin/ai/chat/sessions — the admin's threads. */
+  @Get('ai/chat/sessions')
+  @Roles(Role.PlatformSuperAdmin)
+  async platformChatSessions(@CurrentUser() user: JWTPayload) {
+    return this.aiConsole.listSessions(user.sub);
+  }
+
+  /** POST /api/admin/ai/chat/sessions — start an empty thread. */
+  @Post('ai/chat/sessions')
+  @Roles(Role.PlatformSuperAdmin)
+  async createPlatformChatSession(@CurrentUser() user: JWTPayload) {
+    const id = await this.aiConsole.createSession(user.sub);
+    return { id, title: 'New chat' };
+  }
+
+  /** GET /api/admin/ai/chat/sessions/:id — messages in a thread. */
+  @Get('ai/chat/sessions/:id')
+  @Roles(Role.PlatformSuperAdmin)
+  async platformChatMessages(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    return this.aiConsole.getMessages(user.sub, id);
+  }
+
+  /** PATCH /api/admin/ai/chat/sessions/:id — rename and/or pin a thread. */
+  @Patch('ai/chat/sessions/:id')
+  @Roles(Role.PlatformSuperAdmin)
+  async updatePlatformChatSession(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+    @Body() body: { title?: string; pinned?: boolean },
+  ) {
+    if (body?.pinned !== undefined) {
+      const ok = await this.aiConsole.setPinned(user.sub, id, !!body.pinned);
+      if (!ok) throw new BadRequestException('Chat session not found');
+    }
+    if (body?.title !== undefined) {
+      if (!body.title.trim()) throw new BadRequestException('title cannot be empty');
+      const renamed = await this.aiConsole.renameSession(user.sub, id, body.title);
+      if (!renamed) throw new BadRequestException('Chat session not found');
+      return renamed;
+    }
+    return { id };
+  }
+
+  /** DELETE /api/admin/ai/chat/sessions/:id — archive a thread. */
+  @Delete('ai/chat/sessions/:id')
+  @Roles(Role.PlatformSuperAdmin)
+  async deletePlatformChatSession(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
+    const ok = await this.aiConsole.archiveSession(user.sub, id);
+    if (!ok) throw new BadRequestException('Chat session not found');
+    return { deleted: true };
+  }
+
+  /** GET /api/admin/ai/chat/tools — what the platform assistant can see. */
+  @Get('ai/chat/tools')
+  @Roles(Role.PlatformSuperAdmin)
+  platformChatTools() {
+    return this.aiConsole.listTools();
   }
 
   // ── Platform metrics & monitoring ───────────────────────────────────────────

@@ -148,8 +148,9 @@ customer_code(4)`, via nullable columns + partial-unique indexes so legacy rows 
 | `scheduled_analysis_runs` (007) | Scheduled AI analysis | `status`(running/completed/failed) |
 | `domain_events` (007) | Domain event store | `tenant_id`-scoped |
 | `agent_invocations` (007) | Every tool/llm/chat/analysis call (telemetry) | `kind`,`status`,`duration`,`tokens`; `outlet_id`(025) |
-| `agent_chat_sessions` / `agent_chat_messages` (007) | In-app co-pilot chat | message `role`(user/assistant/tool/system) |
-| `wa_conversations` / `wa_messages` (016) | WhatsApp threads | conv `status`(open/escalated/closed); msg `direction`(inbound/outbound) |
+| `agent_chat_sessions` / `agent_chat_messages` (007, 093) | In-app chat threads, both consoles | message `role`(user/assistant/tool/system); session `scope`(tenant/platform) — a CHECK ties `scope` to `tenant_id` (tenant ⇒ set, platform ⇒ NULL); `archived_at` soft-deletes, `auto_titled` stops the titler overwriting a rename |
+| `wa_whitelist_numbers` (093) | WhatsApp numbers routed to the FULL business agent | `access_level`(full/read_only); `phone` = bare international digits, unique per tenant; RLS by tenant |
+| `wa_conversations` / `wa_messages` (016, 093) | WhatsApp threads | conv `status`(open/escalated/closed); msg `direction`(inbound/outbound); `chat_session_id` binds a whitelisted staff thread to its chat session |
 
 ### Portal
 | Table (mig) | Purpose | Key columns |

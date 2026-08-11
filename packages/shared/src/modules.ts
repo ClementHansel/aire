@@ -73,8 +73,10 @@ export const HELD_NAV_IDS: string[] = [
   // Finance & People (whole section)
   'finance-setup', 'finance', 'accounting', 'pnl', 'cogs', 'settlement',
   'tax-invoices', 'hr', 'payroll', 'commission',
-  // AI (keep `conversations` + `ai-agent` slimmed to WhatsApp connection)
-  'assistant', 'agents', 'monitoring',
+  // AI. `assistant` is NOT held: the in-app chat console (full page + floating
+  // mini chat) is a core surface, and its WhatsApp staff whitelist is configured
+  // from the WhatsApp page that lean mode keeps.
+  'agents', 'monitoring',
   // Administration
   'audit',
 ];
@@ -95,7 +97,7 @@ export const HELD_ROUTE_PREFIXES: string[] = [
   '/dashboard/devices', '/dashboard/finance-setup', '/dashboard/finance',
   '/dashboard/accounting', '/dashboard/pnl', '/dashboard/cogs',
   '/dashboard/settlement', '/dashboard/tax-invoices', '/dashboard/hr',
-  '/dashboard/payroll', '/dashboard/commission', '/dashboard/assistant',
+  '/dashboard/payroll', '/dashboard/commission',
   '/dashboard/agents', '/dashboard/monitoring', '/dashboard/audit',
 ];
 

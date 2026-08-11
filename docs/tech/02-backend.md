@@ -279,15 +279,25 @@ Two AI surfaces share strict, server-side data isolation.
   `action_proposals` row for owner sign-off. Retries with backoff; every call recorded to
   `agent_invocations`.
 - **Chat assistant** (`/api/agent/chat`): a max-5-iteration tool-calling loop where the LLM emits
-  JSON actions routed through the same gate.
+  JSON actions routed through the same gate. `ChatStoreService` owns threads for BOTH consoles
+  (`agent_chat_sessions.scope` = `tenant` | `platform`): listing with previews, rename/pin/archive,
+  and a one-completion-per-thread automatic titler. A `readOnly` option hides action tools (and
+  re-checks on execute) for read-only callers.
+- **Platform AI console** (`/api/admin/ai/chat`, `PlatformChatService`): the same loop with a
+  CROSS-TENANT, deliberately read-only tool catalog (tenants, billing/invoices, ops feed, job
+  heartbeats, AI usage, health). Super-admin only; no tool can mutate a tenant.
 - **Scheduled analysis**: an in-memory scheduler runs enabled-toggle analyses, gathers a live data
   snapshot, asks the LLM for insights, and executes or proposes each.
 - **LLM routing** (`LLMRouterService`): per-tenant **OpenRouter** (encrypted key, default
   `gpt-4o-mini`) or **Hermes/Ollama**; 30-s timeout; structured error types.
 
 ### WhatsApp customer agent (`whatsapp` module)
-`handleInbound`: resolve tenant → upsert conversation + store message → gate on
-`ai_reply_enabled` + per-conversation `ai_enabled` + a per-user daily cap → **route**:
+`handleInbound`: resolve tenant → upsert conversation + store message → **staff branch** (a DM from
+an ACTIVE `wa_whitelist_numbers` row runs the full business agent via `AgentChatService`, bound to
+`wa_conversations.chat_session_id` for continuity; it honours the master AI switch and the
+per-conversation `ai_enabled`, but deliberately bypasses `ai_reply_enabled` and the daily cap, which
+are customer protections) → otherwise gate on `ai_reply_enabled` + per-conversation `ai_enabled` +
+a per-user daily cap → **route**:
 - `routing_mode='n8n'` → POST the message to the selected flow's webhook (with bridge token +
   callback base); n8n calls back via the bridge. Any failure **falls back** to the built-in
   runtime.

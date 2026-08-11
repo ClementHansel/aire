@@ -494,8 +494,10 @@ airin has **two different AIs**, and it's important not to confuse them:
 - the **AI Assistant** (§10.1) is *your* private co-pilot — it can see your whole business;
 - the **WhatsApp agent** (§10.2) talks to *customers* — it can only ever see the one person chatting.
 
-### 10.1 AI Assistant (your co-pilot)
-**Sidebar → AI Assistant** (`/dashboard/assistant`). Chat with a co-pilot that knows your business.
+### 10.1 Airin AI Assistant (your co-pilot)
+**Sidebar → Airin AI Assistant** (`/dashboard/assistant`). Chat with a co-pilot that knows your
+business. Its name is **Airin AI Assistant** — the same assistant answers on the full page, in the
+floating mini chat, and on WhatsApp for whitelisted staff numbers.
 Ask things like *"how's business today?"*, *"which memberships expire in 30 days?"*, or *"show my last
 10 orders"* (there are suggestion chips for these).
 
@@ -509,6 +511,21 @@ Ask things like *"how's business today?"*, *"which memberships expire in 30 days
   **approval mode** you set (Settings → automation). In **approval-required** mode the assistant
   doesn't act — it files a **proposal** that shows up on your **Overview** (AI Action Proposals) for
   you to approve or reject. In **autonomous** mode it acts immediately and writes an audit entry.
+
+**Conversations are saved.** The left rail lists your past chats, newest first. A thread is **named
+automatically** from your first question; hover it to **rename** (pencil), **pin** it to the top, or
+**delete** it. **New chat** starts a fresh thread — an empty one is never saved, so nothing appears in
+the list until you actually ask something. Under each answer you'll see small **tool chips** naming the
+data the assistant actually read (e.g. `get_revenue`) — if a claim has no chip behind it, be sceptical.
+
+**The floating assistant.** A round assistant button sits in the bottom-right corner of every dashboard
+page. It opens a **mini chat** on top of whatever you're looking at — the useful moment for *"what's
+revenue today?"* is usually while you're on another screen. It shares the **same conversations** as the
+full page: the history icon browses them, and the **expand** icon opens **the thread you're in** on the
+full page (it hands the conversation over rather than starting a blank one) and tucks the mini panel away.
+
+> **Ask from WhatsApp.** You can also chat with this same co-pilot from your phone over WhatsApp —
+> see **§10.2 → Staff WhatsApp numbers**.
 
 ### 10.2 Agentic AI / WhatsApp (the customer-facing agent)
 **Sidebar → Agentic AI** (`/dashboard/ai-agent`). This is where you connect WhatsApp and shape how the
@@ -535,6 +552,28 @@ to actually message customers.)*
 - **Agent skills** — what it's allowed to do, one per line.
 - **Limits & escalation** — a **max messages per user per day** cap, and an **escalation number**
   (a supervisor) the agent hands off to.
+
+**Staff WhatsApp numbers (the whitelist).** By default *every* number that messages your WhatsApp line
+gets the **customer** agent. Numbers you add under **Staff WhatsApp numbers** get the **full business
+assistant** instead — the same co-pilot as §10.1, with your live business data — so you can ask
+*"omzet hari ini?"* from your phone and get a real answer.
+
+- **Add a number** with the phone, a label saying **who it is** (e.g. *Pak Samuel (owner)*), and an
+  **access level**: **Full** (may read *and* act, still under your approval mode) or **Read only**
+  (may look, never change).
+- Type the number however you like — `0812…`, `+62 812…`, `62812…` are all stored as the same number,
+  so one phone can never end up with two different grants.
+- **Revoke** switches a number off but keeps the record of who had access; **Delete** removes the row
+  entirely (that number goes back to being treated as a customer). **Edit** changes any field.
+- The list shows when each number was **last used**, so a grant nobody uses is easy to spot and remove.
+- These chats keep their context between messages and show up in your dashboard chat history too.
+- Two things are deliberately *not* bypassed: your **master AI switch** (Settings → AI), and pausing
+  AI on a single thread in **Conversations**. The **customer** auto-reply pause and the **daily message
+  cap** do *not* apply to staff numbers — they protect customers, not you.
+
+> **Treat this list like keys to the shop.** Anyone holding a whitelisted phone can read your revenue,
+> customers and stock. Add only numbers you trust, prefer **Read only** where that's enough, and revoke
+> a number the moment a phone is lost or someone leaves.
 
 **Per-branch WhatsApp lines.** In **Separate WhatsApp per branch**, turn on `perBranchWaEnabled`
 (save the page first) to give **each outlet its own number & QR**. The escalation number, AI model,

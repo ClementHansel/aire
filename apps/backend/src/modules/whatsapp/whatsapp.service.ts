@@ -11,6 +11,8 @@ import { normalizePhone } from '@aire/shared';
 import { formatForWhatsApp } from './whatsapp-format';
 import { looksLikeReasoning } from '../../common/looks-like-reasoning';
 import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
+import { WaWhitelistService } from './wa-whitelist.service';
+import { AgentChatService } from '../agent/agent-chat.service';
 
 /** Once-per-chat identity request, appended after the first reply to an unknown sender. */
 const IDENTITY_ASK =
@@ -106,6 +108,11 @@ export class WhatsappService implements OnModuleInit {
     // Optional: the many unit tests that construct this service directly fall
     // back to the catalogue defaults.
     @Optional() @Inject(NotificationRendererService) private readonly renderer?: NotificationRendererService,
+    // Staff whitelist + the full business brain. Both optional so the existing
+    // unit tests keep constructing this service with a short argument list;
+    // without them, every inbound message simply takes the customer path.
+    @Optional() private readonly whitelist?: WaWhitelistService,
+    @Optional() private readonly staffChat?: AgentChatService,
   ) {}
 
   onModuleInit(): void {
@@ -638,6 +645,22 @@ export class WhatsappService implements OnModuleInit {
       }
     }
 
+    // STAFF BRANCH: a whitelisted number talks to the FULL business agent, not to
+    // Irene. Runs BEFORE the customer switches on purpose — `ai_reply_enabled` is
+    // the customer auto-reply pause and the daily cap is customer abuse protection;
+    // neither should silence the owner's own console. The per-conversation
+    // `ai_enabled` toggle IS honoured, so a chat can still be handed to a human.
+    // DM only: a group is a shared room, never a private staff console.
+    if (!isGroup && conv.ai_enabled && this.whitelist && this.staffChat) {
+      const staff = await this.whitelist.match(tenantId, senderPhone);
+      if (staff) {
+        await this.handleStaffInbound({
+          tenantId, outletId, conv, staff, chatId: params.from, text: inboundText,
+        });
+        return;
+      }
+    }
+
     if (!cfg || !cfg.ai_reply_enabled || !conv.ai_enabled) return;
 
     // Daily per-user cap.
@@ -778,6 +801,64 @@ export class WhatsappService implements OnModuleInit {
       await this.sendButtons(tenantId, params.from, outText, [{ id: 'YA', title: 'YA' }, { id: 'BATAL', title: 'BATAL' }], outletId);
     } else {
       await this.sendText(tenantId, params.from, outText, outletId);
+    }
+  }
+
+  /**
+   * One turn for a WHITELISTED (staff) number: the dashboard assistant, over WhatsApp.
+   *
+   * The thread is bound to a real chat session (`wa_conversations.chat_session_id`),
+   * so follow-ups like "and yesterday?" keep their context and the same transcript
+   * shows up in the dashboard's chat history. `access_level` decides whether the
+   * agent may act or only look.
+   */
+  private async handleStaffInbound(params: {
+    tenantId: string;
+    outletId: string | null;
+    conv: { id: string; chat_session_id?: string | null };
+    staff: { id: string; label: string; accessLevel: 'full' | 'read_only'; userId: string | null };
+    chatId: string;
+    text: string;
+  }): Promise<void> {
+    const { tenantId, outletId, conv, staff } = params;
+    try {
+      const result = await this.staffChat!.chat(
+        tenantId,
+        // A whitelist row may be bound to a real user, in which case the thread
+        // lands in THAT person's dashboard history. An unbound row (a shared shop
+        // phone) produces a tenant-wide thread visible to the tenant's dashboard
+        // users — who can already ask the same assistant the same questions.
+        staff.userId,
+        outletId,
+        conv.chat_session_id ?? null,
+        params.text,
+        {
+          readOnly: staff.accessLevel === 'read_only',
+          surfaceNote:
+            `You are Airin AI Assistant answering ${staff.label} over WhatsApp. Keep replies SHORT (a few lines, no tables `
+            + 'or markdown headings) because they are read on a phone. Use *bold* sparingly for key numbers. Reply in the '
+            + 'language they wrote in.',
+        },
+      );
+
+      if (result.sessionId && result.sessionId !== conv.chat_session_id) {
+        await this.pool.query(`UPDATE wa_conversations SET chat_session_id = $2 WHERE id = $1`, [
+          conv.id,
+          result.sessionId,
+        ]);
+      }
+      await this.whitelist!.markUsed(staff.id);
+
+      const outText = formatForWhatsApp(result.reply);
+      await this.addMessage(tenantId, conv.id, 'outbound', outText, true, 'Airin');
+      await this.sendText(tenantId, params.chatId, outText, outletId);
+    } catch (err) {
+      // A staff console that goes silent is worse than one that admits a fault:
+      // the owner is standing at the counter waiting for a number.
+      this.logger.error(`staff agent turn failed: ${err instanceof Error ? err.message : String(err)}`);
+      const fallback = 'Maaf, Airin sedang tidak bisa dihubungi. Coba lagi sebentar ya. / Airin AI Assistant is unavailable right now.';
+      await this.addMessage(tenantId, conv.id, 'outbound', fallback, true, 'Airin');
+      await this.sendText(tenantId, params.chatId, fallback, outletId);
     }
   }
 
@@ -946,7 +1027,7 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Conversation store ───────────────────────────────────────────────────────
-  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null; identified_customer_id?: string | null; identity_prompted?: boolean; customer_name?: string | null }> {
+  private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null; identified_customer_id?: string | null; identity_prompted?: boolean; customer_name?: string | null; chat_session_id?: string | null }> {
     const phone = chatId.replace(/@.*/, '');
     // Conflict target matches uq_wa_conv_tenant_outlet_chat (migration 067): a
     // NULL outlet_id (tenant line) coalesces to the all-zero UUID sentinel, so
@@ -956,7 +1037,7 @@ export class WhatsappService implements OnModuleInit {
        VALUES ($1,$2,$3,$4,$5,NOW())
        ON CONFLICT (tenant_id, chat_id, (COALESCE(outlet_id, '00000000-0000-0000-0000-000000000000'::uuid))) DO UPDATE SET last_message_at = NOW(),
          customer_name = COALESCE(wa_conversations.customer_name, EXCLUDED.customer_name)
-       RETURNING id, ai_enabled, messages_today, messages_day::text, identified_customer_id, identity_prompted, customer_name`,
+       RETURNING id, ai_enabled, messages_today, messages_day::text, identified_customer_id, identity_prompted, customer_name, chat_session_id`,
       [tenantId, chatId, phone, name ?? null, outletId ?? null],
     );
     return res.rows[0];

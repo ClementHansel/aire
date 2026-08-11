@@ -6,11 +6,13 @@ import { useEffect, useState } from 'react';
 import {
   Home, LayoutDashboard, Building2, LifeBuoy, Wallet, CreditCard, BrainCircuit,
   RadioTower, HeartPulse, Workflow, Settings, LogOut, Sun, Moon,
-  LineChart, ScrollText, Users, Megaphone, BookOpen, Activity, type LucideIcon,
+  LineChart, ScrollText, Users, Megaphone, BookOpen, Activity, Bot, type LucideIcon,
 } from 'lucide-react';
 import { isImpersonating, stopImpersonation, isAuthenticated, getUser, logout, type AuthUser } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { FloatingChat } from '@/components/shared/ai-chat/FloatingChat';
+import { PLATFORM_CHAT } from '@/components/shared/ai-chat/useAiChat';
 
 // The admin panel is the PLATFORM admin dashboard — platform_super_admin only.
 // Tenant owners manage their business (branches, catalog, etc.) from /dashboard;
@@ -51,6 +53,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Operations', titleKey: 'admin.nav.section.operations',
     items: [
+      { href: '/admin/assistant', label: 'Airin AI Console', labelKey: 'admin.nav.assistant', icon: Bot, superOnly: true },
       { href: '/admin/monitoring', label: 'Monitoring', labelKey: 'admin.nav.monitoring', icon: RadioTower },
       { href: '/admin/health', label: 'System Health', labelKey: 'admin.nav.health', icon: HeartPulse },
       { href: '/admin/agent-flows', label: 'Agent Flows', labelKey: 'admin.nav.agentFlows', icon: Workflow, superOnly: true },
@@ -224,6 +227,26 @@ function AdminShell({ children }: { children: React.ReactNode }) {
           )}
           {children}
         </main>
+
+        {/* Floating mini console — same threads as /admin/assistant. Hidden on
+            that page (it would duplicate the surface) and for non-super roles,
+            which have no cross-tenant read access. */}
+        {isSuper && !pathname.startsWith('/admin/assistant') && (
+          <FloatingChat
+            endpoints={PLATFORM_CHAT}
+            fullPageHref="/admin/assistant"
+            title={t('admin.assistant.title', 'Airin AI Console')}
+            introTitle={t('admin.assistant.introTitle', 'Ask about the platform')}
+            introBody={t('admin.assistant.introShort', 'Tenants, billing, incidents, jobs and AI usage — read-only.')}
+            suggestions={[
+              t('admin.assistant.suggestOverdue', 'Which tenants have overdue invoices?'),
+              t('admin.assistant.suggestIncidents', 'What went wrong in the last 24 hours?'),
+            ]}
+            placeholder={t('admin.assistant.inputPlaceholder', 'Ask about tenants, billing, incidents…')}
+            thinkingLabel={t('admin.assistant.thinking', 'Thinking…')}
+            emptyHistoryLabel={t('admin.assistant.noHistory', 'No conversations yet.')}
+          />
+        )}
 
         {/* Mobile bottom nav */}
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-surface-raised border-t border-border flex justify-around py-2 px-4" aria-label="Admin mobile navigation">

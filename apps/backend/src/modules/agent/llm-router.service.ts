@@ -82,7 +82,9 @@ export class LLMRouterService {
    * the invocation (latency, tokens, success/error) for the monitoring panel.
    */
   async chat(
-    tenantId: string,
+    /** Null for platform-scoped callers (the super-admin console): the LLM
+     *  connection is platform-wide anyway, so the tenant only labels monitoring. */
+    tenantId: string | null,
     messages: ChatMessage[],
     options?: LLMOptions,
   ): Promise<LLMResponse | LLMErrorResponse> {
@@ -142,7 +144,7 @@ export class LLMRouterService {
    * Requirements: 3.6, 3.7
    */
   private async routeChat(
-    tenantId: string,
+    tenantId: string | null,
     messages: ChatMessage[],
     options?: LLMOptions,
   ): Promise<LLMResponse | LLMErrorResponse> {
@@ -172,7 +174,7 @@ export class LLMRouterService {
       return this.callHermesAi(messages, routedOptions);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`LLM chat failed for tenant ${tenantId}: ${message}`);
+      this.logger.error(`LLM chat failed for tenant ${tenantId ?? 'platform'}: ${message}`);
       return this.createErrorResponse(
         'unknown',
         `Failed to process LLM request: ${message}`,
