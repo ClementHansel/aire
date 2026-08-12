@@ -921,7 +921,8 @@ export default function NewOrderPage() {
     setVoucherMsg(null);
     setVoucherWarning(null);
     try {
-      type ValidateRes = { status: string; message: string; discountAmount?: number; reason?: string; type?: string; benefitServiceIds?: string[]; usedAt?: string };
+      type BenefitService = { id: string; name: string; isActive: boolean; availableHere: boolean };
+      type ValidateRes = { status: string; message: string; discountAmount?: number; reason?: string; type?: string; benefitServiceIds?: string[]; benefitServices?: BenefitService[]; usedAt?: string };
       const validate = (serviceIds: string[], sub: number) => api.post<ValidateRes>(
         '/vouchers/validate',
         { code, serviceIdsInCart: serviceIds, orderSubtotal: sub },
@@ -991,7 +992,22 @@ export default function NewOrderPage() {
       } else if (res.status === 'valid_not_applicable') {
         // Real code, but not applicable to this cart (wrong outlet/brand/service or
         // min-order not met) — orange badge with the server's reason, not an error.
-        setVoucherWarning({ code, reason: res.reason || res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied') });
+        //
+        // When the code covers a service this till cannot sell, the server's
+        // reason ("not valid for the services in cart") blames the cart for what
+        // is really the catalogue's doing: the auto-add above found nothing to
+        // add because the service is deactivated or belongs to another branch.
+        // Name the service and say which it is, so the cashier can act on it
+        // instead of retrying (AIRIN-161).
+        const blocked = res.benefitServices?.filter((b) => !b.availableHere) ?? [];
+        const reason = blocked.length > 0
+          ? `${t('pos.new.voucherCovers', 'Voucher covers')} ${blocked.map((b) => b.name).join(', ')} — ${
+              blocked.every((b) => !b.isActive)
+                ? t('pos.new.voucherServiceInactive', 'that service is no longer offered')
+                : t('pos.new.voucherServiceOtherBranch', 'that service is not available at this branch')
+            }`
+          : (res.reason || res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied'));
+        setVoucherWarning({ code, reason });
       } else {
         // Not found / inactive / expired / fully redeemed — a hard rejection.
         setVoucherMsg({ tone: 'error', text: res.message || t('pos.new.voucherCannotApply', 'Voucher cannot be applied') });

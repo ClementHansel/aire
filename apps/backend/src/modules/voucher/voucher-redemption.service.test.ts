@@ -24,12 +24,13 @@ describe('VoucherRedemptionService.validate — hashed pack codes AND book ticke
   };
 
   /** Routes by SQL fragment, so adding a query cannot invalidate these tests. */
-  const routeQueries = (opts: { packRow?: unknown; ticketRow?: unknown }) => {
+  const routeQueries = (opts: { packRow?: unknown; ticketRow?: unknown; serviceRows?: unknown[] }) => {
     pool.query.mockImplementation((sql: string) => {
       const s = String(sql);
       if (s.includes('parent_code_hash')) return Promise.resolve({ rows: [] });
       if (s.includes('FROM voucher_codes')) return Promise.resolve({ rows: opts.packRow ? [opts.packRow] : [] });
       if (s.includes('FROM voucher_tickets')) return Promise.resolve({ rows: opts.ticketRow ? [opts.ticketRow] : [] });
+      if (s.includes('FROM services')) return Promise.resolve({ rows: opts.serviceRows ?? [] });
       return Promise.resolve({ rows: [] });
     });
   };
@@ -157,5 +158,79 @@ describe('VoucherRedemptionService.validate — hashed pack codes AND book ticke
     // The ticket table is never consulted when the hashed lookup hits.
     const consulted = pool.query.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(consulted.some((s) => s.includes('FROM voucher_tickets'))).toBe(false);
+  });
+
+  /**
+   * AIRIN-161 (re-opened): the POS puts the covered service in the cart itself,
+   * which it can only do for a service in its catalogue. A voucher covering a
+   * service that has since been deactivated added nothing and the cashier was
+   * told "not valid for the services in cart" — the cart blamed for the
+   * catalogue's doing. The verdict now carries the covered service BY NAME, and
+   * says whether this till can sell it, so the POS can explain itself.
+   */
+  describe('what the voucher covers (AIRIN-161)', () => {
+    const emptyCart = { ...ctx, serviceIdsInCart: [], orderSubtotal: 0 };
+
+    it('names a covered service that is no longer sold, and flags it unavailable', async () => {
+      routeQueries({
+        ticketRow: {
+          ticket_status: 'active', ticket_expiry: '2027-02-08',
+          benefit_type: 'service', benefit_value: '0', benefit_service_id: 'svc-express',
+        },
+        serviceRows: [{ id: 'svc-express', name: 'Express Wash', is_active: false, available_here: true }],
+      });
+
+      const res = await service.validate('tenant-1', 'KCL-082026-000143', emptyCart);
+
+      expect(res.status).toBe('valid_not_applicable');
+      expect(res.benefitServices).toEqual([
+        { id: 'svc-express', name: 'Express Wash', isActive: false, availableHere: false },
+      ]);
+    });
+
+    it('flags a service that is active but belongs to another branch', async () => {
+      routeQueries({
+        ticketRow: {
+          ticket_status: 'active', ticket_expiry: null,
+          benefit_type: 'service', benefit_value: '0', benefit_service_id: 'svc-bsd',
+        },
+        serviceRows: [{ id: 'svc-bsd', name: 'BSD Detailing', is_active: true, available_here: false }],
+      });
+
+      const res = await service.validate('tenant-1', 'BSD-082026-000001', emptyCart);
+
+      expect(res.benefitServices).toEqual([
+        { id: 'svc-bsd', name: 'BSD Detailing', isActive: true, availableHere: false },
+      ]);
+    });
+
+    it('reports a sellable covered service as available, so the POS adds it', async () => {
+      routeQueries({
+        ticketRow: {
+          ticket_status: 'active', ticket_expiry: null,
+          benefit_type: 'service', benefit_value: '0', benefit_service_id: 'svc-wax',
+        },
+        serviceRows: [{ id: 'svc-wax', name: '+ Spray Wax', is_active: true, available_here: true }],
+      });
+
+      const res = await service.validate('tenant-1', 'KCL-082026-000155', emptyCart);
+
+      expect(res.benefitServices?.[0]?.availableHere).toBe(true);
+      expect(res.benefitServiceIds).toEqual(['svc-wax']);
+    });
+
+    it('leaves a cash voucher without covered services alone', async () => {
+      routeQueries({
+        ticketRow: {
+          ticket_status: 'active', ticket_expiry: null,
+          benefit_type: 'fixed', benefit_value: '1000000', benefit_service_id: null,
+        },
+      });
+
+      const res = await service.validate('tenant-1', 'KCL-082026-000129', emptyCart);
+
+      expect(res.status).toBe('valid_applicable');
+      expect(res.benefitServices).toBeUndefined();
+    });
   });
 });

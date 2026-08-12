@@ -105,6 +105,25 @@ export interface ValidateVoucherResult {
    * saw the total refuse to move.
    */
   benefitServiceIds?: string[];
+  /**
+   * The covered services, named — and whether the till can actually sell them.
+   *
+   * The POS puts the covered service in the cart on the cashier's behalf, but it
+   * can only do that for a service in its own catalogue. A voucher covering a
+   * service that has since been deactivated, or that this branch does not offer,
+   * therefore silently added nothing and the cashier was told "not valid for the
+   * services in cart" — which reads as their mistake rather than the voucher's
+   * (AIRIN-161). Names travel so the POS can say what the code is FOR even when
+   * it cannot apply it.
+   */
+  benefitServices?: Array<{
+    id: string;
+    name: string;
+    /** False when the service is deactivated tenant-wide. */
+    isActive: boolean;
+    /** False when the service is active but not offered at this outlet. */
+    availableHere: boolean;
+  }>;
   reason?: string;
   message: string;
   /**

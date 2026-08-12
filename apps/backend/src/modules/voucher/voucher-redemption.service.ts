@@ -75,6 +75,15 @@ export class VoucherRedemptionService {
     // moment the POS needs to know which service to select on the cashier's
     // behalf, so this can no longer be reported only on success (AIRIN-161).
     const benefitServiceIds = data?.serviceIds ?? undefined;
+    // …and what those services are CALLED, plus whether this till can sell them.
+    // The POS adds the covered service to the cart itself, which it can only do
+    // for a service in its catalogue; a voucher covering a deactivated or
+    // branch-restricted service otherwise failed silently (AIRIN-161).
+    const benefitServices = await this.describeBenefitServices(
+      // The context carries '' when the caller has no outlet (an owner testing a
+      // code); that is "no branch filter", not a branch whose id is empty.
+      tenantId, benefitServiceIds, context.outletId || undefined,
+    );
 
     if (state.status === 'valid_applicable') {
       const discountAmount = this.computeDiscount(state.type, state.discountValue, context.orderSubtotal);
@@ -87,6 +96,7 @@ export class VoucherRedemptionService {
         // (the order pipeline prices it against the covered line), so the POS
         // needs the service id to reflect the code in its running total.
         benefitServiceIds,
+        benefitServices,
         message: 'Voucher applied',
       };
     }
@@ -97,6 +107,7 @@ export class VoucherRedemptionService {
         discountValue: state.discountValue,
         discountAmount: 0,
         benefitServiceIds,
+        benefitServices,
         reason: state.reason,
         message: state.reason,
       };
@@ -108,6 +119,7 @@ export class VoucherRedemptionService {
         // comes off the looked-up voucher rather than the verdict.
         type: data?.type,
         benefitServiceIds,
+        benefitServices,
         message: this.stateMessage(state),
         usedAt: (await this.findRedeemedAt(tenantId, codeHash, code)) ?? undefined,
       };
@@ -235,6 +247,46 @@ export class VoucherRedemptionService {
       isActive: row.ticket_status === 'active' || row.ticket_status === 'redeemed',
       isParentCode: false,
     };
+  }
+
+  /**
+   * Name the services a code covers, and say whether this till can sell them.
+   *
+   * `availableHere` mirrors the catalogue query the POS itself runs — a service
+   * pinned to one outlet, or listed in `outlet_ids`, is offered only there — so
+   * the answer is the same one the cashier's menu gives. Best-effort: this only
+   * enriches a message, so a failure must never turn a working validation into
+   * an error.
+   */
+  private async describeBenefitServices(
+    tenantId: string,
+    serviceIds: string[] | undefined,
+    outletId: string | undefined,
+  ): Promise<ValidateVoucherResult['benefitServices']> {
+    if (!serviceIds?.length) return undefined;
+    try {
+      const res = await this.pool.query<{
+        id: string; name: string; is_active: boolean; available_here: boolean;
+      }>(
+        `SELECT id, name, is_active,
+                ($3::uuid IS NULL
+                 OR outlet_id = $3
+                 OR (outlet_id IS NULL AND (outlet_ids IS NULL OR outlet_ids = '{}'))
+                 OR $3 = ANY(outlet_ids)) AS available_here
+           FROM services
+          WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+        [tenantId, serviceIds, outletId ?? null],
+      );
+      if (res.rows.length === 0) return undefined;
+      return res.rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        isActive: r.is_active,
+        availableHere: r.is_active && r.available_here,
+      }));
+    } catch {
+      return undefined;
+    }
   }
 
   /** Compute discount for fixed/percentage against a base amount. */
