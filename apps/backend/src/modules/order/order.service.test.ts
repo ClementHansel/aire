@@ -278,12 +278,21 @@ describe('OrderService', () => {
         return call![1] as unknown[];
       };
 
-      /** Answer the operator lookup with a staff record for the logged-in user. */
-      const withOperatorRecord = () => {
+      /**
+       * Answer the operator lookup with a staff record for the logged-in user,
+       * and the employee check with `known` (an unknown id answers empty, which
+       * is how a stale picker value behaves).
+       */
+      const withOperatorRecord = (known: string[] = ['emp-budi', 'emp-sudirman']) => {
         const inner = mockClient.query.getMockImplementation()!;
         mockClient.query.mockImplementation((sql: string, params?: unknown[]) => {
-          if (String(sql).includes('FROM users u')) {
+          const s = String(sql);
+          if (s.includes('FROM users u')) {
             return Promise.resolve({ rows: [{ name: 'Cashier Budi', employee_id: 'emp-budi' }], rowCount: 1 });
+          }
+          if (s.includes('FROM employees WHERE id')) {
+            const id = (params as unknown[])?.[0] as string;
+            return Promise.resolve({ rows: known.includes(id) ? [{ id }] : [], rowCount: known.includes(id) ? 1 : 0 });
           }
           return inner(sql, params);
         });
@@ -314,6 +323,24 @@ describe('OrderService', () => {
         expect(params).toContain('Kasir Outlet Sudirman');
         expect(params).toContain('emp-sudirman');
         expect(params).not.toContain('Cashier Budi');
+      });
+
+      it('still sells when the picked employee id names nobody', async () => {
+        // salesperson_employee_id is a foreign key: an id from a stale POS tab
+        // aborted the INSERT and the customer was stuck at the counter with a
+        // 500. The name still credits the sale — that is what reports read.
+        setupSuccessfulOrderCreation();
+        withOperatorRecord([]); // no id resolves
+
+        await orderService.createOrder(
+          { ...validRequest, salespersonName: 'Kasir Outlet Sudirman', salespersonEmployeeId: 'emp-gone' },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+
+        const params = orderInsertParams();
+        expect(params).toContain('Kasir Outlet Sudirman');
+        expect(params).not.toContain('emp-gone');
       });
     });
 

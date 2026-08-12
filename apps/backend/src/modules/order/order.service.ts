@@ -2055,9 +2055,16 @@ export class OrderService {
     user: JWTPayload,
     request: CreateOrderRequest,
   ): Promise<{ name: string | null; employeeId: string | null }> {
+    // The employee id is a foreign key, so a value that names nobody used to
+    // abort the whole sale with a 500 at INSERT time. The POS can only send ids
+    // from its own picker, but a stale tab or a hand-rolled request must not be
+    // able to block a customer at the counter: an unknown id is dropped and the
+    // NAME still credits the sale, which is what the reports read.
+    const employeeId = await this.verifyEmployee(client, user.tenant_id, request.salespersonEmployeeId);
+
     const chosen = request.salespersonName?.trim();
     if (chosen) {
-      return { name: chosen, employeeId: request.salespersonEmployeeId ?? null };
+      return { name: chosen, employeeId };
     }
     const res = await client.query<{ name: string; employee_id: string | null }>(
       `SELECT u.name, e.id AS employee_id
@@ -2068,11 +2075,29 @@ export class OrderService {
       [user.sub],
     );
     const row = res.rows[0];
-    if (!row) return { name: null, employeeId: request.salespersonEmployeeId ?? null };
+    if (!row) return { name: null, employeeId };
     return {
       name: row.name,
-      employeeId: request.salespersonEmployeeId ?? row.employee_id ?? null,
+      employeeId: employeeId ?? row.employee_id ?? null,
     };
+  }
+
+  /** The employee id if it names someone in this tenant, otherwise null. */
+  private async verifyEmployee(
+    client: PoolClient,
+    tenantId: string,
+    employeeId: string | undefined,
+  ): Promise<string | null> {
+    if (!employeeId) return null;
+    const res = await client.query<{ id: string }>(
+      `SELECT id FROM employees WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [employeeId, tenantId],
+    );
+    if (res.rows.length > 0) return employeeId;
+    this.logger.warn(
+      `Salesperson employee ${employeeId} is not in tenant ${tenantId}; crediting the sale by name only`,
+    );
+    return null;
   }
 
   /**
