@@ -1463,7 +1463,10 @@ export default function NewOrderPage() {
                   const first = memberLookup.memberships[0];
                   if (!first) return null;
                   const end = new Date(first.endDate);
-                  const min = end.toISOString().slice(0, 10);
+                  // The earliest the next period may start is the DAY AFTER the
+                  // current expiry — the member has already paid through that
+                  // day (AIRIN-156). Left blank, the server picks the same date.
+                  const min = new Date(end.getTime() + 86400000).toISOString().slice(0, 10);
                   const max = new Date(end.getTime() + 7 * 86400000).toISOString().slice(0, 10);
                   return (
                     <div className="min-w-[9rem]">

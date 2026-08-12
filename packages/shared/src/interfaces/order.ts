@@ -243,6 +243,12 @@ export interface OrderCard {
   licensePlate?: string;
   vehicleBrand?: string;
   operatorName: string;
+  /**
+   * Staff member credited with the sale. Usually the operator, but the POS lets
+   * the cashier credit a colleague — in which case this is the ONLY place that
+   * shows it, since operatorName stays the logged-in till user (AIRIN-152).
+   */
+  salespersonName?: string | null;
   status: OrderStatus;
   items: OrderCardItem[];
   /** Pre-charges/discount sum of line items. */

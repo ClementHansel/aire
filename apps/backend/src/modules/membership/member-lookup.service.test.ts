@@ -105,6 +105,24 @@ describe('MemberLookupService', () => {
       expect(firstQuery[1][1]).toBe('6281234567890');
     });
 
+    it('also matches on the stored phone, not only phone_normalized (AIRIN-154)', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockCustomerRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: [mockCustomerRow] });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await service.lookupByPhone(tenantId, '081234567890');
+
+      // phone_normalized is only as good as whoever wrote the row — the demo
+      // seeder parked a marker there, which made its members (most of the
+      // grace/revoked ones) unfindable by their real number. The query derives
+      // the canonical form from `phone` as a fallback.
+      const sql = String(mockPool.query.mock.calls[0]![0]);
+      expect(sql).toContain('phone_normalized = $2');
+      expect(sql).toContain('regexp_replace');
+      expect(sql).toContain("substring(regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') from 2)");
+    });
+
     it('should return null when phone is invalid', async () => {
       const result = await service.lookupByPhone(tenantId, '123');
 

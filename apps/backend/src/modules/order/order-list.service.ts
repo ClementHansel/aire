@@ -25,6 +25,7 @@ interface OrderRow {
   license_plate: string | null;
   vehicle_brand: string | null;
   operator_name: string;
+  salesperson_name: string | null;
   status: string;
   total: string;
   created_at: string;
@@ -127,6 +128,7 @@ export class OrderListService {
         o.license_plate,
         o.vehicle_brand,
         u.name AS operator_name,
+        o.salesperson_name,
         o.status,
         o.total::text,
         o.created_at::text,
@@ -198,6 +200,7 @@ export class OrderListService {
       licensePlate: row.license_plate ?? undefined,
       vehicleBrand: row.vehicle_brand ?? undefined,
       operatorName: row.operator_name,
+      salespersonName: row.salesperson_name ?? null,
       status: row.status as OrderStatus,
       items: itemsByOrder[row.id] ?? [],
       subtotal: row.subtotal != null ? parseFloat(row.subtotal) : 0,

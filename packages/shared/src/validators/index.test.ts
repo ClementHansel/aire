@@ -163,6 +163,36 @@ describe('validateOrder', () => {
       });
     });
 
+    it('accepts a product-only sale — a bottle over the counter needs no wash (AIRIN-160)', () => {
+      const result = validateOrder({
+        ...validInput,
+        items: [
+          { serviceId: 'prod-1', quantity: 1, isMainService: false, category: 'product', businessUnit: 'AIRE' },
+        ],
+      });
+      expect(result.errors.map((e) => e.code)).not.toContain(ERR_ORDER_NO_MAIN_SERVICE);
+    });
+
+    it('accepts a standalone LEAD detailing job, which is filed as an add-on (AIRIN-160)', () => {
+      const result = validateOrder({
+        ...validInput,
+        items: [
+          { serviceId: 'detail-1', quantity: 1, isMainService: false, category: 'add_on', businessUnit: 'LEAD' },
+        ],
+      });
+      expect(result.errors.map((e) => e.code)).not.toContain(ERR_ORDER_NO_MAIN_SERVICE);
+    });
+
+    it('still refuses a cart of AIRE add-ons alone — those attach TO a wash', () => {
+      const result = validateOrder({
+        ...validInput,
+        items: [
+          { serviceId: 'addon-1', quantity: 1, isMainService: false, category: 'add_on', businessUnit: 'AIRE' },
+        ],
+      });
+      expect(result.errors.map((e) => e.code)).toContain(ERR_ORDER_NO_MAIN_SERVICE);
+    });
+
     it('should not produce "no main service" error when cart is empty (cart empty error already covers it)', () => {
       const result = validateOrder({ ...validInput, items: [] });
       const noMainServiceError = result.errors.find(

@@ -19,6 +19,8 @@ interface OrderCard {
   customerPhone: string;
   licensePlate?: string;
   operatorName: string;
+  /** Staff credited with the sale — may be a colleague, not the till user. */
+  salespersonName?: string | null;
   status: 'ordered' | 'paid' | 'confirmed' | 'completed' | 'cancelled';
   items: OrderCardItem[];
   subtotal: number;
@@ -236,7 +238,7 @@ export default function OrdersPage() {
           outlet_name: branch, outlet_address: '', outlet_phone: '',
           order_number: o.orderNumber, datetime: new Date(o.createdAt).toLocaleString('id-ID'),
           customer_name: o.customerName, license_plate: o.licensePlate ?? '',
-          operator_name: o.operatorName ?? '', payment_method: paymentLabel,
+          operator_name: o.salespersonName || o.operatorName || '', payment_method: paymentLabel,
         },
         items: o.items.map((it) => ({
           line: `${it.quantity}× ${it.serviceName}${itemReasonText(o, it)}`,
@@ -284,7 +286,7 @@ export default function OrdersPage() {
       <table class="brk">${breakdownRows}</table>
       <div class="tot"><span>Total</span><span>${fmt(o.total)}</span></div>
       ${reasonBlock}
-      <p class="foot">${o.status.toUpperCase()}${paymentLabel ? ' · ' + escapeHtml(paymentLabel) : ''} · ${escapeHtml(o.operatorName || '')}</p>
+      <p class="foot">${o.status.toUpperCase()}${paymentLabel ? ' · ' + escapeHtml(paymentLabel) : ''} · ${escapeHtml(o.salespersonName || o.operatorName || '')}</p>
       <p class="foot">Terima kasih!</p>
       </body></html>`;
     const w = window.open('', '_blank', 'width=340,height=600');
@@ -480,6 +482,14 @@ export default function OrdersPage() {
                   {o.operatorName && (
                     <span className="badge bg-surface-sunken text-text-secondary text-xs" data-testid={`order-cashier-${o.id}`}>
                       {t('pos.orders.cashierLabel', 'Cashier')}: {o.operatorName}
+                    </span>
+                  )}
+                  {/* Shown only when the credit went somewhere other than the
+                      till user — otherwise it would just repeat the badge
+                      above (AIRIN-152). */}
+                  {o.salespersonName && o.salespersonName !== o.operatorName && (
+                    <span className="badge bg-surface-sunken text-text-secondary text-xs" data-testid={`order-salesperson-${o.id}`}>
+                      {t('pos.orders.salespersonLabel', 'Salesperson')}: {o.salespersonName}
                     </span>
                   )}
                 </div>

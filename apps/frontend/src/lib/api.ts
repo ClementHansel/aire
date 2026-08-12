@@ -127,8 +127,18 @@ export async function apiFetch<T = unknown>(
       } catch { /* sessionStorage may be unavailable; the page falls back to a generic message */ }
       window.location.href = '/account-suspended';
     }
-    const message =
+    let message =
       (body && (body.message || body.error)) || `Request failed (${res.status})`;
+    // A validation rejection carries the reasons in `details`; without them the
+    // user is told only "Order validation failed" and has to guess which field
+    // the server objected to (AIRIN-160). Append the reasons to the message so
+    // every existing `catch (e) { setError(e.message) }` shows them.
+    if (Array.isArray(body?.details)) {
+      const reasons = (body.details as Array<{ message?: string }>)
+        .map((d) => (typeof d === 'string' ? d : d?.message))
+        .filter((m): m is string => !!m);
+      if (reasons.length > 0) message = `${message}: ${reasons.join(', ')}`;
+    }
     throw new ApiError(res.status, message, body);
   }
 

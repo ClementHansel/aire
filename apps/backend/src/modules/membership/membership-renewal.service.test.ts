@@ -122,7 +122,7 @@ describe('MembershipRenewalService', () => {
       expect(passedEndDate.getDate()).toBe(15);
     });
 
-    it('should retain the original start_date (not update it)', async () => {
+    it('moves start_date to the day after the current term (AIRIN-156)', async () => {
       mockPlanService.getPlan.mockResolvedValueOnce(mockPlan);
 
       const originalStartDate = new Date('2024-01-15');
@@ -157,15 +157,17 @@ describe('MembershipRenewalService', () => {
       );
 
       expect(result.type).toBe('extension');
-      // start_date IS in the UPDATE now, but behind a flag that is false for an
-      // early renewal — the running term keeps the start it already had
-      // (AIRIN-156 only moves it when the membership had already lapsed).
+      // The renewed period begins the day AFTER the term the member is still
+      // using — 16 Apr, not 15 Apr, which they have already paid for — and
+      // start_date says so (AIRIN-156).
       const queryStr = mockPool.query.mock.calls[0][0] as string;
-      expect(queryStr).toContain('start_date = CASE');
-      const lapsedFlag = mockPool.query.mock.calls[0][1][2] as boolean;
-      expect(lapsedFlag).toBe(false);
-      // The returned membership should still have the original start_date
-      expect(result.membership.startDate).toEqual(originalStartDate);
+      expect(queryStr).toContain('start_date = $3::date');
+      const periodStart = mockPool.query.mock.calls[0][1][2] as Date;
+      expect([periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()])
+        .toEqual([2024, 3, 16]);
+      // …while the end keeps the anniversary: 15 Apr + 3 months = 15 Jul.
+      const endDate = mockPool.query.mock.calls[0][1][0] as Date;
+      expect([endDate.getMonth(), endDate.getDate()]).toEqual([6, 15]);
     });
 
     it('starts a LAPSED membership fresh from today, not from its old expiry (AIRIN-156)', async () => {
@@ -191,9 +193,8 @@ describe('MembershipRenewalService', () => {
       const result = await service.renewMembership(customerId, planId, orderId, [lapsed]);
 
       expect(result.type).toBe('extension');
-      const [endDate, , lapsedFlag, periodStart] = mockPool.query.mock.calls[0][1] as [Date, string, boolean, Date];
+      const [endDate, , periodStart] = mockPool.query.mock.calls[0][1] as [Date, string, Date];
       // Today (pinned to 2024-03-01) + 3 months, and the term is re-based to today.
-      expect(lapsedFlag).toBe(true);
       expect([periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()]).toEqual([2024, 2, 1]);
       expect(endDate.getFullYear()).toBe(2024);
       expect(endDate.getMonth()).toBe(5); // June
@@ -220,6 +221,9 @@ describe('MembershipRenewalService', () => {
 
       // …and the bounds are enforced where the fee order is created.
       expect(() => service.validateNextStart('2024-04-10', '2024-04-15')).toThrow();
+      // The expiry itself is now too early: the member already owns that day.
+      expect(() => service.validateNextStart('2024-04-15', '2024-04-15')).toThrow();
+      expect(service.validateNextStart('2024-04-16', '2024-04-15')).toBe('2024-04-16');
       expect(() => service.validateNextStart('2024-04-30', '2024-04-15')).toThrow();
       expect(service.validateNextStart('2024-04-22', '2024-04-15')).toBe('2024-04-22');
       expect(service.validateNextStart(undefined, '2024-04-15')).toBeNull();
@@ -299,6 +303,37 @@ describe('MembershipRenewalService', () => {
       // Verify INSERT query was used
       const queryStr = mockPool.query.mock.calls[0][0] as string;
       expect(queryStr).toContain('INSERT INTO memberships');
+    });
+
+    it('queues the new plan behind the term still running, instead of overlapping it (AIRIN-156)', async () => {
+      const differentPlanId = 'plan-different';
+      mockPlanService.getPlan.mockResolvedValueOnce({ ...mockPlan, id: differentPlanId, durationMonths: 1 });
+
+      // Today is pinned to 2024-03-01 by the suite's fake timers; the member is
+      // paid up to 2024-04-15. Starting the new plan today would sell them a
+      // period they already own — Samuel saw exactly that, a "new" period
+      // identical to the running one.
+      const running = makeActiveMembership({
+        startDate: new Date('2024-01-15'),
+        endDate: new Date('2024-04-15'),
+      });
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: 'membership-queued', tenant_id: 'tenant-001', customer_id: customerId,
+          plan_id: differentPlanId, status: 'active',
+          start_date: new Date('2024-04-16'), end_date: new Date('2024-05-15'),
+          uses_count: 0, max_uses: 30, daily_limit: 1, order_id: orderId,
+          created_at: new Date(), updated_at: new Date(),
+        }],
+      });
+
+      await service.renewMembership(customerId, differentPlanId, orderId, [running]);
+
+      const params = mockPool.query.mock.calls[0][1] as unknown[];
+      const startDate = params[2] as Date;
+      const endDate = params[3] as Date;
+      expect([startDate.getMonth(), startDate.getDate()]).toEqual([3, 16]); // 16 Apr
+      expect([endDate.getMonth(), endDate.getDate()]).toEqual([4, 15]);     // 15 May
     });
   });
 

@@ -30,6 +30,7 @@ interface OrderDiscountSource {
 interface OrderCard {
   id: string; orderNumber: string; customerName: string; customerPhone: string;
   status: string; total: number; createdAt: string; operatorName: string;
+  salespersonName?: string | null;
   paymentMethod: string | null; isMember: boolean;
   items?: OrderCardItem[];
   discountSources?: OrderDiscountSource[];
@@ -573,6 +574,10 @@ export default function TransactionsPage() {
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.customer', 'Customer')}</span><span>{detail.customerName}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.phone', 'Phone')}</span><span>{detail.customerPhone}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.operator', 'Operator')}</span><span>{detail.operatorName}</span></div>
+              {/* Who the sale is credited to. Separate from the operator on
+                  purpose: the cashier who rang it up may have credited a
+                  colleague, and only this line shows that (AIRIN-152). */}
+              <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.salesperson', 'Salesperson')}</span><span>{detail.salespersonName || detail.operatorName}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.paymentMethod', 'Payment')}</span><span>{detail.paymentMethod ? paymentLabel(detail.paymentMethod) : '—'}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.customerType', 'Customer type')}</span><span>{detail.isMember ? t('dash.transactions.memberOnly', 'Member') : t('dash.transactions.nonMemberOnly', 'Non-member')}</span></div>
               <div className="flex justify-between"><span className="text-text-muted">{t('dash.transactions.status', 'Status')}</span><span className="capitalize">{detail.status}</span></div>

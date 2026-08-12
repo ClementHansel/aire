@@ -17,7 +17,18 @@ import {
 export interface OrderValidationInput {
   customerName: string;
   customerPhone: string;
-  items: Array<{ serviceId: string; quantity: number; isMainService: boolean }>;
+  items: Array<{
+    serviceId: string;
+    quantity: number;
+    isMainService: boolean;
+    /**
+     * Catalogue category of the line ('car_wash' | 'add_on' | 'product'). Only
+     * an AIRE add-on is an accessory TO a wash; see Rule 4.
+     */
+    category?: string;
+    /** Business unit the line belongs to ('AIRE' car wash | 'LEAD' detailing). */
+    businessUnit?: string;
+  }>;
   voucherCodes?: string[];
   voucherMinOrderAmount?: number;
   orderSubtotal?: number;
@@ -95,11 +106,26 @@ export function validateOrder(input: OrderValidationInput): OrderValidationResul
     });
   }
 
-  // Rule 4: Cart must contain at least one main service. A pack sale can be
+  // Rule 4: an AIRE add-on needs a wash to be added ON to. A pack sale can be
   // accompanied by add-ons only (or nothing), so it is exempt too.
+  //
+  // The rule used to demand a main service of EVERY cart, which quietly made
+  // three real sales impossible: a bottle of wiper fluid over the counter
+  // (category 'product'), a standalone LEAD detailing job — the whole detailing
+  // business is filed under category 'add_on' — and any mix of the two. The
+  // cashier only saw "Order validation failed" (AIRIN-160). So it now fires
+  // only when EVERY line is an AIRE add-on, which is the case the rule was
+  // written for. Lines whose category/unit the caller didn't supply are treated
+  // as the old rule treated them, keeping non-POS callers unchanged.
   if (input.items && input.items.length > 0 && !input.sellsPack) {
     const hasMainService = input.items.some((item) => item.isMainService);
-    if (!hasMainService) {
+    const allAireAddOns = input.items.every(
+      (item) =>
+        !item.isMainService &&
+        (item.category ?? 'add_on') === 'add_on' &&
+        (item.businessUnit ?? 'AIRE') === 'AIRE',
+    );
+    if (!hasMainService && allAireAddOns) {
       errors.push({
         code: ERR_ORDER_NO_MAIN_SERVICE,
         message: 'Add a main wash service first',

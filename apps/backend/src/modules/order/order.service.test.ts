@@ -264,6 +264,60 @@ describe('OrderService', () => {
     });
 
     /**
+     * AIRIN-152: the sale is credited to a salesperson, which defaults to the
+     * cashier ringing it up and can be pointed at a colleague instead. The POS
+     * preselects the cashier, but a till whose picker never loaded sent nothing
+     * and the order was stored uncredited — so the server fills the blank.
+     */
+    describe('salesperson credit', () => {
+      const orderInsertParams = () => {
+        const call = mockClient.query.mock.calls.find(
+          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO orders'),
+        );
+        expect(call, 'order INSERT was never issued').toBeDefined();
+        return call![1] as unknown[];
+      };
+
+      /** Answer the operator lookup with a staff record for the logged-in user. */
+      const withOperatorRecord = () => {
+        const inner = mockClient.query.getMockImplementation()!;
+        mockClient.query.mockImplementation((sql: string, params?: unknown[]) => {
+          if (String(sql).includes('FROM users u')) {
+            return Promise.resolve({ rows: [{ name: 'Cashier Budi', employee_id: 'emp-budi' }], rowCount: 1 });
+          }
+          return inner(sql, params);
+        });
+      };
+
+      it('credits the logged-in cashier when the picker was left alone', async () => {
+        setupSuccessfulOrderCreation();
+        withOperatorRecord();
+
+        await orderService.createOrder(validRequest, mockUser, { shift: { id: 'shift-1', outletId: 'outlet-1' } });
+
+        const params = orderInsertParams();
+        expect(params).toContain('Cashier Budi');
+        expect(params).toContain('emp-budi');
+      });
+
+      it('credits the colleague the cashier picked instead', async () => {
+        setupSuccessfulOrderCreation();
+        withOperatorRecord();
+
+        await orderService.createOrder(
+          { ...validRequest, salespersonName: 'Kasir Outlet Sudirman', salespersonEmployeeId: 'emp-sudirman' },
+          mockUser,
+          { shift: { id: 'shift-1', outletId: 'outlet-1' } },
+        );
+
+        const params = orderInsertParams();
+        expect(params).toContain('Kasir Outlet Sudirman');
+        expect(params).toContain('emp-sudirman');
+        expect(params).not.toContain('Cashier Budi');
+      });
+    });
+
+    /**
      * Samuel 2026-07-30: selling a membership plan on the SAME order as a wash
      * (the counter upsell that replaced the separate Sell Pack page) must make
      * that day's wash free, keep add-ons charged, and still record the plan sale.

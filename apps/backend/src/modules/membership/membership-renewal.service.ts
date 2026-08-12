@@ -164,23 +164,23 @@ export class MembershipRenewalService {
 
     if (samePlanMembership) {
       const periodStart = this.renewalPeriodStart(samePlanMembership.endDate, nextStartDate);
-      const newEndDate = this.addMonths(periodStart, plan.durationMonths);
-      // A renewal taken AFTER the membership lapsed opens a fresh period from the
-      // day it is paid for, so start_date has to move with it. Extending only
-      // end_date left the member showing a start date from the previous term —
-      // "tanggal aktif mengikuti tanggal berakhirnya membership" (AIRIN-156) —
-      // and, worse, silently charged them for the days they had already lost. An
-      // EARLY renewal keeps its original start: that period is still running.
-      const lapsed = periodStart.getTime() > new Date(samePlanMembership.endDate).getTime();
-
+      const newEndDate = this.renewalPeriodEnd(
+        samePlanMembership.endDate, periodStart, plan.durationMonths,
+      );
+      // A renewal always opens a NEW period, so start_date moves to the day that
+      // period begins — the day after the current term for an on-time renewal,
+      // today for one taken after the membership lapsed. Extending only end_date
+      // left the member showing a start date from the previous term
+      // ("tanggal aktif mengikuti tanggal berakhirnya membership", AIRIN-156)
+      // and, when late, silently charged them for the days already lost.
       const result = await this.pool.query<MembershipRow>(
         `UPDATE memberships
          SET end_date = $1,
-             start_date = CASE WHEN $3::boolean THEN $4::date ELSE start_date END,
+             start_date = $3::date,
              status = 'active', grace_until = NULL, revoked_at = NULL, updated_at = NOW()
          WHERE id = $2
          RETURNING *`,
-        [newEndDate, samePlanMembership.id, lapsed, periodStart],
+        [newEndDate, samePlanMembership.id, periodStart],
       );
       const row = result.rows[0]!;
       await this.lifecycle.recordEvent(this.pool, row.tenant_id, row.id, 'renewed', { orderId, planId, type: 'extension' }, null);
@@ -199,8 +199,22 @@ export class MembershipRenewalService {
     // Different plan or no existing: create brand new membership. An explicitly
     // requested later start is honoured here too, so a customer who buys today
     // for next week gets the full term they paid for.
-    const startDate = nextStartDate ? new Date(`${nextStartDate}T00:00:00`) : new Date();
-    const endDate = this.addMonths(startDate, plan.durationMonths);
+    //
+    // Renewing onto a DIFFERENT plan is still a renewal, so the new term queues
+    // behind the term the member is still using instead of starting today and
+    // overlapping it — the case Samuel reported as "periode baru sama dengan
+    // periode berjalan" (AIRIN-156). Only a running (active/grace) membership
+    // holds it back; with none, this is an ordinary purchase starting today.
+    const runningEnd = existingMemberships
+      .filter((m) => m.status === 'active' || m.status === 'grace')
+      .map((m) => MembershipRenewalService.atMidnight(new Date(m.endDate)))
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+    const startDate = runningEnd
+      ? this.renewalPeriodStart(runningEnd, nextStartDate)
+      : (nextStartDate ? new Date(`${nextStartDate}T00:00:00`) : new Date());
+    const endDate = runningEnd
+      ? this.renewalPeriodEnd(runningEnd, startDate, plan.durationMonths)
+      : this.addMonths(startDate, plan.durationMonths);
 
     const result = await this.pool.query<MembershipRow>(
       `INSERT INTO memberships
@@ -235,28 +249,56 @@ export class MembershipRenewalService {
     return c;
   }
 
+  /** The day after the given date, at midnight. */
+  private static dayAfter(d: Date): Date {
+    const c = MembershipRenewalService.atMidnight(d);
+    c.setDate(c.getDate() + 1);
+    return c;
+  }
+
   /**
    * Where the renewed period begins.
    *
-   * Renewing EARLY stacks onto the current expiry — no days are lost. Renewing
-   * LATE (during grace, after the membership already lapsed) starts today: the
-   * old rule glued the new period to an expiry that was already in the past, so
-   * a member who renewed five days late paid for a month and received twenty-five
-   * days (AIRIN-156). An explicit `nextStartDate` overrides both; it has already
-   * been bounds-checked by validateNextStart.
+   * Renewing while the term is still running queues the new period behind it —
+   * it begins the DAY AFTER the current expiry, so no day is paid for twice and
+   * none is lost: a term running 12 Aug → 12 Sep renews into 13 Sep → 12 Oct,
+   * not 12 Aug → 12 Sep (AIRIN-156). Renewing LATE (after the membership already
+   * lapsed) starts today instead of gluing the new period to an expiry that is
+   * already in the past — a member renewing five days late used to pay for a
+   * month and receive twenty-five days. An explicit `nextStartDate` overrides
+   * both; it has already been bounds-checked by validateNextStart.
    */
   renewalPeriodStart(currentEndDate: string | Date, nextStartDate?: string): Date {
     if (nextStartDate) return MembershipRenewalService.atMidnight(new Date(`${nextStartDate}T00:00:00`));
     const end = MembershipRenewalService.atMidnight(new Date(currentEndDate));
     const today = MembershipRenewalService.atMidnight(new Date());
-    return end.getTime() >= today.getTime() ? end : today;
+    return end.getTime() >= today.getTime()
+      ? MembershipRenewalService.dayAfter(end)
+      : today;
   }
 
   /**
-   * Bound a requested next-period start: never before the current expiry (that
-   * would shorten a period the member has already paid for) and never more than
-   * 7 days after it (Samuel's rule — beyond a week it is a new membership, not a
-   * renewal; AIRIN-157). Returns null when nothing was requested.
+   * Where the renewed period ends.
+   *
+   * A period that queues straight onto the current term is measured from that
+   * term's expiry, which keeps the member's anniversary date: 12 Sep + 1 month
+   * = 12 Oct, for a period starting 13 Sep. A late renewal, or one with a
+   * deferred start the cashier picked, is measured from its own start instead —
+   * the member gets the full term they paid for.
+   */
+  renewalPeriodEnd(currentEndDate: string | Date, periodStart: Date, months: number): Date {
+    const end = MembershipRenewalService.atMidnight(new Date(currentEndDate));
+    const stacked =
+      periodStart.getTime() === MembershipRenewalService.dayAfter(end).getTime();
+    return this.addMonths(stacked ? end : periodStart, months);
+  }
+
+  /**
+   * Bound a requested next-period start: never before the day after the current
+   * expiry (the member has already paid through that expiry, and starting on it
+   * would sell them the same day twice) and never more than 7 days after it
+   * (Samuel's rule — beyond a week it is a new membership, not a renewal;
+   * AIRIN-157). Returns null when nothing was requested.
    */
   validateNextStart(nextStartDate: string | undefined, currentEndDate: string): string | null {
     if (!nextStartDate) return null;
@@ -265,8 +307,9 @@ export class MembershipRenewalService {
       throw new BadRequestException('nextStartDate must be a valid date (YYYY-MM-DD).');
     }
     const end = MembershipRenewalService.atMidnight(new Date(currentEndDate));
+    const earliest = MembershipRenewalService.dayAfter(end);
     const latest = new Date(end.getTime() + 7 * 86_400_000);
-    if (requested.getTime() < end.getTime()) {
+    if (requested.getTime() < earliest.getTime()) {
       throw new BadRequestException('The next period cannot start before the current membership ends.');
     }
     if (requested.getTime() > latest.getTime()) {

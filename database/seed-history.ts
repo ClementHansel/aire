@@ -13,10 +13,11 @@
  * (regional AIRE pricing via services.outlet_ids, plus tenant-wide fallbacks).
  *
  * Idempotent: everything it creates is tagged (order_number 'SEED-…', customer
- * phone_normalized 'SEEDH…', cashier email '@seed.aire.local'). Re-running first
- * removes the previous history, so counts never balloon. The 'SEEDH' marker is
- * non-numeric, so it can never match a real customer's (all-digit) normalized
- * phone — safe to run against a live database.
+ * phone '0899…', cashier email '@seed.aire.local'). Re-running first removes the
+ * previous history, so counts never balloon. `0899` is a prefix no Indonesian
+ * carrier issues, so it can never collide with a real customer — safe to run
+ * against a live database — while still being a NORMAL number, which is what
+ * keeps seeded customers findable by phone at the POS.
  *
  * Usage:
  *   pnpm --filter @aire/database seed:history
@@ -43,10 +44,13 @@ const MONTHS = Number(process.env.SEED_MONTHS || 6);
 const CUSTOMERS_PER_BRANCH = Number(process.env.SEED_CUSTOMERS_PER_BRANCH || 45);
 const MEMBER_RATE = Number(process.env.SEED_MEMBER_RATE || 0.25);
 const LEAD_RATE = Number(process.env.SEED_LEAD_RATE || 0.06);
-// Non-numeric marker stored in customers.phone_normalized. A real customer's
-// normalized phone is ALWAYS digits, so this can never collide — the idempotent
-// cleanup below is therefore guaranteed to only ever delete rows this seed made.
-// (This matters when running against a live VPS database.)
+// Every seeded customer's phone starts with this. No Indonesian carrier issues
+// 0899, so the idempotent cleanup below can only ever delete rows this seed
+// made (this matters when running against a live VPS database) — and unlike the
+// old 'SEEDH' marker parked in phone_normalized, it leaves the row a genuinely
+// searchable phone number (AIRIN-154).
+const SEED_PHONE_PREFIX = '0899';
+/** Legacy marker (pre-AIRIN-154 seeds) — still cleaned up so re-runs are safe. */
 const SEED_NORM_PREFIX = 'SEEDH';
 
 // ── small helpers ───────────────────────────────────────────────────────────
@@ -142,11 +146,20 @@ async function seed(): Promise<void> {
     // Order matters: orders first (releases orders.membership_id RESTRICT), then
     // memberships (cascades plates + usages), then customers.
     await client.query(`DELETE FROM orders WHERE tenant_id = $1 AND order_number LIKE 'SEED-%'`, [TENANT_ID]);
+    // Matches BOTH markers: the phone prefix used now, and the legacy
+    // phone_normalized marker left by seeds that ran before AIRIN-154.
+    const seededCustomers = `SELECT id FROM customers WHERE tenant_id = $1 AND (phone LIKE $2 OR phone_normalized LIKE $3)`;
+    const seedKeys: [string, string, string] = [
+      TENANT_ID, `${SEED_PHONE_PREFIX}%`, `${SEED_NORM_PREFIX}%`,
+    ];
     await client.query(
-      `DELETE FROM memberships WHERE tenant_id = $1 AND customer_id IN (SELECT id FROM customers WHERE tenant_id = $1 AND phone_normalized LIKE $2)`,
-      [TENANT_ID, `${SEED_NORM_PREFIX}%`],
+      `DELETE FROM memberships WHERE tenant_id = $1 AND customer_id IN (${seededCustomers})`,
+      seedKeys,
     );
-    await client.query(`DELETE FROM customers WHERE tenant_id = $1 AND phone_normalized LIKE $2`, [TENANT_ID, `${SEED_NORM_PREFIX}%`]);
+    await client.query(
+      `DELETE FROM customers WHERE tenant_id = $1 AND (phone LIKE $2 OR phone_normalized LIKE $3)`,
+      seedKeys,
+    );
     console.log('  ✓ Cleared previous seeded history (if any)');
 
     // ── one cashier user per branch (order operator / salesperson) ──────────
@@ -175,11 +188,17 @@ async function seed(): Promise<void> {
 
     let phoneSeq = 0;
     let orderSeq = 0;
-    // normalized = collision-proof marker (for cleanup); display = plausible-looking
-    // Indonesian mobile so the CRM/receipts still read naturally.
+    // A REAL normalized phone, matching what normalizePhone() would produce for
+    // the display number. The marker used to live in phone_normalized itself,
+    // which made every seeded customer invisible to the POS "find by phone"
+    // search — the cashier could see a grace/revoked member on screen and still
+    // be told "Customer not found" when typing their number (AIRIN-154). The
+    // seed's own identity now rides on the reserved `0899` display prefix (see
+    // SEED_PHONE_PREFIX), which cleanup keys on instead.
     const nextPhone = () => {
       const n = String(phoneSeq++).padStart(7, '0');
-      return { normalized: `${SEED_NORM_PREFIX}${n}`, display: `0899${n}` };
+      const display = `${SEED_PHONE_PREFIX}${n}`;
+      return { normalized: `62${display.slice(1)}`, display };
     };
 
     let totalCustomers = 0, totalOrders = 0, totalMembers = 0, grandRevenue = 0;

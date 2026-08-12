@@ -114,10 +114,26 @@ export class MemberLookupService {
       return null;
     }
 
+    // Match the canonical column first, then fall back to normalising the stored
+    // `phone` in SQL. phone_normalized is only as good as whatever wrote the row:
+    // the demo-history seeder, for one, parked its own marker there, so members
+    // it created — the grace and revoked ones the cashier most needs to find —
+    // answered "Customer not found" to their real phone number (AIRIN-154). The
+    // fallback derives the same 62-prefixed digits normalizePhone() produces, so
+    // a row is findable by phone whatever put it in the table.
     const result = await this.pool.query<CustomerRow>(
       `SELECT id, name, phone
        FROM customers
-       WHERE tenant_id = $1 AND phone_normalized = $2
+       WHERE tenant_id = $1
+         AND (
+           phone_normalized = $2
+           OR regexp_replace(
+                CASE WHEN regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE '0%'
+                     THEN '62' || substring(regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') from 2)
+                     ELSE regexp_replace(COALESCE(phone, ''), '\\D', '', 'g')
+                END, '\\D', '', 'g') = $2
+         )
+       ORDER BY (phone_normalized = $2) DESC, created_at ASC
        LIMIT 1`,
       [tenantId, normalized],
     );

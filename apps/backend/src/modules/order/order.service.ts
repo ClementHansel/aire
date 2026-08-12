@@ -245,6 +245,11 @@ export class OrderService {
           serviceId: item.serviceId,
           quantity: item.quantity,
           isMainService: service?.is_main_service ?? false,
+          // Category + unit decide whether the "add a wash first" rule applies
+          // at all: a product or a LEAD detailing job stands on its own
+          // (AIRIN-160).
+          category: service?.category,
+          businessUnit: service?.business_unit,
         };
       }),
       voucherCodes: request.voucherCodes,
@@ -531,6 +536,13 @@ export class OrderService {
         }
       }
 
+      // Who gets credited for the sale. "Jika tidak diubah, order tetap tercatat
+      // ke kasir aktif" (AIRIN-152): leaving the picker alone must still name the
+      // cashier on the order, so an untouched field is filled in from the
+      // operator's own staff record rather than left blank. An explicit choice —
+      // including one that is NOT the logged-in cashier — always wins.
+      const salesperson = await this.resolveSalesperson(client, user, request);
+
       // Insert order
       const orderResult = await client.query<OrderRow>(
         `INSERT INTO orders
@@ -562,10 +574,10 @@ export class OrderService {
           request.note ?? null,
           request.membershipId ?? null,
           businessUnit,
-          request.salespersonName ?? null,
+          salesperson.name,
           request.channel ?? 'pos',
           shiftId,
-          request.salespersonEmployeeId ?? null,
+          salesperson.employeeId,
           customerId,
         ],
       );
@@ -2022,6 +2034,45 @@ export class OrderService {
       const unitCogs = materialPerUnit + overheadPerUnit;
       await client.query(`UPDATE order_items SET cost_snapshot = $1 WHERE id = $2`, [unitCogs, line.id]);
     }
+  }
+
+  /**
+   * Who the sale is credited to.
+   *
+   * The POS preselects the logged-in cashier in the Salesperson dropdown, but a
+   * cashier who never opens that dropdown (or whose till has no employee record
+   * to preselect) used to send nothing at all, and the order was stored with an
+   * empty salesperson — so reports credited it to "—" while the ticket clearly
+   * belonged to the person who rang it up (AIRIN-152). The server therefore
+   * fills the blank itself, from the operator's own staff record when there is
+   * one, falling back to their user name.
+   *
+   * An explicitly chosen salesperson is passed through untouched, which is what
+   * makes crediting a colleague work.
+   */
+  private async resolveSalesperson(
+    client: PoolClient,
+    user: JWTPayload,
+    request: CreateOrderRequest,
+  ): Promise<{ name: string | null; employeeId: string | null }> {
+    const chosen = request.salespersonName?.trim();
+    if (chosen) {
+      return { name: chosen, employeeId: request.salespersonEmployeeId ?? null };
+    }
+    const res = await client.query<{ name: string; employee_id: string | null }>(
+      `SELECT u.name, e.id AS employee_id
+         FROM users u
+         LEFT JOIN employees e ON e.user_id = u.id AND e.tenant_id = u.tenant_id AND e.status = 'active'
+        WHERE u.id = $1
+        LIMIT 1`,
+      [user.sub],
+    );
+    const row = res.rows[0];
+    if (!row) return { name: null, employeeId: request.salespersonEmployeeId ?? null };
+    return {
+      name: row.name,
+      employeeId: request.salespersonEmployeeId ?? row.employee_id ?? null,
+    };
   }
 
   /**

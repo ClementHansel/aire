@@ -174,7 +174,7 @@ describe('Property 17: Membership Renewal Date Logic', () => {
     );
   });
 
-  it('same plan extension: start_date is re-based ONLY when the term had already lapsed', async () => {
+  it('same plan extension: start_date always moves to the day the new period begins', async () => {
     await fc.assert(
       fc.asyncProperty(
         planArbitrary,
@@ -207,20 +207,21 @@ describe('Property 17: Membership Renewal Date Logic', () => {
           const updateQuery = queryCalls.find((q) => q.sql.includes('UPDATE'));
           expect(updateQuery).toBeDefined();
 
-          // A live term keeps the start it already has; a lapsed one starts over
-          // today, so the member is not charged for days that already passed
-          // (AIRIN-156).
-          const today = new Date(); today.setHours(0, 0, 0, 0);
-          const expiry = new Date(endDate); expiry.setHours(0, 0, 0, 0);
-          const shouldRebase = expiry.getTime() < today.getTime();
-          expect(updateQuery!.params[2] as boolean).toBe(shouldRebase);
+          // A renewal always opens a new period, so start_date becomes the day
+          // that period begins: the day after a still-running term, or today for
+          // one that already lapsed (AIRIN-156).
+          const expected = service.renewalPeriodStart(endDate);
+          const passedStart = updateQuery!.params[2] as Date;
+          expect(passedStart.getFullYear()).toBe(expected.getFullYear());
+          expect(passedStart.getMonth()).toBe(expected.getMonth());
+          expect(passedStart.getDate()).toBe(expected.getDate());
         },
       ),
       { numRuns: 100 },
     );
   });
 
-  it('same plan extension: new end_date is one full term from the period start (expiry, or today if lapsed)', async () => {
+  it('same plan extension: new end_date is one full term measured from the expiry (or today if lapsed)', async () => {
     await fc.assert(
       fc.asyncProperty(
         planArbitrary,
@@ -254,9 +255,12 @@ describe('Property 17: Membership Renewal Date Logic', () => {
           expect(updateQuery).toBeDefined();
 
           const passedEndDate = updateQuery!.params[0] as Date;
-          // Renewing early stacks onto the expiry; renewing late starts today.
-          // Either way the member gets a WHOLE term — never a shortened one.
-          const expectedEndDate = service.addMonths(
+          // Renewing on time queues behind the current term, keeping the
+          // anniversary date (12 Sep + 1 month = 12 Oct for a period starting
+          // 13 Sep); renewing late measures from today. Either way the member
+          // gets a WHOLE term — never a shortened one.
+          const expectedEndDate = service.renewalPeriodEnd(
+            endDate,
             service.renewalPeriodStart(endDate),
             plan.durationMonths,
           );
