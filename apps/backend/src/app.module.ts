@@ -33,6 +33,7 @@ import { OutletModule } from './modules/outlet/outlet.module';
 import { LegalEntityModule } from './modules/legal-entity';
 import { PaymentMethodModule } from './modules/payment-method';
 import { CatalogModule } from './modules/catalog';
+import { BusinessUnitModule } from './modules/business-unit';
 import { AccessModule } from './modules/access';
 import { VoucherTicketModule } from './modules/voucher-ticket';
 import { PromotionModule } from './modules/promotion';
@@ -114,6 +115,7 @@ import { LprModule } from './modules/lpr';
     LegalEntityModule,
     PaymentMethodModule,
     CatalogModule,
+    BusinessUnitModule,
     AccessModule,
     VoucherTicketModule,
     PromotionModule,

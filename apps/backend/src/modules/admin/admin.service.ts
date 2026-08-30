@@ -5,6 +5,7 @@ import { resolveTenantModules, TENANT_MODULE_KEYS } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { assignTenantCode } from '../../common/tenant-code';
 import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
+import { seedDefaultBusinessUnits } from '../business-unit/business-unit.defaults';
 import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 import { LegalEntityService } from '../legal-entity/legal-entity.service';
@@ -249,6 +250,7 @@ export class AdminService {
     // tenant can take payment and the ledger has accounts from day one. All
     // non-fatal/idempotent, mirroring AuthService.register.
     await assignTenantCode(this.pool, tenantId).catch(() => undefined);
+    await seedDefaultBusinessUnits(this.pool, tenantId).catch(() => undefined);
     await seedDefaultPaymentMethods(this.pool, tenantId).catch(() => undefined);
     await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
 

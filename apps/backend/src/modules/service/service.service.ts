@@ -2,6 +2,7 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { Pool } from 'pg';
 import { ServiceDTO, CreateServiceRequest, ServiceCategory, BusinessUnit } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { BusinessUnitService } from '../business-unit/business-unit.service';
 import { generateInStoreBarcode } from '../barcode/barcode.util';
 
 /** Postgres unique-violation error code. */
@@ -34,11 +35,18 @@ const VALID_CATEGORIES: string[] = [
   ServiceCategory.AddOn,
 ];
 
-const VALID_BUSINESS_UNITS: string[] = [BusinessUnit.Aire, BusinessUnit.Lead];
+/**
+ * AIRIN-176: the allowed set now lives in the `business_units` table, not here.
+ * `BusinessUnit.Aire` survives only as the DEFAULT for a service created
+ * without one — every tenant is seeded with it by migration 096.
+ */
 
 @Injectable()
 export class ServiceService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly businessUnits: BusinessUnitService,
+  ) {}
 
   /**
    * Creates a new service scoped to a tenant.
@@ -50,7 +58,7 @@ export class ServiceService {
   async create(tenantId: string, dto: CreateServiceRequest): Promise<ServiceDTO> {
     this.validateCategory(dto.category);
     const businessUnit = dto.businessUnit ?? BusinessUnit.Aire;
-    this.validateBusinessUnit(businessUnit);
+    await this.validateBusinessUnit(tenantId, businessUnit);
     this.validateDynamicDiscount(dto.dynamicDiscountEnabled, dto.dynamicDiscountKind, dto.maxDiscount);
 
     const isMainService =
@@ -269,7 +277,7 @@ export class ServiceService {
       this.validateCategory(dto.category);
     }
     if (dto.businessUnit) {
-      this.validateBusinessUnit(dto.businessUnit);
+      await this.validateBusinessUnit(tenantId, dto.businessUnit);
     }
     this.validateDynamicDiscount(dto.dynamicDiscountEnabled, dto.dynamicDiscountKind, dto.maxDiscount);
 
@@ -456,12 +464,9 @@ export class ServiceService {
     }
   }
 
-  private validateBusinessUnit(businessUnit: string): void {
-    if (!VALID_BUSINESS_UNITS.includes(businessUnit)) {
-      throw new BadRequestException(
-        `Invalid business unit: ${businessUnit}. Must be one of: ${VALID_BUSINESS_UNITS.join(', ')}`,
-      );
-    }
+  /** Delegates to the tenant's own unit list (AIRIN-176). */
+  private async validateBusinessUnit(tenantId: string, businessUnit: string): Promise<void> {
+    await this.businessUnits.assertValid(tenantId, businessUnit);
   }
 
   /**

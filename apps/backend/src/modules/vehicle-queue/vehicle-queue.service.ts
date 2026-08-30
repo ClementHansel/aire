@@ -33,7 +33,7 @@ export interface QueueEntry {
 
 export interface AddArrivalDto {
   outletId: string; plate?: string; brand?: string; model?: string;
-  customerName?: string; customerPhone?: string; businessUnit?: 'AIRE' | 'LEAD'; note?: string;
+  customerName?: string; customerPhone?: string; businessUnit?: string; note?: string;
 }
 
 /**

@@ -400,14 +400,16 @@ export class ReportPdfService {
   private docDefinition(input: ReportPdfInput): TDocumentDefinitions {
     const s = input.summary;
     const scope = input.outletName ?? 'All branches (consolidated)';
-    const unit = input.businessUnit === 'AIRE' ? 'AIRE · Car Wash' : input.businessUnit === 'LEAD' ? 'LEAD · Detailing' : 'All business units';
+    // AIRIN-176: units are tenant-defined, so the header prints the code the
+    // report was filtered to rather than a label from a fixed pair.
+    const unit = input.businessUnit ? input.businessUnit : 'All business units';
     const periodLabel = `${this.fmtDate(input.dateFrom)} – ${this.fmtDate(input.dateTo)}`;
 
     const payments = Object.entries(s.byPaymentMethod ?? {});
     const paymentChart = payments.map(([k, v]) => ({ label: k.replace(/_/g, ' '), value: v.revenue, display: this.rpCompact(v.revenue) }));
     const revenueChart = this.bucketRevenue(input.daily);
 
-    const bu = (k: 'AIRE' | 'LEAD') => s.byBusinessUnit?.[k] ?? { revenue: 0, count: 0 };
+    const bu = (k: string) => s.byBusinessUnit?.[k] ?? { revenue: 0, count: 0 };
 
     // A section prints unless the tenant's report template explicitly disabled it.
     const on = (key: string) => input.sections?.[key] !== false;
@@ -450,14 +452,20 @@ export class ReportPdfService {
       // the summary only carries that unit, so printing both would show a
       // zero-revenue card for the excluded one and read as a data error.
       // Untyped so the spacer column literal keeps pdfmake's contextual inference.
-      const buCards =
-        input.businessUnit === 'AIRE' ? [this.buCard('AIRE · Car Wash', bu('AIRE'), BRAND)]
-          : input.businessUnit === 'LEAD' ? [this.buCard('LEAD · Detailing', bu('LEAD'), ACCENT_PURPLE)]
-            : [
-                this.buCard('AIRE · Car Wash', bu('AIRE'), BRAND),
-                { width: 12, text: '' },
-                this.buCard('LEAD · Detailing', bu('LEAD'), ACCENT_PURPLE),
-              ];
+      // AIRIN-176: whichever units the summary actually carries, in its own
+      // order — a tenant may have one, or five. Palette cycles rather than being
+      // keyed to two hard-coded codes.
+      const buPalette = [BRAND, ACCENT_PURPLE];
+      const buCodes = input.businessUnit
+        ? [input.businessUnit]
+        : Object.keys(s.byBusinessUnit ?? {});
+      // Loosely typed for the same reason the previous literal was: pdfmake mixes
+      // spacer columns with width-bearing stacks and only infers this contextually.
+      const buCards: any[] = [];
+      buCodes.forEach((code, i) => {
+        if (i > 0) buCards.push({ width: 12, text: '' });
+        buCards.push(this.buCard(code, bu(code), buPalette[i % buPalette.length]!));
+      });
       content.push(
         this.sectionTitle('Revenue by business unit'),
         { columns: buCards, margin: [0, 0, 0, 16] },

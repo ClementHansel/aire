@@ -16,6 +16,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useServiceTypeLabels } from '@/lib/useServiceTypeLabels';
 import type { DailyOperationsRow, AgentPerformanceReport } from '@aire/shared';
 
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
@@ -51,6 +52,7 @@ function downloadCsv(filename: string, header: string[], rows: (string | number)
 
 export function DailyOperationsReport({ qs, dateFrom, dateTo }: { qs: string; dateFrom: string; dateTo: string }) {
   const { t } = useI18n();
+  const { types: serviceTypes } = useServiceTypeLabels();
   const [rows, setRows] = useState<DailyOperationsRow[] | null>(null);
   const [error, setError] = useState('');
 
@@ -76,7 +78,11 @@ export function DailyOperationsReport({ qs, dateFrom, dateTo }: { qs: string; da
   const rnwKeys = [...new Set(rows.flatMap((r) => Object.keys(r.renewals)))].sort((a, b) => +a - +b);
 
   const sum = (pick: (r: DailyOperationsRow) => number) => rows.reduce((a, r) => a + pick(r), 0);
-  const catLabel = (c: string) => ({ car_wash: t('dash.reports.catWash', 'Wash'), add_on: t('dash.reports.catAddOn', 'Add-on'), product: t('dash.reports.catProduct', 'Product') } as Record<string, string>)[c] ?? c;
+  // A renamed type (AIRIN-175) must read the same here as it does on the POS,
+  // otherwise the report and the till disagree about what was sold.
+  const customType = (c: string) => serviceTypes.find((x) => x.code === c && x.customized)?.label;
+  const catLabel = (c: string) => customType(c)
+    ?? (({ car_wash: t('dash.reports.catWash', 'Wash'), add_on: t('dash.reports.catAddOn', 'Add-on'), product: t('dash.reports.catProduct', 'Product') } as Record<string, string>)[c] ?? c);
 
   const exportCsv = () => {
     const header = [

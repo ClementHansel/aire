@@ -314,7 +314,7 @@ function MemberDetailModal({ member, cardTemplate, canManage, onClose, onRenew, 
 
         <div className="mt-5 pt-4 border-t border-border" data-testid="member-plates-section">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold">{t('dash.members.plates', 'Registered plates')}</h4>
+            <h4 className="text-sm font-semibold">{t('dash.members.plates', 'Registered cars')}</h4>
             {canManage && !editingPlates && !lookupLoading && plateDetail && (
               <button className="btn-secondary text-xs" onClick={startEditPlates}>{t('dash.members.editPlates', 'Edit plates')}</button>
             )}

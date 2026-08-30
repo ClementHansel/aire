@@ -3,16 +3,32 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 
 interface Branch { id: string; name: string }
 interface PaymentMethod {
   id: string; outletId: string | null; name: string; kind: string;
-  businessUnit: 'AIRE' | 'LEAD' | null; logoUrl: string | null; color: string; sortOrder: number; isActive: boolean;
+  /** A business unit CODE, or null for tender that settles nowhere (cash). AIRIN-176. */
+  businessUnit: string | null; logoUrl: string | null; color: string; sortOrder: number; isActive: boolean;
 }
 
 const KINDS = ['cash', 'qris', 'edc', 'cc', 'transfer'];
 
-interface FormState { name: string; kind: string; businessUnit: '' | 'AIRE' | 'LEAD'; color: string; outletId: string; logoUrl: string; isActive: boolean }
+/**
+ * Display labels for the type dropdown. The stored `kind` stays `'edc'` — it is
+ * a CHECK-constrained column and the key every report, POS mapping and GL
+ * posting rule keys off — only the label the owner reads changes (AIRIN-177).
+ * Cashiers here call the card machine "debit", not "EDC".
+ */
+const KIND_LABELS: Record<string, string> = {
+  cash: 'CASH',
+  qris: 'QRIS',
+  edc: 'DEBIT',
+  cc: 'CC',
+  transfer: 'TRANSFER',
+};
+
+interface FormState { name: string; kind: string; businessUnit: string; color: string; outletId: string; logoUrl: string; isActive: boolean }
 const EMPTY: FormState = { name: '', kind: 'qris', businessUnit: '', color: '#1652F0', outletId: '', logoUrl: '', isActive: true };
 
 const KIND_HELP: Record<string, string> = {
@@ -25,6 +41,7 @@ const KIND_HELP: Record<string, string> = {
 
 function MethodModal({ initial, branches, onClose, onSaved }: { initial: PaymentMethod | null; branches: Branch[]; onClose: () => void; onSaved: () => void }) {
   const { t } = useI18n();
+  const { units: businessUnits } = useBusinessUnits();
   const [form, setForm] = useState<FormState>(
     initial ? { name: initial.name, kind: initial.kind, businessUnit: initial.businessUnit ?? '', color: initial.color, outletId: initial.outletId ?? '', logoUrl: initial.logoUrl ?? '', isActive: initial.isActive } : EMPTY,
   );
@@ -63,16 +80,18 @@ function MethodModal({ initial, branches, onClose, onSaved }: { initial: Payment
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.paymentMethods.kind', 'Type')}</label>
               <select className="input-field" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
-                {KINDS.map((k) => <option key={k} value={k}>{k.toUpperCase()}</option>)}
+                {KINDS.map((k) => <option key={k} value={k}>{t(`dash.paymentMethods.kindLabel.${k}`, KIND_LABELS[k] ?? k.toUpperCase())}</option>)}
               </select>
               <p className="mt-1 text-xs text-text-muted">{t(`dash.paymentMethods.kindHelp.${form.kind}`, KIND_HELP[form.kind] ?? '')}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.paymentMethods.settlesTo', 'Settles to')}</label>
-              <select className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as FormState['businessUnit'] })}>
+              <select className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value })}>
                 <option value="">{t('dash.paymentMethods.buNone', 'n/a (e.g. cash)')}</option>
-                <option value="AIRE">AIRE</option>
-                <option value="LEAD">LEAD</option>
+                {businessUnits.map((u) => <option key={u.code} value={u.code}>{u.name}</option>)}
+                {form.businessUnit && !businessUnits.some((u) => u.code === form.businessUnit) && (
+                  <option value={form.businessUnit}>{form.businessUnit}</option>
+                )}
               </select>
               <p className="mt-1 text-xs text-text-muted">{t('dash.paymentMethods.settlesToHelp', 'Which business account receives this money. Leave n/a for cash.')}</p>
             </div>

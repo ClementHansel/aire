@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useServiceTypeLabels } from '@/lib/useServiceTypeLabels';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
 
 export interface ServiceDTO {
@@ -11,7 +13,8 @@ export interface ServiceDTO {
   outletId: string | null;
   name: string;
   category: 'car_wash' | 'product' | 'add_on';
-  businessUnit: 'AIRE' | 'LEAD';
+  /** A business unit CODE the tenant owns (AIRIN-176) — no longer a fixed pair. */
+  businessUnit: string;
   categoryId: string | null;
   brandId: string | null;
   /** Branches this item is sold at. null/empty/absent = every branch. */
@@ -135,6 +138,9 @@ export function ServiceModal({
   onSaved: () => void;
 }) {
   const { t } = useI18n();
+  // Tenant's own wording for the type codes (AIRIN-175).
+  const { label: typeLabel } = useServiceTypeLabels();
+  const { units: businessUnits } = useBusinessUnits();
   const isProduct = lockedCategory === 'product';
   const scope: 'service' | 'product' = isProduct ? 'product' : 'service';
   // Labels meant for this item type (or shared 'both') are offered first; the
@@ -199,6 +205,17 @@ export function ServiceModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // A brand-new service defaults to the tenant's FIRST unit, not to the literal
+  // 'AIRE' the form seeds with: a tenant who renamed or deactivated the seeded
+  // pair would otherwise create services against a unit they no longer use
+  // (AIRIN-176). Only runs while creating, so editing never reassigns a service.
+  useEffect(() => {
+    if (initial) return;
+    if (businessUnits.length === 0) return;
+    if (businessUnits.some((u) => u.code === form.businessUnit)) return;
+    setForm((f) => ({ ...f, businessUnit: businessUnits[0]!.code }));
+  }, [businessUnits, initial, form.businessUnit]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -252,9 +269,13 @@ export function ServiceModal({
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">{t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)}</label>
-            <select aria-label={t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)} className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value as ServiceDTO['businessUnit'] })}>
-              <option value="AIRE">{t('dash.services.buAire', 'AIRE · Car Wash')}</option>
-              <option value="LEAD">{t('dash.services.buLead', 'LEAD · Detailing & Polishing')}</option>
+            <select aria-label={t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)} className="input-field" value={form.businessUnit} onChange={(e) => setForm({ ...form, businessUnit: e.target.value })}>
+              {businessUnits.map((u) => <option key={u.code} value={u.code}>{u.name}</option>)}
+              {/* An edited service may point at a unit since deactivated; keep it
+                  selectable so saving the form does not silently move the service. */}
+              {form.businessUnit && !businessUnits.some((u) => u.code === form.businessUnit) && (
+                <option value={form.businessUnit}>{form.businessUnit}</option>
+              )}
             </select>
           </div>
           {!lockedCategory && categoryOptions.length > 1 && (
@@ -262,7 +283,7 @@ export function ServiceModal({
               <label className="block text-sm font-medium text-text-primary mb-1.5">{t(TYPE_LABEL.key, TYPE_LABEL.fallback)}</label>
               <select aria-label={t(TYPE_LABEL.key, TYPE_LABEL.fallback)} className="input-field" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ServiceDTO['category'] })}>
                 {categoryOptions.map((c) => (
-                  <option key={c} value={c}>{t(CATEGORY_KEYS[c], CATEGORY_LABELS[c])}</option>
+                  <option key={c} value={c}>{typeLabel(c, t)}</option>
                 ))}
               </select>
             </div>

@@ -11,7 +11,7 @@ export interface PaymentMethodRecord {
   outletId: string | null;
   name: string;
   kind: PaymentKind;
-  businessUnit: 'AIRE' | 'LEAD' | null;
+  businessUnit: string | null;
   logoUrl: string | null;
   color: string;
   sortOrder: number;
@@ -22,7 +22,7 @@ export interface UpsertPaymentMethodDto {
   outletId?: string | null;
   name: string;
   kind: PaymentKind;
-  businessUnit?: 'AIRE' | 'LEAD' | null;
+  businessUnit?: string | null;
   logoUrl?: string | null;
   color?: string;
   sortOrder?: number;

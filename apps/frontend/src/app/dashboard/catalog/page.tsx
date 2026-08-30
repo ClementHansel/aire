@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { BusinessUnitsPanel } from '@/components/dashboard/BusinessUnitsPanel';
 
 type AppliesTo = 'service' | 'product' | 'both';
 interface Category { id: string; name: string; sortOrder: number; isActive: boolean; appliesTo: AppliesTo }
@@ -94,12 +95,18 @@ export default function CatalogPage() {
   return (
     <div data-testid="catalog-page">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-text-primary">{t('dash.catalog.title', 'Categories & Brands')}</h1>
+        <h1 className="text-2xl font-bold text-text-primary">{t('dash.catalog.title', 'Business Units, Categories & Brands')}</h1>
         <p className="mt-1 text-sm text-text-secondary">{t('dash.catalog.subtitle', 'Define the brands and categories used to label and group your services and products.')}</p>
         <p className="mt-1 text-xs text-text-muted">{t('dash.catalog.usageHint', 'The "Applies to" setting decides where each label appears: a Services label shows only in the Service form, a Products label only in the Product form, and Both shows in both.')}</p>
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
+
+      {/* Business units (AIRIN-176) sit above categories/brands: they are the
+          coarsest grouping, and the one the POS tabs are built from. */}
+      <div className="mb-6">
+        <BusinessUnitsPanel />
+      </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Categories */}

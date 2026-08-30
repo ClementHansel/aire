@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 import BranchFilter from '@/components/dashboard/BranchFilter';
 import { fmtDate } from '@/lib/dates';
 import { memberBadge } from '@/lib/memberStatus';
@@ -113,7 +114,9 @@ export default function TransactionsPage() {
   const [dateFrom, setDateFrom] = useState(daysAgo(30));
   const [dateTo, setDateTo] = useState(today());
   const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('day');
-  const [businessUnit, setBusinessUnit] = useState<'' | 'AIRE' | 'LEAD'>('');
+  // '' = all units; otherwise a code from the tenant's own set (AIRIN-176).
+  const [businessUnit, setBusinessUnit] = useState<string>('');
+  const { units: businessUnits } = useBusinessUnits(false);
   const [branch, setBranch] = useState(''); // '' = all branches (owner/admin only; RLS scopes others)
   const [series, setSeries] = useState<SeriesPoint[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -322,8 +325,9 @@ export default function TransactionsPage() {
               <option value="day">{t('dash.transactions.daily', 'Daily')}</option><option value="week">{t('dash.transactions.weekly', 'Weekly')}</option><option value="month">{t('dash.transactions.monthly', 'Monthly')}</option>
             </select></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1">{t('dash.transactions.businessUnit', 'Business unit')}</label>
-            <select aria-label={t('dash.transactions.businessUnit', 'Business unit')} value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
-              <option value="">{t('dash.transactions.all', 'All')}</option><option value="AIRE">AIRE</option><option value="LEAD">LEAD</option>
+            <select aria-label={t('dash.transactions.businessUnit', 'Business unit')} value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value)} className="input-field">
+              <option value="">{t('dash.transactions.all', 'All')}</option>
+              {businessUnits.map((u) => <option key={u.code} value={u.code}>{u.name}</option>)}
             </select></div>
           <BranchFilter value={branch} onChange={setBranch} label={t('dash.transactions.branch', 'Branch')} />
           {/* Overrides the From/To range with today — the shortcut the owner

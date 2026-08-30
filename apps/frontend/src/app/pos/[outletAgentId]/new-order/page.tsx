@@ -13,6 +13,8 @@ import { PackCatalog, type MembershipPlanDTO, type VoucherTemplateDTO } from '@/
 import { PlateRegistrationModal, VoucherCodesModal, type IssuedPack } from '@/components/pos/PackFollowUpModals';
 import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { useI18n } from '@/lib/i18n';
+import { useServiceTypeLabels } from '@/lib/useServiceTypeLabels';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 import { filterOfferableDetections, upsertDetection } from '@/lib/lprSuggestions';
 import { normalizePlate, maxLineDiscount, applyMembershipPricing, LPR_DETECTED_EVENT, type DynamicDiscountRule, type MembershipBenefit, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
 import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
@@ -21,7 +23,8 @@ interface ServiceDTO {
   id: string;
   name: string;
   category: 'car_wash' | 'product' | 'add_on';
-  businessUnit: 'AIRE' | 'LEAD';
+  /** A business unit CODE the tenant owns (AIRIN-176). */
+  businessUnit: string;
   price: number;
   isActive: boolean;
   /** Per-item manual-discount permission, set in the dashboard (AIRIN-121/122/123). */
@@ -113,7 +116,7 @@ function QueuePickerModal({ outletId, onClose, onPick }: {
             {rows.map((q) => (
               <button key={q.id} onClick={() => onPick(q)} className="w-full text-left card hover:border-primary-300 flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-semibold text-text-primary">{q.plate ?? '—'} <span className={`badge ml-1 ${q.businessUnit === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{q.businessUnit ?? 'AIRE'}</span></p>
+                  <p className="font-semibold text-text-primary">{q.plate ?? '—'} <span className="badge ml-1 bg-sky-50 text-sky-700">{q.businessUnit ?? ''}</span></p>
                   <p className="text-xs text-text-muted">{[q.brand, q.model].filter(Boolean).join(' ') || t('pos.new.vehicleDetailsNotSet', 'Vehicle details not set')}{q.customerName ? ` · ${q.customerName}` : ''}</p>
                 </div>
                 <span className="badge bg-primary-50 text-primary-700 shrink-0">{t('pos.new.select', 'Select')}</span>
@@ -136,10 +139,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function NewOrderPage() {
   const { t } = useI18n();
   const params = useParams();
-  const categoryLabel = (c: string) =>
-    c === 'car_wash' ? t('pos.new.catCarWash', CATEGORY_LABELS.car_wash)
+  // A tenant's own wording for a type wins outright; only an unrenamed type
+  // falls back to the POS's translated built-in (AIRIN-175).
+  const { types: serviceTypes } = useServiceTypeLabels();
+  const categoryLabel = (c: string) => {
+    const custom = serviceTypes.find((x) => x.code === c && x.customized);
+    if (custom) return custom.label;
+    return c === 'car_wash' ? t('pos.new.catCarWash', CATEGORY_LABELS.car_wash)
       : c === 'add_on' ? t('pos.new.catAddOn', CATEGORY_LABELS.add_on)
         : t('pos.new.catProduct', CATEGORY_LABELS.product);
+  };
   const [services, setServices] = useState<ServiceDTO[]>([]);
   // One shared cart. AIRE (wash) and LEAD (detail) items mix into a single
   // receipt/payment; switching the tab only changes which catalog is shown.
@@ -149,7 +158,19 @@ export default function NewOrderPage() {
   const [plate, setPlate] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
-  const [businessUnit, setBusinessUnit] = useState<'AIRE' | 'LEAD'>('AIRE');
+  // Which catalog tab is showing. Seeded with the built-in first unit and then
+  // corrected to the tenant's own first unit once the list arrives (AIRIN-176).
+  const [businessUnit, setBusinessUnit] = useState<string>('AIRE');
+  const { units: posBusinessUnits } = useBusinessUnits();
+  // If the tenant renamed or retired the seeded pair, 'AIRE' is not one of
+  // their tabs and the catalog would render empty. Snap to their first unit as
+  // soon as the list lands — but only while the current tab is unknown, so a
+  // cashier who has already switched tabs is never yanked back (AIRIN-176).
+  useEffect(() => {
+    if (posBusinessUnits.length === 0) return;
+    if (posBusinessUnits.some((u) => u.code === businessUnit)) return;
+    setBusinessUnit(posBusinessUnits[0]!.code);
+  }, [posBusinessUnits, businessUnit]);
   const [salesperson, setSalesperson] = useState('');
   const [salespersonEmployeeId, setSalespersonEmployeeId] = useState('');
   // Staff working at THIS branch, with the link back to their login so the field
@@ -578,7 +599,7 @@ export default function NewOrderPage() {
     if (q.model) setModel(q.model);
     if (q.customerName) setName(q.customerName);
     if (q.customerPhone) setPhone(q.customerPhone);
-    if (q.businessUnit === 'AIRE' || q.businessUnit === 'LEAD') setBusinessUnit(q.businessUnit);
+    if (q.businessUnit) setBusinessUnit(q.businessUnit);
     if (q.plate) {
       api.get<MemberLookupResponse>(`/members/lookup?plate=${encodeURIComponent(q.plate)}`)
         .then((m) => applyMember(m, q.plate ?? undefined))
@@ -944,7 +965,7 @@ export default function NewOrderPage() {
           addToCart(svc);
           // Follow the item's own business unit so the catalog shows the tab the
           // added service actually lives on.
-          if (svc.businessUnit === 'AIRE' || svc.businessUnit === 'LEAD') setBusinessUnit(svc.businessUnit);
+          if (svc.businessUnit) setBusinessUnit(svc.businessUnit);
           setCatalogTab('services');
           const nextIds = [...cart.map((l) => l.serviceId), svc.id];
           res = await validate(nextIds, subtotal + svc.price);
@@ -1371,15 +1392,15 @@ export default function NewOrderPage() {
             <h2 className="section-title">{t('pos.new.services', 'Services')}</h2>
             {/* Business unit switch — AIRE car wash vs LEAD detailing */}
             <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5" role="group" aria-label={t('pos.new.businessUnit', 'Business unit')}>
-              {(['AIRE', 'LEAD'] as const).map((bu) => (
+              {posBusinessUnits.map((bu) => (
                 <button
-                  key={bu}
-                  onClick={() => setBusinessUnit(bu)}
+                  key={bu.code}
+                  onClick={() => setBusinessUnit(bu.code)}
                   className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-colors ${
-                    businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'
+                    businessUnit === bu.code ? 'bg-primary-500 text-white' : 'text-text-secondary hover:text-text-primary'
                   }`}
                 >
-                  {bu === 'AIRE' ? `AIRE · ${t('pos.new.wash', 'Wash')}` : `LEAD · ${t('pos.new.detail', 'Detail')}`}
+                  {bu.name}
                 </button>
               ))}
             </div>

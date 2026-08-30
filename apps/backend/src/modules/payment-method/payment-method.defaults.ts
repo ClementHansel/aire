@@ -16,7 +16,7 @@ export const KIND_RANK: Record<PaymentKind, number> = {
 export interface DefaultPaymentMethod {
   name: string;
   kind: PaymentKind;
-  businessUnit: 'AIRE' | 'LEAD' | null;
+  businessUnit: string | null;
   color: string;
 }
 

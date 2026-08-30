@@ -22,7 +22,8 @@ export interface PaymentMethodDTO {
   id: string;
   name: string;
   kind: 'cash' | 'qris' | 'edc' | 'cc' | 'transfer';
-  businessUnit: 'AIRE' | 'LEAD' | null;
+  /** A business unit CODE, or null for tender that settles nowhere. AIRIN-176. */
+  businessUnit: string | null;
   logoUrl: string | null;
   color: string;
 }

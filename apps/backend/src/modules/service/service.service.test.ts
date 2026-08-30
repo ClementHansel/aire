@@ -6,6 +6,10 @@ import { ServiceService } from './service.service';
 describe('ServiceService', () => {
   let service: ServiceService;
   let mockPool: { query: ReturnType<typeof vi.fn>; connect: ReturnType<typeof vi.fn> };
+  // AIRIN-176: the allowed business units come from the tenant's own table now,
+  // so the service takes a validator. These tests are about services, not unit
+  // membership — a stub that accepts keeps them focused.
+  let mockBusinessUnits: { assertValid: ReturnType<typeof vi.fn> };
 
   const mockServiceRow = {
     id: 'svc-001',
@@ -34,7 +38,8 @@ describe('ServiceService', () => {
       query: vi.fn(),
       connect: vi.fn(),
     };
-    service = new ServiceService(mockPool as any);
+    mockBusinessUnits = { assertValid: vi.fn().mockResolvedValue(undefined) };
+    service = new ServiceService(mockPool as any, mockBusinessUnits as any);
   });
 
   describe('create', () => {

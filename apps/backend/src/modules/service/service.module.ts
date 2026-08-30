@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { ServiceController } from './service.controller';
 import { ServiceService } from './service.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
+import { BusinessUnitModule } from '../business-unit';
 
 @Module({
+  imports: [BusinessUnitModule],
   controllers: [ServiceController],
   providers: [ServiceService, DatabasePoolProvider],
   exports: [ServiceService],

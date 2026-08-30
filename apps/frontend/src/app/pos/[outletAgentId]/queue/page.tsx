@@ -9,6 +9,7 @@ import { getPosOutletId } from '@/lib/posDevice';
 import { PosNav } from '@/components/pos/PosNav';
 import { PlateInput } from '@/components/shared/PlateInput';
 import { useI18n } from '@/lib/i18n';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 
 interface QueueEntry {
   id: string; plate: string | null; brand: string | null; model: string | null;
@@ -30,7 +31,14 @@ export default function QueuePage() {
   const [plate, setPlate] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
-  const [businessUnit, setBusinessUnit] = useState<'AIRE' | 'LEAD'>('AIRE');
+  const [businessUnit, setBusinessUnit] = useState<string>('AIRE');
+  const { units: businessUnits } = useBusinessUnits();
+  // Same reasoning as the POS catalog tabs — see AIRIN-176 there.
+  useEffect(() => {
+    if (businessUnits.length === 0) return;
+    if (businessUnits.some((u) => u.code === businessUnit)) return;
+    setBusinessUnit(businessUnits[0]!.code);
+  }, [businessUnits, businessUnit]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   // The queue is per-branch, so we need an operating outlet (like New Order).
@@ -180,8 +188,8 @@ export default function QueuePage() {
           <h2 className="section-title mb-3">{t('pos.queue.logArrival', 'Log Arrival')}</h2>
           <form onSubmit={add} className="space-y-3">
             <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5 w-full">
-              {(['AIRE', 'LEAD'] as const).map((bu) => (
-                <button key={bu} type="button" onClick={() => setBusinessUnit(bu)} className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-md ${businessUnit === bu ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{bu}</button>
+              {businessUnits.map((bu) => (
+                <button key={bu.code} type="button" onClick={() => setBusinessUnit(bu.code)} className={`flex-1 px-3 py-1.5 text-sm font-semibold rounded-md ${businessUnit === bu.code ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>{bu.name}</button>
               ))}
             </div>
             {/* PlateInput normalises the value itself; the old `uppercase` class
@@ -208,7 +216,7 @@ export default function QueuePage() {
                 <div key={q.id} className={`card flex items-center gap-4 ${q.status === 'serving' ? 'border-primary-300 ring-1 ring-primary-100' : ''}`}>
                   <div className="w-9 h-9 rounded-full bg-surface-sunken flex items-center justify-center text-sm font-bold text-text-secondary shrink-0">{q.position}</div>
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-text-primary">{q.plate ?? '—'} <span className={`badge ml-1 ${q.businessUnit === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{q.businessUnit ?? 'AIRE'}</span></p>
+                    <p className="font-semibold text-text-primary">{q.plate ?? '—'} <span className="badge ml-1 bg-sky-50 text-sky-700">{q.businessUnit ?? ''}</span></p>
                     <p className="text-xs text-text-muted">{[q.brand, q.model].filter(Boolean).join(' ') || t('pos.queue.vehicleDetailsNotSet', 'Vehicle details not set')} · {new Date(q.createdAt).toLocaleTimeString()}</p>
                   </div>
                   {/* ONE badge, not two. 'waiting' vs 'serving' was an internal

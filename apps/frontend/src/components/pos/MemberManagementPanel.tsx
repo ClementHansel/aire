@@ -231,7 +231,7 @@ export function MemberManagementPanel({ member, onChanged, vehicleBrands = [] }:
           <div className="card w-full max-w-sm">
             <h3 className="section-title">{t('pos.member.cancelMembership', 'Cancel membership')}</h3>
             <p className="text-sm text-text-secondary mt-1">
-              {t('pos.member.cancelWarning', 'This ends the membership and releases its registered plates. This cannot be undone.')}
+              {t('pos.member.cancelWarning', 'This ends the membership and releases its registered cars. This cannot be undone.')}
             </p>
             <input
               className="input-field mt-3"

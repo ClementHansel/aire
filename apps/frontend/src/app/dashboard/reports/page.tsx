@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 import BranchFilter, { canFilterBranches } from '@/components/dashboard/BranchFilter';
 import { getUser } from '@/lib/auth';
 import { DocumentDesigner } from '@/components/dashboard/DocumentDesigner';
@@ -35,7 +36,9 @@ export default function ReportsPage() {
   const [tab, setTab] = useState<ReportsTab>('reports');
   const [dateFrom, setDateFrom] = useState(today());
   const [dateTo, setDateTo] = useState(today());
-  const [businessUnit, setBusinessUnit] = useState<'' | 'AIRE' | 'LEAD'>('');
+  // '' = all units. A unit code otherwise — the set is the tenant's (AIRIN-176).
+  const [businessUnit, setBusinessUnit] = useState<string>('');
+  const { units: businessUnits } = useBusinessUnits(false);
   const [branch, setBranch] = useState(''); // '' = all branches (owner/admin only; RLS scopes others)
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [daily, setDaily] = useState<DailyRow[]>([]);
@@ -193,10 +196,9 @@ export default function ReportsPage() {
           </button>
           <div>
             <label htmlFor="report-business-unit" className="block text-xs font-medium text-text-secondary mb-1">{t('dash.reports.businessUnit', 'Business unit')}</label>
-            <select id="report-business-unit" aria-label={t('dash.reports.businessUnit', 'Business unit')} value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value as '' | 'AIRE' | 'LEAD')} className="input-field">
+            <select id="report-business-unit" aria-label={t('dash.reports.businessUnit', 'Business unit')} value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value)} className="input-field">
               <option value="">{t('dash.reports.allUnits', 'All units')}</option>
-              <option value="AIRE">{t('dash.reports.aireCarWash', 'AIRE · Car Wash')}</option>
-              <option value="LEAD">{t('dash.reports.leadDetailing', 'LEAD · Detailing')}</option>
+              {businessUnits.map((u) => <option key={u.code} value={u.code}>{u.name}</option>)}
             </select>
           </div>
           {/* BranchFilter renders nothing for outlet-scoped roles (RLS/scope

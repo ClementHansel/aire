@@ -7,6 +7,7 @@ import Redis from 'ioredis';
 import { Pool } from 'pg';
 import { assignTenantCode } from '../../common/tenant-code';
 import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
+import { seedDefaultBusinessUnits } from '../business-unit/business-unit.defaults';
 import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
 import {
   JWTPayload,
@@ -179,6 +180,7 @@ export class AuthService {
 
       // Give the new tenant a ready-to-use set of payment methods so cashiers can
       // take payment immediately (non-fatal — tenant can add them manually later).
+      await seedDefaultBusinessUnits(this.pool, tenantId).catch(() => undefined);
       await seedDefaultPaymentMethods(this.pool, tenantId).catch(() => undefined);
 
       // Seed a default chart of accounts so the ledger auto-posting has accounts

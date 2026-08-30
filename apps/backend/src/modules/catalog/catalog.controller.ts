@@ -5,7 +5,7 @@ import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, Roles, RequirePermission } from '../../common/decorators';
 import { RolesGuard, PermissionsGuard } from '../../common/guards';
-import { CatalogService, AppliesTo } from './catalog.service';
+import { CatalogService, AppliesTo, ServiceTypeCode } from './catalog.service';
 
 @Controller('api/categories')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -78,5 +78,29 @@ export class BrandController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@CurrentUser() user: JWTPayload, @Param('id') id: string) {
     await this.service.removeBrand(user.tenant_id, id);
+  }
+}
+
+/**
+ * Service type labels (AIRIN-175). Read is open to any signed-in user because
+ * the POS, kiosk and reports all need the tenant's wording to render; writing
+ * is owner-level, same as the rest of the catalog.
+ */
+@Controller('api/service-types')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class ServiceTypeController {
+  constructor(private readonly service: CatalogService) {}
+
+  @Get()
+  list(@CurrentUser() user: JWTPayload) {
+    return this.service.listServiceTypeLabels(user.tenant_id);
+  }
+
+  @Put()
+  @UseGuards(RolesGuard)
+  @Roles(Role.OutletAdmin)
+  @RequirePermission('products.write')
+  save(@CurrentUser() user: JWTPayload, @Body() dto: Partial<Record<ServiceTypeCode, string>>) {
+    return this.service.saveServiceTypeLabels(user.tenant_id, dto);
   }
 }

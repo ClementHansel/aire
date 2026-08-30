@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useServiceTypeLabels, type ServiceTypeLabel } from '@/lib/useServiceTypeLabels';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
+import { ServiceTypeLabelsModal } from './service-type-labels-modal';
 import {
   ServiceModal,
   RecipeModal,
-  CATEGORY_LABELS,
-  CATEGORY_KEYS,
   BUSINESS_UNIT_LABEL,
   TYPE_LABEL,
   CATALOG_LABEL,
@@ -29,6 +30,10 @@ export default function ServicesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ServiceDTO | null>(null);
   const [recipeFor, setRecipeFor] = useState<ServiceDTO | null>(null);
+  const [typeLabelsOpen, setTypeLabelsOpen] = useState(false);
+  // Tenant's own wording for the type codes (AIRIN-175).
+  const { types: serviceTypes, label: typeLabel, reload: reloadTypeLabels } = useServiceTypeLabels();
+  const { units: businessUnits, label: buLabel } = useBusinessUnits(false);
 
   // Filters + search (AIRIN-119, AIRIN-120). Applied client-side: /services
   // already returns the tenant's full menu in one call, so filtering here avoids
@@ -104,7 +109,10 @@ export default function ServicesPage() {
           <h1 className="text-2xl font-bold text-text-primary" data-testid="services-title">{t('dash.services.title', 'Services')}</h1>
           <p className="mt-1 text-sm text-text-secondary">{t('dash.services.subtitle', 'Manage your service menu and pricing. Active services appear on the POS menu.')}</p>
         </div>
-        <button className="btn-primary" data-testid="add-service-btn" onClick={openAdd}>{t('dash.services.addBtn', '+ Add Service')}</button>
+        <div className="flex items-center gap-2">
+          <button className="btn-secondary" data-testid="rename-types-btn" onClick={() => setTypeLabelsOpen(true)}>{t('dash.services.renameTypes', 'Rename types')}</button>
+          <button className="btn-primary" data-testid="add-service-btn" onClick={openAdd}>{t('dash.services.addBtn', '+ Add Service')}</button>
+        </div>
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
@@ -136,8 +144,7 @@ export default function ServicesPage() {
             <label htmlFor="svc-f-bu" className="block text-xs font-medium text-text-secondary mb-1">{t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)}</label>
             <select id="svc-f-bu" data-testid="services-filter-business-unit" className="input-field" value={fBusinessUnit} onChange={(e) => setFBusinessUnit(e.target.value)}>
               <option value="">{t('dash.services.allUnits', 'All units')}</option>
-              <option value="AIRE">AIRE</option>
-              <option value="LEAD">LEAD</option>
+              {businessUnits.map((u) => <option key={u.code} value={u.code}>{u.name}</option>)}
             </select>
           </div>
           {brands.length > 0 && (
@@ -202,8 +209,18 @@ export default function ServicesPage() {
                       </span>
                     ) : null; })()}
                   </td>
-                  <td className="px-5 py-3.5"><span className={`badge ${s.businessUnit === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{s.businessUnit ?? 'AIRE'}</span></td>
-                  <td className="px-5 py-3.5"><span className="badge bg-primary-50 text-primary-700">{t(CATEGORY_KEYS[s.category], CATEGORY_LABELS[s.category])}</span></td>
+                  <td className="px-5 py-3.5">
+                    {/* Colour comes from the unit itself now — there is no fixed
+                        pair to hard-code a palette against (AIRIN-176). */}
+                    <span
+                      className="badge"
+                      style={(() => {
+                        const u = businessUnits.find((x) => x.code === s.businessUnit);
+                        return u ? { background: `${u.color}1a`, color: u.color } : undefined;
+                      })()}
+                    >{buLabel(s.businessUnit) || s.businessUnit}</span>
+                  </td>
+                  <td className="px-5 py-3.5"><span className="badge bg-primary-50 text-primary-700">{typeLabel(s.category, t)}</span></td>
                   <td className="px-5 py-3.5 text-sm text-text-secondary">{categoryById(s.categoryId)?.name ?? <span className="text-text-muted">—</span>}</td>
                   <td className="px-5 py-3.5 text-xs">
                     {effectiveOutletIds(s).length === 0
@@ -232,6 +249,14 @@ export default function ServicesPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {typeLabelsOpen && (
+        <ServiceTypeLabelsModal
+          types={serviceTypes as ServiceTypeLabel[]}
+          onClose={() => setTypeLabelsOpen(false)}
+          onSaved={() => { setTypeLabelsOpen(false); reloadTypeLabels(); load(); }}
+        />
       )}
 
       {modalOpen && (

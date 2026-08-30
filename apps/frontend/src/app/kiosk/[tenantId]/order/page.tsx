@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { QrScanButton } from '@/components/QrScanButton';
 import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
@@ -84,9 +84,10 @@ export default function KioskOrderPage() {
   const [error, setError] = useState('');
 
   const [step, setStep] = useState<Step>('identify');
-  const [businessUnit, setBusinessUnit] = useState<'AIRE' | 'LEAD'>('AIRE');
+  const [businessUnit, setBusinessUnit] = useState<string>('AIRE');
   // Which menu tab is showing: a service business unit, or retail products.
-  const [tab, setTab] = useState<'AIRE' | 'LEAD' | 'products'>('AIRE');
+  // A unit code, or the literal 'products' pseudo-tab.
+  const [tab, setTab] = useState<string>('AIRE');
   const [cart, setCart] = useState<CartLine[]>([]);
 
   const [name, setName] = useState('');
@@ -256,7 +257,7 @@ export default function KioskOrderPage() {
     return () => clearInterval(id);
   }, [polling, createdOrder, token]);
 
-  const selectTab = (tb: 'AIRE' | 'LEAD' | 'products') => {
+  const selectTab = (tb: string) => {
     setTab(tb);
     // Wash/Detail tabs also set the order's business unit; Products keep it.
     if (tb !== 'products') setBusinessUnit(tb);
@@ -272,8 +273,30 @@ export default function KioskOrderPage() {
 
   const visibleServices = tab === 'products'
     ? (menu?.products ?? [])
-    : (menu?.services ?? []).filter((s) => (s.businessUnit ?? 'AIRE') === tab);
+    : (menu?.services ?? []).filter((s) => (s.businessUnit ?? '') === tab);
   const hasProducts = (menu?.products ?? []).length > 0;
+
+  // The kiosk is a PUBLIC page with no token, so it cannot call the
+  // authenticated /business-units endpoint. It does not need to: the units this
+  // tenant actually sells are exactly the distinct codes in the menu it was
+  // already served, which keeps the tabs correct for any tenant without adding
+  // a public endpoint that leaks their configuration (AIRIN-176).
+  const kioskUnits = useMemo(() => {
+    const seen: string[] = [];
+    for (const s of menu?.services ?? []) {
+      const code = s.businessUnit ?? '';
+      if (code && !seen.includes(code)) seen.push(code);
+    }
+    return seen;
+  }, [menu]);
+
+  // Land on a tab that has something in it.
+  useEffect(() => {
+    if (kioskUnits.length === 0) return;
+    if (tab === 'products' || kioskUnits.includes(tab)) return;
+    setTab(kioskUnits[0]!);
+    setBusinessUnit(kioskUnits[0]!);
+  }, [kioskUnits, tab]);
 
   if (status === 'notfound') {
     return <div className="min-h-screen bg-surface flex items-center justify-center text-text-muted">{t('cust.notFound', 'This page is not available.')}</div>;
@@ -359,12 +382,11 @@ export default function KioskOrderPage() {
             <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
               <h2 className="section-title">{tab === 'products' ? t('kiosk.chooseProducts', 'Choose products') : t('kiosk.chooseServices', 'Choose your services')}</h2>
               <div className="inline-flex rounded-md border border-border bg-surface-raised p-0.5">
-                <button onClick={() => selectTab('AIRE')} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${tab === 'AIRE' ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
-                  {t('kiosk.wash', 'Wash')}
-                </button>
-                <button onClick={() => selectTab('LEAD')} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${tab === 'LEAD' ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
-                  {t('kiosk.detail', 'Detail')}
-                </button>
+                {kioskUnits.map((code) => (
+                  <button key={code} onClick={() => selectTab(code)} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${tab === code ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
+                    {code}
+                  </button>
+                ))}
                 {hasProducts && (
                   <button onClick={() => selectTab('products')} className={`px-4 py-1.5 text-sm font-semibold rounded-md ${tab === 'products' ? 'bg-primary-500 text-white' : 'text-text-secondary'}`}>
                     {t('kiosk.products', 'Products')}
