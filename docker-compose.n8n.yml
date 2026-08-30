@@ -24,8 +24,17 @@ services:
       - n8n_data:/home/node/.n8n
     networks:
       - aire-network
-  # Point the dashboard link at the subpath (dev server reads NEXT_PUBLIC_* at runtime).
+  # Point the dashboard link at the subpath.
+  #
+  # This MUST be a build arg, not just an environment entry: Next inlines
+  # NEXT_PUBLIC_* at `next build` time, so a runtime env never reaches the
+  # compiled bundle. The `environment:` line is kept for the dev server (which
+  # does read it at runtime); `build.args` is what makes the production image
+  # correct. Rebuild the frontend after changing this — restarting is not enough.
   frontend:
+    build:
+      args:
+        NEXT_PUBLIC_N8N_URL: https://app.useairin.id/flows
     environment:
       NEXT_PUBLIC_N8N_URL: https://app.useairin.id/flows
 

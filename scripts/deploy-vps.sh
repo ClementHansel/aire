@@ -22,6 +22,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+# n8n lives in an OPTIONAL override file (see its header / docs/DEPLOYMENT.md),
+# not in the base+prod pair. Without it on the command line, step 6's
+# `up -d n8n` dies with "no such service: n8n" and — because of `set -e` — takes
+# the nginx restart and config reload down with it, so the deploy exits non-zero
+# having skipped its last step. Include the override whenever it is present.
+# NB: written as `if`, not `[ -f x ] && ...` — under `set -e` a false test as the
+# last command of a top-level && chain aborts the script, which would break the
+# deploy on exactly the machines that DON'T run n8n.
+if [ -f docker-compose.n8n.yml ]; then
+  COMPOSE="$COMPOSE -f docker-compose.n8n.yml"
+fi
 PGUSER="${POSTGRES_USER:-aire}"
 PGDB="${POSTGRES_DB:-aire}"
 MIG_DIR="database/migrations"
@@ -144,7 +155,15 @@ deploy_up() {
   up_one iot-gateway
 
   log "6/6  WAHA + n8n + nginx"
-  $COMPOSE up -d waha n8n
+  $COMPOSE up -d waha
+  # Still guard the service's existence rather than assuming the override is
+  # there: a missing OPTIONAL component must not abort a deploy that has already
+  # migrated the database and replaced backend + frontend.
+  if $COMPOSE config --services | grep -qx n8n; then
+    $COMPOSE up -d n8n
+  else
+    log "n8n override not present — skipping (not an error)"
+  fi
   $COMPOSE up -d nginx
   # nginx upstreams (n8n) may not have resolved when it first started; reload once up.
   sleep 2

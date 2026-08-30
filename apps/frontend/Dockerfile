@@ -30,6 +30,15 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/frontend/node_modules ./apps/frontend/node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY . .
+
+# NEXT_PUBLIC_* values are INLINED INTO THE BUNDLE BY `next build`, not read at
+# runtime. Setting NEXT_PUBLIC_N8N_URL as a container `environment:` entry (as
+# docker-compose.n8n.yml does) therefore has no effect on a production build —
+# it must be present HERE, before the build runs. Without it the bundle bakes
+# the code's fallback host, which is not the subpath n8n is actually served on.
+ARG NEXT_PUBLIC_N8N_URL
+ENV NEXT_PUBLIC_N8N_URL=${NEXT_PUBLIC_N8N_URL}
+
 RUN pnpm --filter @aire/shared build && pnpm --filter @aire/frontend build
 
 # --- Production stage ---
