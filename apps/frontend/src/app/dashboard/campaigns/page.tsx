@@ -147,16 +147,33 @@ function CampaignModal({
               <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.triggerTemplate', 'Triggering voucher pack')}</label>
               <select aria-label={t('dash.campaigns.triggerTemplateId', 'Triggering voucher pack')} className="input-field" value={form.triggerTemplateId} onChange={(e) => setForm({ ...form, triggerTemplateId: e.target.value })} required>
                 <option value="">{t('dash.campaigns.selectTemplate', '— select a voucher template —')}</option>
-                {templates.filter((tp) => tp.id !== form.bonusTemplateId).map((tp) => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
+                {/* The bonus template stays listed but disabled: silently filtering it out
+                    left this dropdown empty for tenants with a single voucher template,
+                    which reads as "the feature is broken" rather than "pick another pack". */}
+                {templates.map((tp) => (
+                  <option key={tp.id} value={tp.id} disabled={tp.id === form.bonusTemplateId}>
+                    {tp.id === form.bonusTemplateId ? `${tp.name} — ${t('dash.campaigns.usedAsBonus', 'already the bonus voucher')}` : tp.name}
+                  </option>
+                ))}
               </select>
               <p className="text-xs text-text-muted mt-1">{t('dash.campaigns.triggerTemplateHint', 'e.g. when a customer buys the "10x Wash" pack, the campaign grants the bonus voucher below (e.g. "3x Spray Wax").')}</p>
+              {templates.length < 2 && (
+                <p className="text-xs text-amber-600 mt-1">{t('dash.campaigns.needTwoTemplates', 'A voucher-pack campaign needs two different voucher templates — the pack the customer buys, and the bonus they receive. Create another one in Vouchers → Service Packs first.')}</p>
+              )}
             </div>
           )}
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.campaigns.bonusVoucher', 'Bonus voucher granted')}</label>
             <select aria-label={t('dash.campaigns.bonusTemplateId', 'Bonus voucher template')} className="input-field" value={form.bonusTemplateId} onChange={(e) => setForm({ ...form, bonusTemplateId: e.target.value })} required>
               <option value="">{t('dash.campaigns.selectTemplate', '— select a voucher template —')}</option>
-              {templates.filter((tp) => tp.id !== form.triggerTemplateId || form.triggerType !== 'voucher_pack').map((tp) => <option key={tp.id} value={tp.id}>{tp.name}</option>)}
+              {templates.map((tp) => {
+                const clash = form.triggerType === 'voucher_pack' && tp.id === form.triggerTemplateId;
+                return (
+                  <option key={tp.id} value={tp.id} disabled={clash}>
+                    {clash ? `${tp.name} — ${t('dash.campaigns.usedAsTrigger', 'already the triggering pack')}` : tp.name}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">

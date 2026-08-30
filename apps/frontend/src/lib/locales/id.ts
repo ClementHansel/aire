@@ -2754,6 +2754,13 @@ export const id: Record<string, string> = {
   // Campaigns — Period column (AIRIN-135)
   'dash.campaigns.colPeriod': 'Periode',
 
+  // Campaigns — voucher-pack template pickers. The clashing option stays listed
+  // but disabled, so the reason is visible instead of the row just vanishing.
+  'dash.campaigns.usedAsBonus': 'sudah menjadi voucher bonus',
+  'dash.campaigns.usedAsTrigger': 'sudah menjadi paket pemicu',
+  'dash.campaigns.needTwoTemplates': 'Kampanye paket voucher membutuhkan dua template voucher berbeda — paket yang dibeli pelanggan, dan bonus yang diterima. Buat satu lagi di Voucher → Paket Layanan terlebih dahulu.',
+  'dash.campaigns.needTemplateFirst': 'Buat template voucher terlebih dahulu (Voucher → Paket Layanan), lalu kembali untuk menyiapkan kampanye.',
+
   // Transactions — date range validation (AIRIN-132)
   'dash.transactions.invalidRange': 'Tanggal mulai melewati tanggal akhir — sesuaikan rentang untuk melihat hasil.',
 
