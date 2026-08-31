@@ -8,7 +8,12 @@ import BranchFilter from '@/components/dashboard/BranchFilter';
 
 interface GrowthPoint { period: string; newCustomers: number }
 interface Customer {
-  id: string; name: string; phone: string; createdAt: string; totalVisits: number;
+  id: string; name: string; phone: string; createdAt: string;
+  /** Most recent non-cancelled order, falling back to createdAt for a customer
+   *  who has not completed a visit yet — so a first-timer shows the same date
+   *  in both columns instead of a blank. */
+  lastSeenAt: string;
+  totalVisits: number;
   // Raw `memberships.status` of the customer's most recent membership, or null =
   // never a member. Narrowing this to a subset used to drop `pending` on the
   // floor and mislabel unpaid members as "Past member" (AIRIN-124) — keep it as
@@ -144,10 +149,11 @@ export default function CrmPage() {
             <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.crm.membership', 'Membership')}</th>
             <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.crm.visits', 'Visits')}</th>
             <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.crm.firstSeen', 'First seen')}</th>
+            <th className="text-left px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.crm.lastSeen', 'Last seen')}</th>
             <th className="text-right px-5 py-3 text-xs font-medium text-text-secondary uppercase">{t('dash.crm.actions', 'Actions')}</th>
           </tr></thead>
           <tbody className="divide-y divide-border">
-            {customers.length === 0 ? <tr><td colSpan={6} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.crm.noCustomers', 'No customers.')}</td></tr> : customers.map((c) => (
+            {customers.length === 0 ? <tr><td colSpan={7} className="px-5 py-6 text-sm text-text-muted text-center">{t('dash.crm.noCustomers', 'No customers.')}</td></tr> : customers.map((c) => (
               <tr key={c.id} className="cursor-pointer hover:bg-surface-sunken/40" onClick={() => setDetailOf(c)}>
                 <td className="px-5 py-3 text-sm font-medium text-primary-600">{c.name}</td>
                 <td className="px-5 py-3 text-sm">{c.phone}</td>
@@ -158,6 +164,7 @@ export default function CrmPage() {
                 </td>
                 <td className="px-5 py-3 text-sm text-right">{c.totalVisits}</td>
                 <td className="px-5 py-3 text-xs text-text-muted">{new Date(c.createdAt).toLocaleDateString()}</td>
+                <td className="px-5 py-3 text-xs text-text-muted">{new Date(c.lastSeenAt ?? c.createdAt).toLocaleDateString()}</td>
                 <td className="px-5 py-3 text-right whitespace-nowrap">
                   <button className="btn-ghost text-xs" onClick={(e) => { e.stopPropagation(); setEditing(c); }}>{t('dash.crm.edit', 'Edit')}</button>
                   <button className="btn-ghost text-xs text-red-600" onClick={(e) => { e.stopPropagation(); del(c); }}>{t('dash.crm.delete', 'Delete')}</button>

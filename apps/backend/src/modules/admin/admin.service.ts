@@ -6,6 +6,7 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { assignTenantCode } from '../../common/tenant-code';
 import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
 import { seedDefaultBusinessUnits } from '../business-unit/business-unit.defaults';
+import { seedDefaultVehicleCatalog } from '../vehicle-catalog/vehicle-catalog.defaults';
 import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 import { LegalEntityService } from '../legal-entity/legal-entity.service';
@@ -253,6 +254,9 @@ export class AdminService {
     await seedDefaultBusinessUnits(this.pool, tenantId).catch(() => undefined);
     await seedDefaultPaymentMethods(this.pool, tenantId).catch(() => undefined);
     await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
+    // Starter vehicle brands/models — without this the POS vehicle pickers and
+    // the Vehicle Catalog page open empty for every admin-created tenant.
+    await seedDefaultVehicleCatalog(this.pool, tenantId).catch(() => undefined);
 
     // Module enablement (only known keys are honored).
     if (dto.modules && Object.keys(dto.modules).length > 0) {

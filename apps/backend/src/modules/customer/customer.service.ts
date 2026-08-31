@@ -664,7 +664,7 @@ export class CustomerService {
     search?: string,
     outletIds?: string[] | null,
     segment?: 'members' | 'non',
-  ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; totalVisits: number; membershipStatus: string | null }[]; total: number }> {
+  ): Promise<{ customers: { id: string; name: string; phone: string; createdAt: string; lastSeenAt: string; totalVisits: number; membershipStatus: string | null }[]; total: number }> {
     const effectivePageSize = Math.min(Math.max(pageSize, 1), 200);
     const offset = (Math.max(page, 1) - 1) * effectivePageSize;
     // Columns are qualified with the `c` alias so the same WHERE works for both
@@ -695,9 +695,18 @@ export class CustomerService {
       params,
     );
     const total = countRes.rows[0]?.total ?? 0;
-    const rowsRes = await this.pool.query<{ id: string; name: string; phone: string; created_at: string; total_visits: number; membership_status: string | null }>(
+    const rowsRes = await this.pool.query<{ id: string; name: string; phone: string; created_at: string; last_seen_at: string; total_visits: number; membership_status: string | null }>(
       `SELECT c.id, c.name, c.phone, c.created_at::text,
               (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled') AS total_visits,
+              -- Last seen = most recent non-cancelled order. A customer created
+              -- at the counter but with no completed order yet has never
+              -- "returned", so they fall back to created_at — which is exactly
+              -- the first-visit case where both columns should read the same
+              -- date rather than showing a confusing blank.
+              COALESCE(
+                (SELECT MAX(o.created_at) FROM orders o WHERE o.customer_id = c.id AND o.status != 'cancelled'),
+                c.created_at
+              )::text AS last_seen_at,
               -- Derived member indicator: a date-expired-but-still-'active' row does NOT count as active
               -- (mirrors the benefit-read lifecycle rule). NULL = never a member.
               --
@@ -722,7 +731,7 @@ export class CustomerService {
       [...params, effectivePageSize, offset],
     );
     return {
-      customers: rowsRes.rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, createdAt: r.created_at, totalVisits: r.total_visits, membershipStatus: r.membership_status })),
+      customers: rowsRes.rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, createdAt: r.created_at, lastSeenAt: r.last_seen_at, totalVisits: r.total_visits, membershipStatus: r.membership_status })),
       total,
     };
   }

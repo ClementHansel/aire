@@ -17,6 +17,11 @@ import {
  * `product` code. A fourth type would be a line item nothing downstream knows
  * how to price, group or validate — so the tenant owns the wording, not the set.
  *
+ * Each field says which page creates items of that type. Without it the dialog
+ * read as broken: it renames three types while the Add Service form on the same
+ * page offers only two, because `product` items are created on the Products
+ * page — the missing option looked like a bug rather than a different screen.
+ *
  * Clearing a field restores the built-in name; the backend deletes the override
  * rather than storing the default back.
  */
@@ -72,6 +77,11 @@ export function ServiceTypeLabelsModal({
                 placeholder={DEFAULT_SERVICE_TYPE_LABELS[x.code as ServiceTypeCode] ?? x.code}
                 onChange={(e) => setDraft({ ...draft, [x.code]: e.target.value })}
               />
+              <p className="mt-1 text-xs text-text-muted">
+                {x.code === 'product'
+                  ? t('dash.services.typeScope.product', 'Items of this type are created on the Products page.')
+                  : t('dash.services.typeScope.service', 'Items of this type are created here, with “Add Service”.')}
+              </p>
             </div>
           ))}
           <div className="flex gap-2 justify-end pt-2">

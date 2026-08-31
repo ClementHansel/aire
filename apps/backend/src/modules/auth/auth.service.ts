@@ -9,6 +9,7 @@ import { assignTenantCode } from '../../common/tenant-code';
 import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
 import { seedDefaultBusinessUnits } from '../business-unit/business-unit.defaults';
 import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
+import { seedDefaultVehicleCatalog } from '../vehicle-catalog/vehicle-catalog.defaults';
 import {
   JWTPayload,
   LoginRequest,
@@ -186,6 +187,11 @@ export class AuthService {
       // Seed a default chart of accounts so the ledger auto-posting has accounts
       // to book against from day one (non-fatal — also lazily seeded on first post).
       await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
+
+      // Starter vehicle brands/models, so the POS vehicle pickers and the
+      // Vehicle Catalog page are not empty on day one (migrations 035/036 only
+      // ever back-filled tenants that existed when they ran).
+      await seedDefaultVehicleCatalog(this.pool, tenantId).catch(() => undefined);
 
       void this.eventBus?.emit({
         type: DomainEventType.TenantCreated,
