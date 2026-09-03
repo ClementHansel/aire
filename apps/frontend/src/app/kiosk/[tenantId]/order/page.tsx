@@ -9,6 +9,7 @@ import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
 import { LEAN_MODE } from '@aire/shared';
 import { PlateInput } from '@/components/shared/PlateInput';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 /**
  * Self-service kiosk ordering: identify (optional) → pick products → details →
@@ -319,12 +320,14 @@ export default function KioskOrderPage() {
     <div className="min-h-screen bg-surface flex flex-col">
       <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface-raised">
         <div className="flex items-center gap-3">
-          <span className="inline-flex items-center justify-center w-10 h-10 bg-primary-500 rounded-xl text-white font-bold overflow-hidden">
-            {tenantBrand.logoUrl
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={tenantBrand.logoUrl} alt="" className="w-full h-full object-contain" />
-              : (tenantBrand.companyName || menu?.tenantName || 'A').charAt(0)}
-          </span>
+          {tenantBrand.logoUrl ? (
+            <span className="inline-flex items-center justify-center w-10 h-10 bg-primary-500 rounded-xl overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={tenantBrand.logoUrl} alt="" className="w-full h-full object-contain" />
+            </span>
+          ) : (
+            <AirinLogo showWordmark={false} />
+          )}
           <div>
             <p className="font-semibold text-text-primary">{tenantBrand.companyName || menu?.tenantName || 'Self-Service'}</p>
             <p className="text-xs text-text-muted">{t('kiosk.subtitle', 'Self-service ordering')}</p>

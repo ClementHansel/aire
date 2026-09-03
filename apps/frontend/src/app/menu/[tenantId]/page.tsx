@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 interface MenuItem { id: string; name: string; category: string; businessUnit: string; price: number; isMainService: boolean }
 interface Plan { name: string; durationMonths: number; price: number }
@@ -58,12 +59,14 @@ export default function PublicMenuPage() {
     <div className="min-h-screen bg-surface">
       <header className="bg-primary-500 text-white">
         <div className="max-w-3xl mx-auto px-5 py-8 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 bg-white/20 rounded-2xl mb-3 overflow-hidden">
-            {brand.logoUrl
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={brand.logoUrl} alt="" className="w-full h-full object-contain" />
-              : <span className="text-2xl font-bold">{(brand.companyName || menu.tenantName || 'A').charAt(0)}</span>}
-          </div>
+          {brand.logoUrl ? (
+            <div className="inline-flex items-center justify-center w-12 h-12 bg-white/20 rounded-2xl mb-3 overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={brand.logoUrl} alt="" className="w-full h-full object-contain" />
+            </div>
+          ) : (
+            <AirinLogo size="lg" showWordmark={false} tone="onDark" className="mb-3" />
+          )}
           <h1 className="text-2xl font-bold">{brand.companyName || menu.tenantName}</h1>
           <p className="text-sm text-white/80 mt-1">{t('cust.menu.priceMenu', 'Price Menu')} · clean car. clear mind.</p>
         </div>

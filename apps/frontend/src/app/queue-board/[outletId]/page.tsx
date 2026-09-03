@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { isAuthenticated, getUser } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { usePublicBranding } from '@/lib/publicBranding';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 interface OrderCard {
   id: string;
@@ -61,12 +62,14 @@ export default function QueueBoardPage() {
     <div className="min-h-screen bg-slate-900 text-white p-8">
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary-500 rounded-xl flex items-center justify-center overflow-hidden">
-            {tenantBrand.logoUrl
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={tenantBrand.logoUrl} alt="" className="w-full h-full object-contain" />
-              : <span className="font-bold text-white">{(tenantBrand.companyName || 'A').charAt(0)}</span>}
-          </div>
+          {tenantBrand.logoUrl ? (
+            <div className="w-10 h-10 bg-primary-500 rounded-xl flex items-center justify-center overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={tenantBrand.logoUrl} alt="" className="w-full h-full object-contain" />
+            </div>
+          ) : (
+            <AirinLogo showWordmark={false} tone="onDark" />
+          )}
           <div>
             {tenantBrand.companyName && <p className="text-sm text-slate-400 leading-tight">{tenantBrand.companyName}</p>}
             <h1 className="text-3xl font-bold leading-tight">{t('cust.queueBoard.title', 'Service Queue')}</h1>

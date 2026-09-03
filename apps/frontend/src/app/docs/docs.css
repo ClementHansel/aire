@@ -174,7 +174,7 @@
 .doc-footer-nav a small { display: block; color: var(--brand-muted); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .docs-gate { max-width: 34rem; margin: 4rem auto; text-align: center; }
-.docs-gate .airin-mark { margin: 0 auto 1rem; }
+.docs-gate .airin-mark, .docs-gate .airin-logo { display: block; margin: 0 auto 1rem; }
 
 /* ── Print / PDF cover (hidden on screen) ────────────────────────────────── */
 .doc-print-cover, .print-header, .print-footer { display: none; }

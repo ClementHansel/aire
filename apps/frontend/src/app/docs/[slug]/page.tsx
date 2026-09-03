@@ -78,7 +78,7 @@ export default function DocReaderPage() {
     <>
       {/* ── Branded print-only cover + running header/footer ─────────────── */}
       <div className="doc-print-cover" aria-hidden>
-        <span className="airin-mark cover-mark">A</span>
+        <AirinMark size={54} className="cover-mark" />
         <div className="cover-kicker">Airin Platform · {doc.category === 'tech' ? 'Technical documentation' : 'User manual'}</div>
         <div className="cover-rule" />
         <h1 className="cover-title">{doc.title}</h1>

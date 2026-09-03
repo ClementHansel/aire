@@ -10,6 +10,7 @@ import { LEAN_MODE } from '@aire/shared';
 import { MembershipCard, type CardTemplate } from '@/components/dashboard/MembershipCard';
 import { PaymentSandboxNote } from '@/components/shared/PaymentSandboxNote';
 import { PlateInput } from '@/components/shared/PlateInput';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 interface Plate { plate: string; brand?: string; model?: string }
 interface Membership {
@@ -162,12 +163,14 @@ export default function PortalPage() {
 function Brand({ companyName, logoUrl, compact }: { companyName: string; logoUrl: string | null; compact?: boolean }) {
   return (
     <div className="flex items-center gap-2">
-      <span className={`inline-flex items-center justify-center ${compact ? 'w-8 h-8' : 'w-9 h-9'} bg-primary-500 rounded-xl text-white font-bold overflow-hidden`}>
-        {logoUrl
-          // eslint-disable-next-line @next/next/no-img-element
-          ? <img src={logoUrl} alt="" className="w-full h-full object-contain" />
-          : (companyName || 'A').charAt(0)}
-      </span>
+      {logoUrl ? (
+        <span className={`inline-flex items-center justify-center ${compact ? 'w-8 h-8' : 'w-9 h-9'} bg-primary-500 rounded-xl overflow-hidden`}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={logoUrl} alt="" className="w-full h-full object-contain" />
+        </span>
+      ) : (
+        <AirinLogo size={compact ? 'sm' : 'md'} showWordmark={false} />
+      )}
       <span className="font-semibold text-text-primary truncate">{companyName || 'Airin'}</span>
     </div>
   );
@@ -206,12 +209,14 @@ function PortalLogin({ tenantId, companyName, logoUrl, onAuthed }: { tenantId: s
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <span className="inline-flex items-center justify-center w-14 h-14 bg-primary-500 rounded-2xl text-white text-2xl font-bold overflow-hidden mb-3">
-            {logoUrl
-              // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={logoUrl} alt="" className="w-full h-full object-contain" />
-              : (companyName || 'A').charAt(0)}
-          </span>
+          {logoUrl ? (
+            <span className="inline-flex items-center justify-center w-14 h-14 bg-primary-500 rounded-2xl overflow-hidden mb-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logoUrl} alt="" className="w-full h-full object-contain" />
+            </span>
+          ) : (
+            <AirinLogo size="xl" showWordmark={false} className="mb-3" />
+          )}
           <h1 className="text-xl font-bold text-text-primary">{companyName || t('portal.login.title', 'Member portal')}</h1>
           <p className="text-sm text-text-muted mt-1 text-center">{t('portal.login.subtitle', 'Sign in with your WhatsApp number to view your membership.')}</p>
         </div>

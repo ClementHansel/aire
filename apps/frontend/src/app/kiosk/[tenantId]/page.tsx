@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useResolveTenant } from '@/lib/resolveTenant';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 interface QueueStatus {
   orderNumber: string;
@@ -60,7 +61,7 @@ export default function KioskPage() {
     <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-500 rounded-2xl mb-4"><span className="text-3xl font-bold text-white">A</span></div>
+          <AirinLogo size="xl" showWordmark={false} className="mb-4" />
           <h1 className="text-3xl font-bold text-text-primary">{t('cust.kioskLanding.title', 'Check Your Queue')}</h1>
           <p className="mt-2 text-text-secondary">{t('cust.kioskLanding.subtitle', 'Enter your order number to see your position and wait time')}</p>
         </div>

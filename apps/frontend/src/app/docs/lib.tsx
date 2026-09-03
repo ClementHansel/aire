@@ -25,15 +25,19 @@ export function visibleDocs(role: AuthUser['role'] | undefined | null): DocEntry
   return canViewTech(role) ? [...manuals, ...techDocs] : manuals;
 }
 
-/** The Airin logo mark — navy tile with a gold accent dot. */
+/** The Airin logo mark. The docs surface is white-only (see docs.css), so the
+ * gradient asset is always the right variant here. This used to be a navy tile
+ * holding the letter "A" — a stand-in, kept long after the real mark existed.
+ * The `.airin-mark` tile style stays in docs.css for the lock badge. */
 export function AirinMark({ size = 30, className = '' }: { size?: number; className?: string }) {
   return (
-    <span
-      className={`airin-mark ${className}`}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.52) }}
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/brand/airin-icon-gradient.svg"
+      alt=""
       aria-hidden
-    >
-      A
-    </span>
+      className={`airin-logo ${className}`}
+      style={{ width: size, height: size, objectFit: 'contain', flex: 'none' }}
+    />
   );
 }

@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { useBranding } from '@/contexts/BrandingContext';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 type Props = {
   className?: string;
@@ -18,7 +19,8 @@ const sizeMap = {
   lg: { box: 'h-12 w-12', text: 'text-xl', sub: 'text-xs' },
 };
 
-/** Tenant logo + name for the app shell. Falls back to the initial when no logo. */
+/** Tenant logo + name for the app shell. Falls back to the Airin mark when the
+ * tenant has uploaded no logo of its own. */
 export function CompanyLogo({
   className,
   iconClassName,
@@ -29,7 +31,6 @@ export function CompanyLogo({
 }: Props) {
   const { companyName, logoUrl } = useBranding();
   const s = sizeMap[size];
-  const initial = (companyName || 'A').charAt(0).toUpperCase();
 
   return (
     <div className={cn('flex items-center gap-3', className)}>
@@ -41,9 +42,9 @@ export function CompanyLogo({
           className={cn(s.box, 'rounded-md object-contain bg-background border border-border/50', iconClassName)}
         />
       ) : (
-        <div className={cn(s.box, 'rounded-md bg-primary flex items-center justify-center shrink-0', iconClassName)}>
-          <span className="font-display font-bold text-primary-foreground text-sm">{initial}</span>
-        </div>
+        // No tenant logo uploaded: the Airin mark is the default, and this
+        // preview must show what the app actually renders.
+        <AirinLogo size={size} showWordmark={false} className={iconClassName} />
       )}
       {showName && (
         <div>
