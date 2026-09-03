@@ -11,6 +11,7 @@ import {
 import { isImpersonating, stopImpersonation, isAuthenticated, getUser, logout, type AuthUser } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 import { FloatingChat } from '@/components/shared/ai-chat/FloatingChat';
 import { PLATFORM_CHAT } from '@/components/shared/ai-chat/useAiChat';
 
@@ -139,9 +140,7 @@ function AdminShell({ children }: { children: React.ReactNode }) {
         {/* Brand — platform-level (Airin), not tenant-branded. */}
         <div className="p-5 border-b border-border shrink-0">
           <Link href="/hub" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-sm font-bold text-primary-foreground font-display">A</span>
-            </div>
+            <AirinLogo size="sm" showWordmark={false} />
             <div className="min-w-0">
               <p className="font-semibold text-text-primary font-display leading-tight">{t('admin.shell.brand', 'Airin Admin')}</p>
               <p className="text-[11px] text-text-muted leading-tight">{t('admin.shell.brandSub', 'Platform control plane')}</p>
@@ -205,9 +204,7 @@ function AdminShell({ children }: { children: React.ReactNode }) {
         {/* Mobile header */}
         <header className="lg:hidden flex items-center justify-between p-4 bg-surface-raised border-b border-border shrink-0">
           <Link href="/hub" className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-xs font-bold text-primary-foreground font-display">A</span>
-            </div>
+            <AirinLogo size="sm" showWordmark={false} />
             <span className="font-semibold text-sm text-text-primary font-display">{t('admin.shell.brand', 'Airin Admin')}</span>
           </Link>
           <div className="flex items-center gap-2"><LanguageToggle /><button onClick={() => { logout(); window.location.href = '/'; }} className="text-xs text-text-secondary">{t('common.signOut', 'Sign out')}</button></div>

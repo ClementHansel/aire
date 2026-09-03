@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { setSession, type AuthSession } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 export default function RegisterPage() {
   const { t } = useI18n();
@@ -36,7 +37,7 @@ export default function RegisterPage() {
     <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-primary-500 rounded-2xl mb-4"><span className="text-2xl font-bold text-white">A</span></div>
+          <AirinLogo size="lg" showWordmark={false} className="mb-4" />
           <h1 className="text-2xl font-bold text-text-primary">{t('auth.register.title', 'Create your account')}</h1>
           <p className="mt-2 text-sm text-text-secondary">{t('auth.register.subtitle', 'Set up your business on airin')}</p>
         </div>

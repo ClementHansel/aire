@@ -18,6 +18,7 @@ import { api } from '@/lib/api';
 import { getUser, clearSession } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 
 export type PosTab = 'new-order' | 'orders' | 'queue' | 'summary' | 'shift';
 
@@ -74,10 +75,9 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2.5">
           {/* Official Airin mark (brand kit, 2026-07-30) — replaces the
-              hand-drawn "A" box. The gradient variant carries its own colours,
-              so it reads correctly on both themes. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/airin-icon-gradient.svg" alt="Airin" className="w-8 h-8 object-contain" />
+              hand-drawn "A" box. AirinLogo picks the per-theme variant; the
+              gradient asset alone lost its left half on the dark theme. */}
+          <AirinLogo size="sm" showWordmark={false} />
           <div>
             <p className="font-semibold text-text-primary text-sm">{title ?? activeLabel}</p>
             {resolvedSubtitle && <p className="text-xs text-text-muted">{resolvedSubtitle}</p>}

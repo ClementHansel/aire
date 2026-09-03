@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { getUser, isAuthenticated, logout } from '@/lib/auth';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { LEAN_MODE } from '@aire/shared';
 
@@ -118,7 +119,7 @@ export default function EmployeePage() {
       {/* Desktop side rail */}
       <aside className="hidden md:flex md:w-60 md:flex-col md:border-r md:border-border bg-surface-raised p-4 gap-1">
         <div className="flex items-center gap-2 mb-2">
-          <span className="inline-flex items-center justify-center w-9 h-9 bg-primary-500 rounded-xl text-white font-bold">A</span>
+          <AirinLogo showWordmark={false} />
           <span className="font-semibold text-text-primary">{t('emp.title', 'My Work')}</span>
         </div>
         <nav className="mt-2 flex flex-col gap-1">
@@ -137,7 +138,7 @@ export default function EmployeePage() {
       {/* Mobile top bar */}
       <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-surface-raised sticky top-0 z-10">
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-8 h-8 bg-primary-500 rounded-lg text-white font-bold">A</span>
+          <AirinLogo size="sm" showWordmark={false} />
           <span className="font-semibold text-text-primary">{emp?.name?.split(' ')[0] ?? t('emp.title', 'My Work')}</span>
         </div>
         <div className="flex items-center gap-2">

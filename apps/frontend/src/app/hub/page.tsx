@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
 import { startStaffPov, startPortalPov } from '@/lib/pov';
 import { useI18n } from '@/lib/i18n';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 import { usePublicBranding } from '@/lib/publicBranding';
 import { useTheme } from '@/contexts/ThemeContext';
 import { LEAN_MODE } from '@aire/shared';
@@ -279,12 +280,7 @@ export default function HubPage() {
     <div className="min-h-screen bg-surface flex flex-col" data-testid="hub-page">
       {/* Top bar */}
       <header className="flex items-center justify-between px-6 lg:px-10 py-5 border-b border-border">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 bg-primary-500 rounded-xl flex items-center justify-center">
-            <span className="text-base font-bold text-white">A</span>
-          </div>
-          <span className="font-semibold text-text-primary">airin</span>
-        </div>
+        <AirinLogo />
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block">
             <p className="text-sm font-medium text-text-primary">{user?.name ?? t('auth.hub.user', 'User')}</p>

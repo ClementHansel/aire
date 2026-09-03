@@ -7,6 +7,7 @@ import {
 import { isAuthenticated, setSession, type AuthSession } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 import { OfflineIndicator } from '@/components/shared/OfflineIndicator';
 import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
@@ -197,7 +198,7 @@ function PosGate({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <span className="inline-flex items-center justify-center w-14 h-14 bg-primary-500 rounded-2xl text-white text-2xl font-bold mb-3">A</span>
+          <AirinLogo size="lg" showWordmark={false} className="mb-3" />
           <h1 className="text-xl font-bold text-text-primary">{t('pos.gate.title', 'Point of Sale')}</h1>
           {outletName && <p className="text-sm text-text-muted mt-1">{outletName}</p>}
         </div>
