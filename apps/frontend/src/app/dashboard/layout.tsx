@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { useTenantModules, moduleEnabled } from '@/lib/useModules';
 import { isHeld, isHeldRoute } from '@aire/shared';
 import { usePermissions, hasPermission } from '@/lib/usePermissions';
+import { AirinLogo } from '@/components/shared/AirinLogo';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
@@ -262,9 +263,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoUrl} alt={companyName} className="w-8 h-8 rounded-lg object-contain border border-border bg-surface" />
             ) : (
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-sm font-bold text-primary-foreground font-display">{companyName.charAt(0).toUpperCase()}</span>
-              </div>
+              // No tenant logo uploaded yet — fall back to the Airin mark rather
+              // than a letter tile. The tenant's own name still sits beside it.
+              <AirinLogo size="sm" showWordmark={false} />
             )}
             <span className="font-semibold text-text-primary font-display" data-testid="header-tenant-name">{companyName}</span>
           </Link>
@@ -328,9 +329,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoUrl} alt={companyName} className="w-7 h-7 rounded-lg object-contain border border-border bg-surface" />
             ) : (
-              <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-xs font-bold text-primary-foreground font-display">{companyName.charAt(0).toUpperCase()}</span>
-              </div>
+              <AirinLogo size="sm" showWordmark={false} />
             )}
             <span className="font-semibold text-sm text-text-primary font-display">{companyName}</span>
           </Link>
