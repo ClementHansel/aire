@@ -8,7 +8,8 @@
     "migrate:status": "tsx migrate.ts --status",
     "seed": "tsx seed.ts",
     "seed:history": "tsx seed-history.ts",
-    "reset": "tsx reset.ts"
+    "reset": "tsx reset.ts",
+    "import:pos": "tsx import-pos-history.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
