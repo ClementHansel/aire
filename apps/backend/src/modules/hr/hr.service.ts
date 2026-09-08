@@ -91,8 +91,17 @@ export class HrService {
     const params: unknown[] = [tenantId];
     let where = `e.tenant_id = $1 AND e.status = 'active'`;
     if (outletId) { params.push(outletId); where += ` AND e.outlet_id = $${params.length}`; }
+    // For staff with a login, the LOGIN's name wins. Renaming someone under
+    // Users & Roles updates `users.name`, which left this picker showing the
+    // stale `employees.name` forever — the same person under two names
+    // depending on which screen you were looking at (AIRIN-179). Staff with no
+    // login still come through on their employee name.
     const res = await this.pool.query<{ id: string; name: string; user_id: string | null }>(
-      `SELECT e.id, e.name, e.user_id FROM employees e WHERE ${where} ORDER BY e.name ASC`,
+      `SELECT e.id, COALESCE(NULLIF(TRIM(u.name), ''), e.name) AS name, e.user_id
+         FROM employees e
+         LEFT JOIN users u ON u.id = e.user_id
+        WHERE ${where}
+        ORDER BY COALESCE(NULLIF(TRIM(u.name), ''), e.name) ASC`,
       params,
     );
     return res.rows.map((r) => ({ id: r.id, name: r.name, userId: r.user_id ?? null }));
@@ -252,12 +261,33 @@ export class HrService {
    * When the user has no linked employee, everything is null/empty and callers
    * fall back to the user's own JWT outlet_id (backward compatible).
    */
-  async getBranchContext(tenantId: string, userId: string): Promise<BranchContext> {
+  /**
+   * @param allowedOutletIds Branches the caller may see, per the ScopeService
+   *   contract: null spans the tenant (an owner), a list restricts to those.
+   *   The branch picker at shift-open renders this, so an unscoped list let a
+   *   cashier open a till at a branch they have nothing to do with (AIRIN-178).
+   */
+  async getBranchContext(tenantId: string, userId: string, allowedOutletIds?: string[] | null): Promise<BranchContext> {
     const branchesRes = await this.pool.query<{ id: string; name: string }>(
-      `SELECT id, name FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name`,
-      [tenantId],
+      `SELECT id, name FROM outlets
+        WHERE tenant_id = $1 AND is_active = true
+          AND ($2::uuid[] IS NULL OR id = ANY($2::uuid[]))
+        ORDER BY name`,
+      [tenantId, allowedOutletIds ?? null],
     );
-    const branches = branchesRes.rows.map((r) => ({ id: r.id, name: r.name }));
+    let branches = branchesRes.rows.map((r) => ({ id: r.id, name: r.name }));
+
+    // An operator we know nothing about — no employee record, no schedule, no
+    // JWT branch — would otherwise be handed an empty picker and be unable to
+    // open a shift at all. Falling back to the full list keeps that escape
+    // hatch open; opening off-schedule already demands a logged reason.
+    if (branches.length === 0) {
+      const allRes = await this.pool.query<{ id: string; name: string }>(
+        `SELECT id, name FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name`,
+        [tenantId],
+      );
+      branches = allRes.rows.map((r) => ({ id: r.id, name: r.name }));
+    }
 
     const empRes = await this.pool.query<{ id: string; outlet_id: string | null }>(
       `SELECT id, outlet_id FROM employees WHERE tenant_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1`,

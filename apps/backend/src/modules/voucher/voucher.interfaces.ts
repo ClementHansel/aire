@@ -16,6 +16,7 @@ export interface VoucherTemplateRow {
   min_order_amount: string;
   sale_price: string;
   validity_days: number | null;
+  business_unit: string;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -36,6 +37,8 @@ export interface VoucherTemplate {
   minOrderAmount: number;
   startDate: string | null;
   expiryDate: string | null;
+  /** Line of business this pack sells under; matches business_units.code (AIRIN-180). */
+  businessUnit: string;
   isActive: boolean;
 }
 
@@ -53,6 +56,8 @@ export interface CreateVoucherTemplateDto {
   minOrderAmount?: number;
   startDate?: string | null;
   expiryDate?: string | null;
+  /** Defaults to 'AIRE' when the caller omits it (AIRIN-180). */
+  businessUnit?: string;
 }
 
 /** Result of selling (reserving) a voucher pack — before payment. */

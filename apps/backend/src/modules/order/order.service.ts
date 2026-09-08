@@ -220,11 +220,6 @@ export class OrderService {
     const serviceIds = request.items.map((item) => item.serviceId);
     const services = await this.lookupServices(serviceIds);
 
-    // A single order can mix AIRE (car wash) and LEAD (detailing) items into one
-    // receipt/payment. The order's business_unit records the payment channel; it
-    // defaults to the caller's selected unit (see request.businessUnit).
-    const businessUnit = request.businessUnit ?? BusinessUnit.Aire;
-
     // Step 1b: Packs sold on THIS order (Samuel 2026-07-30 — sell-pack merged
     // into new-order so an upsell at the counter is one transaction, not two).
     // A pack is a cart line with no services row behind it (migration 089), so
@@ -234,6 +229,17 @@ export class OrderService {
     const packLines = await this.resolvePackLines(user.tenant_id, request);
     const packTotal = packLines.reduce((s, p) => s + p.unitPrice, 0);
     const sellsMembershipPlan = packLines.some((p) => p.kind === 'membership_plan');
+
+    // A single order can mix AIRE (car wash) and LEAD (detailing) items into one
+    // receipt/payment. The order's business_unit records the payment channel; it
+    // defaults to the caller's selected unit (see request.businessUnit).
+    //
+    // Resolved AFTER the packs, because a pack-only sale has no service line to
+    // take a unit from: without the pack's own unit it was always booked as
+    // AIRE, crediting LEAD's pack revenue to AIRE (AIRIN-180). An explicit unit
+    // from the caller still wins.
+    const businessUnit =
+      request.businessUnit ?? packLines.find((p) => p.businessUnit)?.businessUnit ?? BusinessUnit.Aire;
 
     // Step 2: Build validation input
     const validationInput: OrderValidationInput = {
@@ -978,11 +984,14 @@ export class OrderService {
     id: string;
     name: string;
     unitPrice: number;
+    /** The pack's own line of business, when it declares one (AIRIN-180). */
+    businessUnit?: string | null;
     plan?: { id: string; duration_months: number; max_uses: number; daily_limit: number; max_plates: number };
   }>> {
     const lines: Array<{
       kind: 'membership_plan' | 'voucher_pack';
       id: string; name: string; unitPrice: number;
+      businessUnit?: string | null;
       plan?: { id: string; duration_months: number; max_uses: number; daily_limit: number; max_plates: number };
     }> = [];
 
@@ -1014,8 +1023,8 @@ export class OrderService {
     }
 
     if (request.voucherPackTemplateId) {
-      const r = await this.pool.query<{ id: string; name: string; sale_price: string | null }>(
-        `SELECT id, name, sale_price FROM voucher_templates
+      const r = await this.pool.query<{ id: string; name: string; sale_price: string | null; business_unit: string | null }>(
+        `SELECT id, name, sale_price, business_unit FROM voucher_templates
          WHERE id = $1 AND tenant_id = $2 AND is_active = true`,
         [request.voucherPackTemplateId, tenantId],
       );
@@ -1026,6 +1035,7 @@ export class OrderService {
         id: tpl.id,
         name: tpl.name,
         unitPrice: tpl.sale_price != null ? parseFloat(tpl.sale_price) : 0,
+        businessUnit: tpl.business_unit,
       });
     }
 

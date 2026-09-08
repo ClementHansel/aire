@@ -1003,6 +1003,7 @@ export const id: Record<string, string> = {
   'dash.vouchers.name': 'Nama',
   'dash.vouchers.packNamePlaceholder': 'Paket Voucher 10x Cuci Mobil Standar',
   'dash.vouchers.type': 'Jenis',
+  'dash.vouchers.businessUnit': 'Unit bisnis',
   'dash.vouchers.freeServices': 'Layanan gratis',
   'dash.vouchers.percentage': 'Persentase (%)',
   'dash.vouchers.percent': 'Persen',

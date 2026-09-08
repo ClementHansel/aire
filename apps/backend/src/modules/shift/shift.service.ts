@@ -191,10 +191,36 @@ export class ShiftService {
     };
   }
 
-  async list(tenantId: string, opts: { outletId?: string; dateFrom?: string; dateTo?: string; limit?: number } = {}): Promise<unknown[]> {
+  /**
+   * Shift history, scoped to the branches the caller may see.
+   *
+   * `outletIds` follows the ScopeService contract: null spans every branch (an
+   * owner), a list restricts to those branches. Without it a cashier's "Recent
+   * shifts" panel listed every branch's tills, including operators and cash
+   * variances from branches they have nothing to do with (AIRIN-178).
+   *
+   * `operatorId` is unioned in so an operator always sees their OWN shifts even
+   * from a branch no longer in their assigned set — the same narrow "what I did
+   * myself" guarantee OrderListService gives for orders (AIRIN-110), and what
+   * keeps an unlinked cashier's panel from going blank.
+   */
+  async list(
+    tenantId: string,
+    opts: { outletId?: string; dateFrom?: string; dateTo?: string; limit?: number; outletIds?: string[] | null; operatorId?: string } = {},
+  ): Promise<unknown[]> {
     const params: unknown[] = [tenantId];
     let where = 'tenant_id = $1';
     if (opts.outletId) { params.push(opts.outletId); where += ` AND outlet_id = $${params.length}`; }
+    if (opts.outletIds !== undefined && opts.outletIds !== null) {
+      params.push(opts.outletIds);
+      const idsParam = `$${params.length}::uuid[]`;
+      if (opts.operatorId) {
+        params.push(opts.operatorId);
+        where += ` AND (outlet_id = ANY(${idsParam}) OR operator_id = $${params.length})`;
+      } else {
+        where += ` AND outlet_id = ANY(${idsParam})`;
+      }
+    }
     if (opts.dateFrom) { params.push(opts.dateFrom); where += ` AND opened_at >= $${params.length}::timestamptz`; }
     if (opts.dateTo) { params.push(opts.dateTo); where += ` AND opened_at < ($${params.length}::date + INTERVAL '1 day')`; }
     params.push(Math.min(opts.limit ?? 50, 200));

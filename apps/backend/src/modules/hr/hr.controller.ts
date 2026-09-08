@@ -3,6 +3,7 @@ import { JWTPayload, Role } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, RequirePermission } from '../../common/decorators';
 import { PermissionsGuard } from '../../common/guards';
+import { ScopeService } from '../../common/scope/scope.service';
 import { HrService, CreateEmployeeDto, UpdateEmployeeDto, LeaveRequestDto, ScheduleDto, HolidayDto } from './hr.service';
 
 /** Outlet-bound roles are scoped to their own branch; tenant-wide roles can span all branches. */
@@ -15,7 +16,10 @@ const OUTLET_BOUND = (role: string) => role === Role.Cashier || role === Role.Ou
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @RequirePermission('hr.read', 'payroll.read')
 export class HrController {
-  constructor(private readonly service: HrService) {}
+  constructor(
+    private readonly service: HrService,
+    private readonly scopeService: ScopeService,
+  ) {}
 
   /** Effective branch scope: outlet-bound staff are pinned to their outlet; others may pass a filter. */
   private scope(user: JWTPayload, requested?: string): string | undefined {
@@ -34,8 +38,12 @@ export class HrController {
    */
   @Get('my/branch-context')
   @RequirePermission() /* POS-critical: every operator needs this regardless of HR access */
-  myBranchContext(@CurrentUser() user: JWTPayload) {
-    return this.service.getBranchContext(user.tenant_id, user.sub);
+  async myBranchContext(@CurrentUser() user: JWTPayload) {
+    // Owners span every branch; a cashier or outlet admin only gets the ones
+    // they're assigned to, so the shift-open picker can't offer someone else's
+    // branch (AIRIN-178).
+    const allowed = await this.scopeService.resolveOutletIds(user);
+    return this.service.getBranchContext(user.tenant_id, user.sub, allowed);
   }
 
   /** Link (or unlink, userId=null) an employee to a login account. */

@@ -3,13 +3,17 @@ import { JWTPayload } from '@aire/shared';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { CurrentUser, RequiresOnboarding } from '../../common/decorators';
 import { OnboardingCompleteGuard } from '../../common/guards';
+import { ScopeService } from '../../common/scope/scope.service';
 import { ShiftService, OpenShiftDto, CloseShiftDto, PettyCashDto, ShiftIssueDto } from './shift.service';
 
 @Controller('api/shifts')
 @UseGuards(JwtAuthGuard, OnboardingCompleteGuard)
 @RequiresOnboarding()
 export class ShiftController {
-  constructor(private readonly service: ShiftService) {}
+  constructor(
+    private readonly service: ShiftService,
+    private readonly scope: ScopeService,
+  ) {}
 
   @Get('current')
   current(@CurrentUser() user: JWTPayload) {
@@ -17,13 +21,16 @@ export class ShiftController {
   }
 
   @Get()
-  list(
+  async list(
     @CurrentUser() user: JWTPayload,
     @Query('outletId') outletId?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ) {
-    return this.service.list(user.tenant_id, { outletId, dateFrom, dateTo });
+    // An owner spans every branch (null); a cashier or outlet admin sees only
+    // the branches they are assigned to, plus their own shifts (AIRIN-178).
+    const outletIds = await this.scope.resolveOutletIds(user, outletId);
+    return this.service.list(user.tenant_id, { dateFrom, dateTo, outletIds, operatorId: user.sub });
   }
 
   @Get(':id')

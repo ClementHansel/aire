@@ -62,6 +62,35 @@ describe('VoucherPackService.sellPack — business_unit', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
+  it('prefers the unit set on the pack itself over the one derived from services', async () => {
+    // The owner picks this on the pack form (AIRIN-180, migration 098). Before
+    // the column existed the services were the only signal; now an explicit
+    // choice must win, and the services lookup should not even run.
+    templates.getTemplate.mockResolvedValue({
+      id: 'tpl-3', name: 'Detailing Pack', is_active: true, sale_price: '200000',
+      max_uses: 5, service_ids: ['svc-aire-1'], business_unit: 'LEAD',
+    });
+
+    await service.sellPack(user, 'tpl-3', { name: 'Budi', phone: '0811' });
+
+    const [, , params] = checkout.createPackOrder.mock.calls[0];
+    expect(params).toMatchObject({ businessUnit: 'LEAD' });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('still derives from services for a pack saved before the column existed', async () => {
+    templates.getTemplate.mockResolvedValue({
+      id: 'tpl-4', name: 'Legacy Pack', is_active: true, sale_price: '200000',
+      max_uses: 5, service_ids: ['svc-detailing-1'], business_unit: null,
+    });
+    pool.query.mockResolvedValueOnce({ rows: [{ business_unit: 'LEAD', n: '1' }] });
+
+    await service.sellPack(user, 'tpl-4', { name: 'Budi', phone: '0811' });
+
+    const [, , params] = checkout.createPackOrder.mock.calls[0];
+    expect(params).toMatchObject({ businessUnit: 'LEAD' });
+  });
+
   it('still emits VoucherPackSold and commits regardless of business_unit', async () => {
     templates.getTemplate.mockResolvedValue({
       id: 'tpl-1', name: 'Detailing Pack', is_active: true, sale_price: '200000',

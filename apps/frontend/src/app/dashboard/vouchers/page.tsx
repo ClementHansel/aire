@@ -6,6 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { toDateInput, fmtDateRange } from '@/lib/dates';
 import BranchFilter from '@/components/dashboard/BranchFilter';
 import { SelectAllCheckbox } from '@/components/shared/SelectAllCheckbox';
+import { useBusinessUnits } from '@/lib/useBusinessUnits';
 import { Gift, Ticket, Megaphone, Pencil, Trash2, Check } from 'lucide-react';
 
 interface Branch { id: string; name: string }
@@ -16,6 +17,7 @@ interface Template {
   id: string; name: string; type: 'fixed' | 'percentage' | 'service_pack'; value: number;
   maxUses: number; salePrice: number; validityDays: number | null;
   serviceIds: string[] | null; outletIds: string[] | null; isActive: boolean;
+  businessUnit?: string;
 }
 interface Promotion {
   id: string; name: string; description: string | null; startDate: string; endDate: string;
@@ -127,8 +129,19 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
   const [validityDays, setValidityDays] = useState(String(initial?.validityDays ?? 90));
   const [serviceIds, setServiceIds] = useState<string[]>(initial?.serviceIds ?? []);
   const [outletIds, setOutletIds] = useState<string[]>(initial?.outletIds ?? []);
+  const [businessUnit, setBusinessUnit] = useState(initial?.businessUnit ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { units: businessUnits } = useBusinessUnits();
+
+  // Default to the tenant's first unit once they've loaded, but never overwrite
+  // the unit an existing pack already carries.
+  useEffect(() => {
+    if (businessUnits.length === 0) return;
+    if (businessUnit && businessUnits.some((u) => u.code === businessUnit)) return;
+    if (initial?.businessUnit) return;
+    setBusinessUnit(businessUnits[0]!.code);
+  }, [businessUnits, businessUnit, initial]);
 
   const toggle = (list: string[], set: (v: string[]) => void, id: string) =>
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
@@ -145,6 +158,7 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
       validityDays: validityDays ? Number(validityDays) : null,
       serviceIds: serviceIds.length ? serviceIds : null,
       outletIds: outletIds.length ? outletIds : null,
+      businessUnit: businessUnit || undefined,
     };
     try {
       if (initial) await api.put(`/voucher-templates/${initial.id}`, payload);
@@ -171,6 +185,14 @@ function TemplateModal({ initial, services, branches, onClose, onSaved }: {
                 <option value="service_pack">{t('dash.vouchers.freeServices', 'Free service(s)')}</option>
                 <option value="fixed">{t('dash.vouchers.fixedDiscount', 'Fixed discount (Rp)')}</option>
                 <option value="percentage">{t('dash.vouchers.percentage', 'Percentage (%)')}</option>
+              </select>
+            </div>
+            <div>
+              {/* Which line of business the pack sells under, so its revenue is
+                  credited to the right one instead of always AIRE (AIRIN-180). */}
+              <label className="block text-sm font-medium mb-1.5">{t('dash.vouchers.businessUnit', 'Business unit')}</label>
+              <select aria-label={t('dash.vouchers.businessUnit', 'Business unit')} className="input-field" value={businessUnit} onChange={(e) => setBusinessUnit(e.target.value)}>
+                {businessUnits.map((u) => <option key={u.code} value={u.code}>{u.name}</option>)}
               </select>
             </div>
             {type !== 'service_pack' && (

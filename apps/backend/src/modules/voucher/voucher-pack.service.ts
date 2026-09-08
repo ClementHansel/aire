@@ -51,12 +51,15 @@ export class VoucherPackService {
     const template = await this.templates.getTemplate(user.tenant_id, templateId);
     if (!template.is_active) throw new BadRequestException('Voucher template is not active');
 
-    // A voucher template carries no business_unit of its own — derive it from
-    // the service(s) it's scoped to (service_ids), so the sale's revenue lands
-    // in the right AIRE/LEAD bucket instead of defaulting to AIRE by accident.
-    // A fixed/percentage template with no service_ids falls back to AIRE (see
+    // The unit the owner picked on the pack itself wins (AIRIN-180, migration
+    // 098). Before that column existed the only available signal was the
+    // service(s) the template is scoped to, which is still the fallback for
+    // packs saved before the field existed — and for a fixed/percentage
+    // template with no service_ids, which lands on AIRE (see
     // resolveServiceBusinessUnit).
-    const businessUnit = await resolveServiceBusinessUnit(this.pool, template.service_ids ?? []);
+    const businessUnit =
+      template.business_unit?.trim() ||
+      (await resolveServiceBusinessUnit(this.pool, template.service_ids ?? []));
 
     const client = await this.pool.connect();
     try {

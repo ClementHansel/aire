@@ -49,8 +49,9 @@ export class VoucherTemplateService {
     const res = await this.pool.query<VoucherTemplateRow>(
       `INSERT INTO voucher_templates
         (tenant_id, name, type, value, max_uses, sale_price, validity_days,
-         service_ids, outlet_ids, brand_scope, min_order_amount, start_date, expiry_date, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true)
+         service_ids, outlet_ids, brand_scope, min_order_amount, start_date, expiry_date,
+         business_unit, is_active)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,'AIRE'),true)
        RETURNING *`,
       [
         tenantId,
@@ -66,6 +67,7 @@ export class VoucherTemplateService {
         dto.minOrderAmount ?? 0,
         dto.startDate ?? null,
         dto.expiryDate ?? null,
+        dto.businessUnit?.trim() || null,
       ],
     );
     return this.map(res.rows[0]!);
@@ -107,6 +109,10 @@ export class VoucherTemplateService {
     if (dto.minOrderAmount !== undefined) push('min_order_amount', dto.minOrderAmount);
     if (dto.startDate !== undefined) push('start_date', dto.startDate);
     if (dto.expiryDate !== undefined) push('expiry_date', dto.expiryDate);
+    // A blank unit would violate the NOT NULL column; treat it as "leave it".
+    if (dto.businessUnit !== undefined && dto.businessUnit?.trim()) {
+      push('business_unit', dto.businessUnit.trim());
+    }
 
     if (sets.length === 0) return this.map(await this.getTemplate(tenantId, id));
 
@@ -144,6 +150,7 @@ export class VoucherTemplateService {
       minOrderAmount: parseFloat(r.min_order_amount),
       startDate: r.start_date,
       expiryDate: r.expiry_date,
+      businessUnit: r.business_unit ?? 'AIRE',
       isActive: r.is_active,
     };
   }
