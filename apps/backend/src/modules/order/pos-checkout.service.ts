@@ -169,11 +169,14 @@ export class PosCheckoutService {
       licensePlate?: string;
       vehicleBrand?: string;
       vehicleModel?: string;
-      /** Which co-located business unit (AIRE/LEAD) this pack's revenue
-       *  belongs to — callers should derive this via resolveServiceBusinessUnit
-       *  from the thing being sold rather than leave it to the column default.
-       *  Falls back to BusinessUnit.Aire, explicitly, if omitted. */
-      businessUnit?: BusinessUnit;
+      /** Which co-located business unit this pack's revenue belongs to — a
+       *  `business_units.code`, which since AIRIN-176 is tenant-owned data and
+       *  therefore NOT limited to the two codes the `BusinessUnit` enum names
+       *  (a tenant can add a third line of business). Callers should take it
+       *  from the thing being sold — the pack's own `business_unit`, else
+       *  resolveServiceBusinessUnit — rather than leave it to the column
+       *  default. Falls back to BusinessUnit.Aire, explicitly, if omitted. */
+      businessUnit?: BusinessUnit | string;
     },
   ): Promise<Omit<PackOrderResult, 'customerId'>> {
     const orderNumber = await this.generateOrderNumber(client, user.outlet_id!);
