@@ -413,15 +413,47 @@ export class ServiceService {
    *
    * Requirements: 30.4
    */
-  async remove(tenantId: string, id: string): Promise<void> {
+  async remove(
+    tenantId: string,
+    id: string,
+  ): Promise<{ deleted: boolean; deactivated: boolean; orderLines: number }> {
     // Verify exists first
     await this.findOne(tenantId, id);
+
+    // `order_items.service_id` is ON DELETE RESTRICT, which is correct: a service
+    // that has been sold is part of the sales history and erasing it would orphan
+    // real revenue. Everything else pointing at a service is SET NULL or CASCADE,
+    // so a service nobody ever sold is genuinely free to go.
+    //
+    // This used to ALWAYS soft-delete, which is why the outlet reported the
+    // button as broken: they clicked Delete, the row stayed in the list flipped
+    // to "Inactive", and nothing said why.
+    const used = await this.pool.query(
+      `SELECT COUNT(*)::text AS n FROM order_items WHERE service_id = $1`,
+      [id],
+    );
+    const orderLines = Number(used.rows[0]?.n ?? '0');
+
+    if (orderLines === 0) {
+      try {
+        await this.pool.query(`DELETE FROM services WHERE id = $1 AND tenant_id = $2`, [
+          id,
+          tenantId,
+        ]);
+        return { deleted: true, deactivated: false, orderLines: 0 };
+      } catch (err) {
+        // 23503 = foreign_key_violation. Some table this method does not know
+        // about still points at the row; deactivating beats a 500.
+        if ((err as { code?: string })?.code !== '23503') throw err;
+      }
+    }
 
     await this.pool.query(
       `UPDATE services SET is_active = false, updated_at = NOW()
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
     );
+    return { deleted: false, deactivated: true, orderLines };
   }
 
   /**

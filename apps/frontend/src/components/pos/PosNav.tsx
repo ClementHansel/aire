@@ -15,7 +15,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { getUser, clearSession } from '@/lib/auth';
+import { getUser, clearSession, refreshCachedUser } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { AirinLogo } from '@/components/shared/AirinLogo';
@@ -46,8 +46,19 @@ export interface PosNavProps {
 }
 
 export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
-  const user = getUser();
   const { t } = useI18n();
+  // The cached user is written at LOGIN and was never refreshed, so a rename
+  // showed up everywhere the server renders (the salesperson dropdown, for one)
+  // while this header kept the old name until the cashier signed out and back
+  // in. Re-read it on mount.
+  const [user, setUser] = useState(getUser());
+  useEffect(() => {
+    let cancelled = false;
+    refreshCachedUser().then((fresh) => {
+      if (!cancelled && fresh) setUser(fresh);
+    });
+    return () => { cancelled = true; };
+  }, []);
   // Resolve the branch name for the outlet id in the URL so the header shows a
   // human-readable name ("Agent: Super Made Branch") rather than the raw UUID.
   const [agentName, setAgentName] = useState<string | null>(null);

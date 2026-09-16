@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { getUser, isAuthenticated, logout, type AuthUser } from '@/lib/auth';
+import { getUser, isAuthenticated, logout, refreshCachedUser, type AuthUser } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useTenantModules, moduleEnabled } from '@/lib/useModules';
 import { isHeld, isHeldRoute } from '@aire/shared';
@@ -181,6 +181,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     const u = getUser();
     setUser(u);
     setChecked(true);
+    // The cached user is written at LOGIN and never refreshed, so a rename left
+    // the old name in this shell's header until the person signed out and back
+    // in. Re-read it from the server and update in place.
+    refreshCachedUser().then((fresh) => { if (fresh) setUser(fresh); });
     // Lean-mode route guard: held features are hidden from nav, but a client
     // could still deep-link. Redirect non-super-admins off any held route.
     // Super-admins keep access so they can inspect held surfaces.

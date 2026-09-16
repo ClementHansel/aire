@@ -58,6 +58,31 @@ export function getUser(): AuthUser | null {
   }
 }
 
+/**
+ * Re-read the signed-in user from the server and update the cached copy.
+ *
+ * `getUser()` returns whatever was written to localStorage at LOGIN. Nothing
+ * refreshed it, so renaming a user updated every server-rendered list (the POS
+ * salesperson dropdown among them) while the top-right corner kept the old name
+ * until that person happened to sign out and back in.
+ *
+ * Silent on failure by design: a header name is not worth an error state, and
+ * these run on tablets with patchy connectivity — the cached name simply stays
+ * until the next successful call.
+ */
+export async function refreshCachedUser(): Promise<AuthUser | null> {
+  if (typeof window === 'undefined' || !getAccessToken()) return null;
+  try {
+    const { api } = await import('./api');
+    const fresh = await api.get<AuthUser>('/auth/me');
+    if (!fresh?.id) return null;
+    localStorage.setItem(USER_KEY, JSON.stringify(fresh));
+    return fresh;
+  } catch {
+    return null;
+  }
+}
+
 export function isAuthenticated(): boolean {
   return getAccessToken() !== null;
 }

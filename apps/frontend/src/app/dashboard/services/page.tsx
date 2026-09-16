@@ -27,6 +27,9 @@ export default function ServicesPage() {
   const [branches, setBranches] = useState<BranchLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Explains a delete that could only deactivate. Distinct from `error`: nothing
+  // failed, the outcome just was not the one the button's label implies.
+  const [notice, setNotice] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ServiceDTO | null>(null);
   const [recipeFor, setRecipeFor] = useState<ServiceDTO | null>(null);
@@ -89,11 +92,22 @@ export default function ServicesPage() {
   const filtersActive = Boolean(search.trim() || fBranch || fBusinessUnit || fBrand || fCategory);
   const clearFilters = () => { setSearch(''); setFBranch(''); setFBusinessUnit(''); setFBrand(''); setFCategory(''); };
 
+  // Delete really deletes when the service was never sold. When it HAS been,
+  // `order_items.service_id ON DELETE RESTRICT` protects the sales history and
+  // the backend deactivates instead — so say that, with the number of
+  // transactions, rather than reloading a list where the row is still sitting
+  // there and letting the user conclude the button is broken.
   const handleDelete = async (id: string) => {
     if (!confirm(t('dash.services.confirmDelete', 'Delete this service?'))) return;
+    setNotice(null);
     try {
-      await api.delete(`/services/${id}`);
+      const res = await api.delete<{ deleted: boolean; deactivated: boolean; orderLines: number }>(`/services/${id}`);
       await load();
+      if (res && res.deleted === false) {
+        setNotice(
+          t('dash.services.deactivatedInstead', 'This service is used in {n} past transaction(s), so it cannot be deleted without breaking the sales history. It has been deactivated instead and will no longer appear in POS.').replace('{n}', String(res.orderLines)),
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('dash.services.deleteFailed', 'Delete failed'));
     }
@@ -116,6 +130,12 @@ export default function ServicesPage() {
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{error}</div>}
+      {notice && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <span className="flex-1">{notice}</span>
+          <button className="btn-ghost text-xs" onClick={() => setNotice(null)}>{t('common.dismiss', 'Dismiss')}</button>
+        </div>
+      )}
 
       {/* Search + filters (AIRIN-119, AIRIN-120) */}
       <div className="card mb-4">

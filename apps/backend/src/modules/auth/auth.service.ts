@@ -264,6 +264,29 @@ export class AuthService {
     return `${base}-${uuidv4().slice(0, 6)}`;
   }
 
+  /**
+   * The signed-in user as the DATABASE has them now, not as the JWT remembers
+   * them. Backs `GET /api/auth/me` so a rename shows in the UI without the
+   * person having to sign out and back in.
+   */
+  async currentUser(
+    userId: string,
+  ): Promise<{ id: string; name: string; role: string; tenantId: string; outletId?: string }> {
+    const { rows } = await this.pool.query(
+      `SELECT id, name, role, tenant_id, outlet_id FROM users WHERE id = $1 AND is_active = true`,
+      [userId],
+    );
+    const row = rows[0];
+    if (!row) throw new UnauthorizedException(ERR_AUTH_REFRESH_TOKEN_INVALID);
+    return {
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      tenantId: row.tenant_id,
+      ...(row.outlet_id ? { outletId: row.outlet_id } : {}),
+    };
+  }
+
   async refresh(refreshToken: string): Promise<RefreshResponse> {
     const payload = this.decodeRefreshToken(refreshToken);
     if (!payload) {

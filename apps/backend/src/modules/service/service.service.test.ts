@@ -481,17 +481,45 @@ describe('ServiceService', () => {
   });
 
   describe('remove', () => {
-    it('should soft-delete a service by setting is_active to false', async () => {
-      // findOne query
-      mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] });
-      // update query
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // This used to assert an unconditional soft delete, which was the whole
+    // problem: the outlet clicked Delete, the row stayed in the list flipped to
+    // "Inactive", and they reported the button as broken.
+    it('really deletes a service that has never been sold', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '0' }] }); // order-line count
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // delete
 
-      await service.remove('tenant-001', 'svc-001');
+      const result = await service.remove('tenant-001', 'svc-001');
 
-      const [sql, params] = mockPool.query.mock.calls[1];
+      const [sql, params] = mockPool.query.mock.calls[2];
+      expect(sql).toContain('DELETE FROM services');
+      expect(params).toEqual(['svc-001', 'tenant-001']);
+      expect(result).toEqual({ deleted: true, deactivated: false, orderLines: 0 });
+    });
+
+    it('deactivates instead, and reports the count, when the service has sales history', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '17' }] }); // order-line count
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // update
+
+      const result = await service.remove('tenant-001', 'svc-001');
+
+      const [sql, params] = mockPool.query.mock.calls[2];
       expect(sql).toContain('UPDATE services SET is_active = false');
       expect(params).toEqual(['svc-001', 'tenant-001']);
+      // The count is what lets the UI say WHY.
+      expect(result).toEqual({ deleted: false, deactivated: true, orderLines: 17 });
+    });
+
+    it('falls back to deactivating when another table still references it (23503)', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '0' }] }); // order-line count
+      mockPool.query.mockRejectedValueOnce(Object.assign(new Error('fk'), { code: '23503' }));
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // update
+
+      const result = await service.remove('tenant-001', 'svc-001');
+
+      expect(result).toEqual({ deleted: false, deactivated: true, orderLines: 0 });
     });
 
     it('should throw NotFoundException when removing nonexistent service', async () => {

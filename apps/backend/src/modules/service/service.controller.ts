@@ -122,11 +122,11 @@ export class ServiceController {
    * Inactive services appear as "Habis" (disabled) in POS.
    */
   @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   async remove(
     @CurrentUser() user: JWTPayload,
     @Param('id') id: string,
-  ): Promise<void> {
-    await this.serviceService.remove(user.tenant_id, id);
+  ): Promise<{ deleted: boolean; deactivated: boolean; orderLines: number }> {
+    return this.serviceService.remove(user.tenant_id, id);
   }
 }
