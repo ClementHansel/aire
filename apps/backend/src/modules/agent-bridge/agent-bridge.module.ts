@@ -4,6 +4,7 @@ import { AgentFlowAdminController, AgentFlowSelectionController } from './agent-
 import { AgentFlowService } from './agent-flow.service';
 import { BridgeTokenGuard } from './bridge-token.guard';
 import { DatabasePoolProvider } from '../auth/database.provider';
+import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 import { WhatsappModule } from '../whatsapp';
 import { AgentModule } from '../agent';
 
@@ -21,7 +22,7 @@ import { AgentModule } from '../agent';
 @Module({
   imports: [WhatsappModule, AgentModule],
   controllers: [BridgeController, AgentFlowAdminController, AgentFlowSelectionController],
-  providers: [AgentFlowService, BridgeTokenGuard, DatabasePoolProvider],
+  providers: [AgentFlowService, KnowledgeDocsService, BridgeTokenGuard, DatabasePoolProvider],
   exports: [AgentFlowService],
 })
 export class AgentBridgeModule {}

@@ -10,6 +10,9 @@ import { VoucherRedeemNotifyService } from './voucher-redeem-notify.service';
 import { PaymentNotifyService } from './payment-notify.service';
 import { WaWhitelistService } from './wa-whitelist.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
+// Provided directly (not via AgentConfigModule) to keep this module's already
+// delicate import graph untouched — the service is stateless and only needs the pool.
+import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 import { SettingsModule } from '../settings/settings.module';
 import { AgentModule } from '../agent';
 import { BookingModule } from '../booking';
@@ -32,7 +35,7 @@ import { AuditModule } from '../audit';
   controllers: [WhatsappWebhookController, WhatsappController],
   providers: [
     WhatsappService, CustomerContextService, CustomerAgentService, PendingBookingService, AgentRuntimeService,
-    VoucherNotifyService, VoucherRedeemNotifyService, PaymentNotifyService, WaWhitelistService, DatabasePoolProvider,
+    VoucherNotifyService, VoucherRedeemNotifyService, PaymentNotifyService, WaWhitelistService, KnowledgeDocsService, DatabasePoolProvider,
   ],
   // PaymentNotifyService is exported now that the receipt message is sent on the
   // cashier's command rather than by an event subscription (AIRIN-168).

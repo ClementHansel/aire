@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { MiniToggle } from './MiniToggle';
+import KnowledgeDocuments from './KnowledgeDocuments';
 
 // ─────────────────────────────────────────────────────────────── Types ──────
 interface ItemRow { id: string; name: string; customerVisible: boolean }
@@ -63,21 +65,6 @@ const CATEGORY_META: CategoryMeta[] = [
 ];
 
 function clone<T>(v: T): T { return JSON.parse(JSON.stringify(v)); }
-
-// ───────────────────────────────────────────────────────────── Toggle ───────
-function MiniToggle({ checked, onChange, disabled, big }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; big?: boolean }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      aria-pressed={checked}
-      className={`relative shrink-0 ${big ? 'w-12 h-7' : 'w-9 h-5'} rounded-full transition-colors ${checked ? 'bg-primary-500' : 'bg-gray-300'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-    >
-      <span className={`absolute top-0.5 left-0.5 ${big ? 'w-6 h-6' : 'w-4 h-4'} bg-white rounded-full transition-transform ${checked ? (big ? 'translate-x-5' : 'translate-x-4') : ''}`} />
-    </button>
-  );
-}
 
 // ───────────────────────────────────────────────────────── Item row ─────────
 function KnowledgeItemRow({
@@ -382,7 +369,10 @@ export default function KnowledgePage() {
           </div>
         </div>
 
-        {/* Section 2 + 3 — sharing categories with per-item visibility */}
+        {/* Section 2 — uploaded knowledge-base documents (files + notes) */}
+        <KnowledgeDocuments />
+
+        {/* Section 3 + 4 — sharing categories with per-item visibility */}
         <div className="card">
           <h2 className="section-title">{t('dash.knowledge.sectionSharingTitle', 'Data you allow Irene to share with customers')}</h2>
           <p className="section-description mb-3">

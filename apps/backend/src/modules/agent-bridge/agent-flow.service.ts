@@ -2,6 +2,7 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { Pool } from 'pg';
 import { randomBytes } from 'crypto';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 
 export type FlowKind = 'whatsapp' | 'automation';
 export type RoutingMode = 'builtin' | 'n8n';
@@ -74,7 +75,10 @@ const rowToFlow = (r: Record<string, any>): AgentFlow => ({
  */
 @Injectable()
 export class AgentFlowService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly knowledgeDocs: KnowledgeDocsService,
+  ) {}
 
   // ── Catalog (platform super-admin) ─────────────────────────────────────────
   async listFlows(kind?: FlowKind): Promise<AgentFlow[]> {
@@ -194,7 +198,9 @@ export class AgentFlowService {
     return {
       agents: agents.rows.map((a: any) => ({ name: a.name, role: a.role, prompt: a.prompt ?? null })),
       basePrompt: c.base_prompt ?? null,
-      productKnowledge: c.product_knowledge ?? null,
+      // Same knowledge the built-in runtime reads: free text + uploaded documents,
+      // so an n8n flow and Irene never answer from different facts.
+      productKnowledge: await this.knowledgeDocs.composeKnowledge(tenantId, c.product_knowledge ?? null),
       skills: c.skills ?? null,
       escalationNumber: c.escalation_number ?? null,
     };

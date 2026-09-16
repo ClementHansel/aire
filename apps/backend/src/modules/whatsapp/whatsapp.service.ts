@@ -12,6 +12,7 @@ import { formatForWhatsApp } from './whatsapp-format';
 import { looksLikeReasoning } from '../../common/looks-like-reasoning';
 import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
 import { WaWhitelistService } from './wa-whitelist.service';
+import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 // Token + type only — importing AgentChatService itself would close a runtime
 // import cycle (see agent/staff-chat.port.ts for the full explanation).
 import { STAFF_CHAT, type StaffChatPort } from '../agent/staff-chat.port';
@@ -115,6 +116,10 @@ export class WhatsappService implements OnModuleInit {
     // without them, every inbound message simply takes the customer path.
     @Optional() private readonly whitelist?: WaWhitelistService,
     @Optional() @Inject(STAFF_CHAT) private readonly staffChat?: StaffChatPort,
+    // Uploaded knowledge-base documents (migration 099). Optional for the same
+    // reason as above; without it the assistant just reads the free-text
+    // product knowledge, exactly as it did before documents existed.
+    @Optional() private readonly knowledgeDocs?: KnowledgeDocsService,
   ) {}
 
   onModuleInit(): void {
@@ -770,7 +775,8 @@ export class WhatsappService implements OnModuleInit {
       outletId,
       text: inboundText,
       basePrompt: cfg.base_prompt,
-      knowledge: cfg.product_knowledge,
+      // Free-text product knowledge + every enabled uploaded document.
+      knowledge: (await this.knowledgeDocs?.composeKnowledge(tenantId, cfg.product_knowledge)) ?? cfg.product_knowledge,
       skills: cfg.skills,
       history,
     });
