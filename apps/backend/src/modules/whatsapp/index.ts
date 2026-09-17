@@ -3,6 +3,7 @@ import { WhatsappController, WhatsappWebhookController } from './whatsapp.contro
 import { WhatsappService } from './whatsapp.service';
 import { CustomerContextService } from './customer-context.service';
 import { CustomerAgentService } from './customer-agent.service';
+import { LabScopeService } from './lab-scope.service';
 import { PendingBookingService } from './pending-booking.service';
 import { AgentRuntimeService } from './agent-runtime.service';
 import { VoucherNotifyService } from './voucher-notify.service';
@@ -35,7 +36,7 @@ import { AuditModule } from '../audit';
   controllers: [WhatsappWebhookController, WhatsappController],
   providers: [
     WhatsappService, CustomerContextService, CustomerAgentService, PendingBookingService, AgentRuntimeService,
-    VoucherNotifyService, VoucherRedeemNotifyService, PaymentNotifyService, WaWhitelistService, KnowledgeDocsService, DatabasePoolProvider,
+    VoucherNotifyService, VoucherRedeemNotifyService, PaymentNotifyService, WaWhitelistService, KnowledgeDocsService, LabScopeService, DatabasePoolProvider,
   ],
   // PaymentNotifyService is exported now that the receipt message is sent on the
   // cashier's command rather than by an event subscription (AIRIN-168).
@@ -47,4 +48,5 @@ export { WhatsappService } from './whatsapp.service';
 export { PaymentNotifyService } from './payment-notify.service';
 export { CustomerContextService } from './customer-context.service';
 export { CustomerAgentService } from './customer-agent.service';
+export { LabScopeService } from './lab-scope.service';
 export { WaWhitelistService } from './wa-whitelist.service';

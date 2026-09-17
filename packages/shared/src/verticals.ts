@@ -141,11 +141,22 @@ export const VERTICAL_BUSINESS_DESCRIPTION: Record<TenantVertical, string> = {
  * thing a customer is buying. The car-wash copy said "cuci mobil" everywhere,
  * which is nonsense for a lab or a laundry.
  */
-export const VERTICAL_COPY: Record<TenantVertical, { serviceWord: string; emoji: string }> = {
-  carwash: { serviceWord: 'cuci mobil', emoji: '\u{1F697}' },
-  services: { serviceWord: 'layanan', emoji: '\u{1F9EA}' },
-  fnb: { serviceWord: 'pesanan', emoji: '\u{1F37D}' },
-  laundry: { serviceWord: 'laundry', emoji: '\u{1F9FA}' },
+export const VERTICAL_COPY: Record<
+  TenantVertical,
+  {
+    serviceWord: string;
+    emoji: string;
+    /** What this kind of business can actually talk about, listed the way the
+     *  assistant should offer it back when it declines an off-topic question.
+     *  A car wash's "membership, voucher, booking" is nonsense to a calibration
+     *  lab, and the model copies these lists into real replies verbatim. */
+    topics: string;
+  }
+> = {
+  carwash: { serviceWord: 'cuci mobil', emoji: '\u{1F697}', topics: 'harga, lokasi, membership, voucher, atau booking' },
+  services: { serviceWord: 'layanan', emoji: '\u{1F9EA}', topics: 'layanan yang tersedia, harga, lokasi, atau jadwal' },
+  fnb: { serviceWord: 'pesanan', emoji: '\u{1F37D}', topics: 'menu, harga, lokasi, atau pesanan' },
+  laundry: { serviceWord: 'laundry', emoji: '\u{1F9FA}', topics: 'layanan, harga, lokasi, atau status cucian' },
 };
 
 /** Modules that make no sense for a vertical and are forced off regardless of

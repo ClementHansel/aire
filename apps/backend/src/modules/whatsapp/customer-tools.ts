@@ -21,6 +21,7 @@ export type CustomerToolName =
   | 'get_promotions'
   | 'get_branch_info'
   | 'get_my_vouchers'
+  | 'check_scope'
   | 'check_availability'
   | 'create_booking'
   | 'escalate_to_human';
@@ -63,6 +64,18 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
     params: [],
     readOnly: true,
   },
+  check_scope: {
+    name: 'check_scope',
+    description:
+      'Cek apakah sebuah alat BISA dikalibrasi, berdasarkan ruang lingkup akreditasi KAN yang terdaftar. ' +
+      'Parameter: instrument (nama alat dalam kata-kata pelanggan, wajib), value (angka rentang yang dibutuhkan, opsional), unit (satuan dari value, opsional, mis. "kg", "bar", "C", "V"). ' +
+      'SELALU sertakan value + unit kalau pelanggan menyebut angka — rentang ukur yang menentukan bisa/tidaknya, bukan nama alatnya. ' +
+      'Hasil: inScope true/false, daftar lab beserta rentang, ketidakpastian, dan nomor akreditasi. ' +
+      'Kalau inScope false tapi ada "nearest", artinya alatnya kami layani TAPI di rentang lain — sebutkan rentang yang kami cakup. ' +
+      'Jangan pernah menjawab pertanyaan "bisa kalibrasi X?" tanpa memanggil tool ini.',
+    params: ['instrument', 'value', 'unit'],
+    readOnly: true,
+  },
   check_availability: {
     name: 'check_availability',
     description:
@@ -90,7 +103,7 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
  * how a persona becomes "a set of capabilities the brain runs with" rather than
  * just a prompt. A conversation runs with exactly one persona's toolset.
  */
-const READ_ALL: CustomerToolName[] = ['get_my_summary', 'get_service_prices', 'get_membership_plans', 'get_promotions', 'get_branch_info', 'get_my_vouchers', 'check_availability'];
+const READ_ALL: CustomerToolName[] = ['get_my_summary', 'get_service_prices', 'get_membership_plans', 'get_promotions', 'get_branch_info', 'get_my_vouchers', 'check_scope', 'check_availability'];
 
 export const PERSONA_TOOLS: Record<AgentRole, CustomerToolName[]> = {
   // Full front-desk assistant: everything a customer-safe agent can do.
