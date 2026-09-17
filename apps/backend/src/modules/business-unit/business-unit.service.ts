@@ -138,6 +138,42 @@ export class BusinessUnitService {
     }
   }
 
+  /**
+   * The unit a write should fall back to when the caller did not name one.
+   *
+   * Every such site used to hardcode `?? 'AIRE'` — the founding tenant's first
+   * brand. For any other tenant that wrote a unit code they do not own, which
+   * either fails `assertValid` or leaves an order filed under a phantom unit
+   * that no report column matches. Resolves to the tenant's own first active
+   * unit instead (the same one the POS opens on).
+   *
+   * Returns null only when the tenant has no units at all, in which case the
+   * caller should leave the column null rather than invent a code.
+   */
+  async defaultCode(tenantId: string): Promise<string | null> {
+    const res = await this.pool.query<{ code: string }>(
+      `SELECT code FROM business_units
+        WHERE tenant_id = $1 AND is_active = true
+        ORDER BY sort_order, code LIMIT 1`,
+      [tenantId],
+    );
+    return res.rows[0]?.code ?? null;
+  }
+
+  /** `code` when the tenant owns it, otherwise their default unit. Never throws —
+   *  for write paths that want a usable value rather than a validation error. */
+  async resolveCode(tenantId: string, code?: string | null): Promise<string | null> {
+    const wanted = (code ?? '').trim().toUpperCase();
+    if (wanted) {
+      const owned = await this.pool.query(
+        'SELECT 1 FROM business_units WHERE tenant_id = $1 AND code = $2',
+        [tenantId, wanted],
+      );
+      if ((owned.rowCount ?? 0) > 0) return wanted;
+    }
+    return this.defaultCode(tenantId);
+  }
+
   private normalizeCode(raw: string): string {
     const code = (raw ?? '').trim().toUpperCase();
     if (!code) throw new BadRequestException('code is required');

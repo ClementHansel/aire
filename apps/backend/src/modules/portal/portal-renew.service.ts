@@ -7,6 +7,7 @@ import { MembershipPlanService } from '../membership/membership-plan.service';
 import { MembershipSellService } from '../membership/membership-sell.service';
 import { PosCheckoutService, resolveServiceBusinessUnit } from '../order/pos-checkout.service';
 import { PaymentService } from '../payment/payment.service';
+import { TenantFeaturesService } from '../../common/tenant-features';
 
 /**
  * Customer-initiated membership renewal (online QRIS). Reuses the staff renewal
@@ -23,6 +24,7 @@ export class PortalRenewService {
     private readonly sell: MembershipSellService,
     private readonly checkout: PosCheckoutService,
     private readonly payment: PaymentService,
+    private readonly features: TenantFeaturesService,
   ) {}
 
   listPlans(tenantId: string) {
@@ -149,7 +151,10 @@ export class PortalRenewService {
     if (!row.order_status || !['paid', 'confirmed', 'completed'].includes(row.order_status)) {
       throw new BadRequestException('Payment is not completed yet.');
     }
-    if (!Array.isArray(plates) || plates.length === 0) {
+    // Only a vehicle business has a plate to ask for. For any other vertical the
+    // membership is held by the customer, so an empty list is the normal case.
+    const plateList = Array.isArray(plates) ? plates : [];
+    if (plateList.length === 0 && (await this.features.can(tenantId, 'vehicles'))) {
       throw new BadRequestException('At least one vehicle plate is required to activate the membership.');
     }
     // Payment now activates the membership on its own, so by the time the
@@ -158,7 +163,7 @@ export class PortalRenewService {
     // so run the registration either way. activateMembership is idempotent: it
     // adds only new plates and leaves an already-started term alone.
     const alreadyActive = row.status === 'active';
-    await this.sell.activateMembership(membershipId, { plates });
+    await this.sell.activateMembership(membershipId, { plates: plateList });
     return { alreadyActive };
   }
 

@@ -43,8 +43,19 @@ export type UpdateKnowledgeDocDto = CreateKnowledgeDocDto;
  * are concatenated in display order until this is reached, so an owner who
  * uploads their whole filing cabinet gets their top document in full rather
  * than a prompt that blows the model's context (and the per-message bill).
+ *
+ * Sized against the widest real tenant knowledge base we carry: a KAN ISO/IEC
+ * 17025 accreditation scope is ~10k characters of dense CMC table, and a lab
+ * wants its price list, turnaround times and FAQ alongside it. 20k left no room
+ * for the second document.
+ *
+ * Do not raise this to swallow a whole document set. The tool loop re-sends the
+ * system prompt on EVERY iteration (up to 5 per customer message) and nothing
+ * here is prompt-cached, so each character costs ~5x. Reference data that grows
+ * with the business — a partner-lab capability index, a parts catalogue —
+ * belongs behind a tool call, not in the prompt.
  */
-export const MAX_PROMPT_DOC_CHARS = 20_000;
+export const MAX_PROMPT_DOC_CHARS = 40_000;
 
 const MAX_TITLE_LEN = 200;
 

@@ -5,6 +5,7 @@ import { normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { WhatsappService } from '../whatsapp';
 import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
+import { BusinessUnitService } from '../business-unit';
 
 const APP_URL = process.env.APP_PUBLIC_URL || 'https://app.useairin.id';
 
@@ -44,6 +45,7 @@ export class PortalBookingService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly whatsapp: WhatsappService,
     private readonly renderer: NotificationRendererService,
+    private readonly businessUnits: BusinessUnitService,
   ) {}
 
   async list(tenantId: string, customerId: string) {
@@ -144,11 +146,16 @@ export class PortalBookingService {
       `SELECT COALESCE(MAX(position),0)+1 AS next FROM vehicle_queue WHERE outlet_id = $1 AND status IN ('waiting','serving')`,
       [b.outlet_id],
     );
+    // The tenant's own first unit, not a literal 'AIRE' — that is the founding
+    // tenant's brand, and for anyone else it files the queue row under a unit
+    // code they do not own (so it matches no report column and no POS tab).
+    const bookingUnit = await this.businessUnits.defaultCode(b.tenant_id);
     const q = await this.pool.query<{ id: string }>(
       `INSERT INTO vehicle_queue (tenant_id, outlet_id, plate, customer_name, customer_phone, business_unit, note, position)
-       VALUES ($1,$2,$3,$4,$5,'AIRE',$6,$7) RETURNING id`,
+       VALUES ($1,$2,$3,$4,$5,$8,$6,$7) RETURNING id`,
       [b.tenant_id, b.outlet_id, b.license_plate ?? null,
-        b.customer_name ?? null, b.customer_phone ?? null, b.service_name ? `Booking: ${b.service_name}` : 'Booking', pos.rows[0]?.next ?? 1],
+        b.customer_name ?? null, b.customer_phone ?? null, b.service_name ? `Booking: ${b.service_name}` : 'Booking', pos.rows[0]?.next ?? 1,
+        bookingUnit],
     );
     await this.pool.query(
       `UPDATE bookings SET status = 'confirmed', queue_entry_id = $2, updated_at = NOW() WHERE id = $1`,

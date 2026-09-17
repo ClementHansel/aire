@@ -3,7 +3,7 @@ import {
 } from '@nestjs/common';
 import { Role, JWTPayload } from '@aire/shared';
 import { Roles, CurrentUser } from '../../common/decorators';
-import { RolesGuard, RlsContextGuard } from '../../common/guards';
+import { RolesGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { NotificationRendererService, fillForKey, sampleVars, type TemplateView } from './notification-renderer.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -25,7 +25,7 @@ const MAX_BODY_CHARS = 3000;
  * disable, reset and test-send each message.
  */
 @Controller('api/notification-templates')
-@UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.TenantOwner)
 export class NotificationTemplateController {
   constructor(

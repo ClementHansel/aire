@@ -16,3 +16,4 @@ export class AgentConfigModule {}
 export { AgentConfigService } from './agent-config.service';
 export { KnowledgeDocsService } from './knowledge-docs.service';
 export type { KnowledgeDocument } from './knowledge-docs.service';
+export { seedDefaultAgentConfig } from './agent-config.defaults';

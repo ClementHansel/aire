@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ScopeModule } from './common/scope/scope.module';
+import { TenantFeaturesModule } from './common/tenant-features';
 import { PermissionsModule } from './common/permissions/permissions.module';
 import { AuthModule } from './modules/auth';
 import { AuditModule } from './modules/audit';
@@ -76,6 +77,8 @@ import { LprModule } from './modules/lpr';
     }),
     StorageModule,
     ScopeModule,
+    // Global: resolves each tenant's vertical + capabilities (vehicles/bays/LPR).
+    TenantFeaturesModule,
     PermissionsModule,
     EventsModule,
     JobMonitorModule,

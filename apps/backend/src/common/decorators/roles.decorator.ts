@@ -9,7 +9,7 @@ export const ROLES_KEY = 'roles';
  *
  * @example
  * @Roles(Role.TenantOwner)
- * @UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+ * @UseGuards(JwtAuthGuard, RolesGuard)
  * async getOutlets() { ... }
  */
 export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);

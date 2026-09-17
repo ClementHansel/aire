@@ -72,3 +72,7 @@ vps_reference.md
 tmp_*
 *.tmp
 scratch/
+
+# Database dumps written by scripts/backup-db.sh — real customer data, never commit.
+backups/
+*.sql.gz

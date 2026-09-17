@@ -116,7 +116,10 @@ describe('ReportService', () => {
       expect(result.uniqueMembers).toBe(0);
       expect(result.newMembers).toBe(0);
       expect(result.byPaymentMethod).toEqual({});
-      expect(result.byBusinessUnit).toEqual({ AIRE: { revenue: 0, count: 0 }, LEAD: { revenue: 0, count: 0 } });
+      // Empty, not a hardcoded AIRE/LEAD pair: the breakdown zero-fills against
+      // the TENANT'S business units, and this mock returns no rows at all, so
+      // there is nothing to zero-fill. A tenant with units gets one entry each.
+      expect(result.byBusinessUnit).toEqual({});
       expect(result.byService).toEqual([]);
     });
 
@@ -216,9 +219,14 @@ describe('ReportService', () => {
         dateTo: '2024-01-31',
       });
 
-      // Each query should have 3 params (dateFrom, dateTo, tenantId)
+      // No outlet filter means no outlet param on any query. The business-unit
+      // breakdown carries one extra param — the selected unit, passed as NULL
+      // here — because it now zero-fills against the tenant's OWN unit list in
+      // the same statement instead of a hardcoded AIRE/LEAD pair.
       for (const call of mockPool.query.mock.calls) {
-        expect(call[1]).toHaveLength(3);
+        const sql = String(call[0]);
+        expect(call[1]).toHaveLength(sql.includes('FULL OUTER JOIN') ? 4 : 3);
+        expect(call[1]).not.toContainEqual(expect.arrayContaining(['outlet-123']));
       }
     });
   });

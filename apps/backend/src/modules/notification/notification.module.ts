@@ -15,9 +15,9 @@ import { WhatsappModule } from '../whatsapp';
   // export to without a cycle.
   imports: [SettingsModule, forwardRef(() => WhatsappModule)],
   controllers: [NotificationTemplateController],
-  // DatabasePoolProvider: the controller is guarded by RlsContextGuard, which is
+  // DatabasePoolProvider: the controller's services resolve the pool, so without
   // instantiated in THIS module's injector and needs DATABASE_POOL there. Without
-  // it Nest fails to boot ("can't resolve dependencies of the RlsContextGuard").
+  // it Nest fails to boot ("can't resolve dependencies").
   providers: [NotificationService, DatabasePoolProvider],
   exports: [NotificationService],
 })

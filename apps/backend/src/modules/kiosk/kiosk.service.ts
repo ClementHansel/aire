@@ -33,8 +33,22 @@ export interface MenuItem {
 }
 
 /** Public eMenu payload. */
+/** A tenant's own business unit, so public surfaces can label a section with the
+ *  tenant's wording instead of guessing. */
+export interface PublicMenuUnit {
+  code: string;
+  name: string;
+  color: string;
+}
+
 export interface PublicMenu {
   tenantName: string;
+  /** The tenant's active business units, in their display order. Public surfaces
+   *  (eMenu, customer portal) have no authenticated /business-units to call, so
+   *  they used to hardcode 'AIRE · Car Wash' / 'LEAD · Detailing' as the section
+   *  headings — the founding tenant's brands shown to every other tenant's
+   *  customers. */
+  units: PublicMenuUnit[];
   /** Wash/detail/add-on services (everything except retail products). */
   services: MenuItem[];
   /** Retail products (category='product') — sold from their own kiosk tab. */
@@ -89,6 +103,13 @@ export class KioskService {
       [tenantId],
     );
 
+    const unitRows = await this.pool.query<{ code: string; name: string; color: string }>(
+      `SELECT code, name, color FROM business_units
+        WHERE tenant_id = $1 AND is_active = true
+        ORDER BY sort_order, code`,
+      [tenantId],
+    );
+
     const outOfStock = await this.getOutOfStockServiceIds(tenantId);
 
     const items: MenuItem[] = services.rows.map((r: any) => ({
@@ -102,7 +123,10 @@ export class KioskService {
     }));
 
     return {
-      tenantName: tenant.rows[0]?.name ?? 'AIRE',
+      // The tenant's own name; '' rather than a hardcoded 'AIRE' when a caller
+      // passes an unknown tenantId, so no other tenant's brand can be rendered.
+      tenantName: tenant.rows[0]?.name ?? '',
+      units: unitRows.rows.map((u) => ({ code: u.code, name: u.name, color: u.color })),
       // Split so the kiosk can sell products from a dedicated tab, like the POS.
       services: items.filter((i) => i.category !== 'product'),
       products: items.filter((i) => i.category === 'product'),

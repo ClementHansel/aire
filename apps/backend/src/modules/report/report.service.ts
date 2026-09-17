@@ -617,8 +617,13 @@ export class ReportService {
   }
 
   /**
-   * Revenue + order count split by business unit (AIRE car wash vs LEAD detailing).
-   * Always returns both units (zero-filled) so the dashboard can render both P&L views.
+   * Revenue + order count split by business unit.
+   *
+   * Zero-fills every unit THE TENANT OWNS so the dashboard can render a complete
+   * split even for a period in which one unit sold nothing. It used to zero-fill
+   * a hardcoded AIRE/LEAD pair — the founding tenant's two brands — which meant
+   * any other tenant's report showed two empty columns for units they do not own
+   * while their real units appeared only if they happened to have revenue.
    */
   private async getBusinessUnitBreakdown(
     tenantId: string,
@@ -628,33 +633,54 @@ export class ReportService {
     businessUnit?: string,
   ): Promise<Record<string, PaymentMethodBreakdown>> {
     const queryParams: unknown[] = [dateFrom, dateTo];
-    queryParams.push(tenantId); let filter = ` AND tenant_id = $${queryParams.length}`;
+    queryParams.push(tenantId);
+    const tenantParam = queryParams.length;
+    let filter = ` AND tenant_id = $${tenantParam}`;
     if (outletIds != null) { filter += ` AND outlet_id = ANY($${queryParams.length + 1}::uuid[])`; queryParams.push(outletIds); }
     // This breakdown was the only one of the four in getSummary() that ignored
     // the business-unit filter, so selecting a unit narrowed every KPI while the
     // BU split card — the most prominent BU element on the page — kept showing
     // both units at full revenue. That read as "the filter does nothing"
-    // (AIRIN-130). The unselected unit is still returned zero-filled below, so
-    // the caller decides whether to render it.
+    // (AIRIN-130). The unselected unit is still returned zero-filled by the join
+    // below, so the caller decides whether to render it.
     if (businessUnit) { filter += ` AND business_unit = $${queryParams.length + 1}`; queryParams.push(businessUnit); }
 
+    // One query, not two: the aggregate is FULL OUTER JOINed onto the tenant's
+    // own unit list, so units with no sales in the period come back zero-filled
+    // AND an order still carrying a retired/unknown unit code is not silently
+    // dropped from the split (which an inner join from business_units would do,
+    // hiding exactly the mis-filed revenue an owner needs to see).
+    const unitParam = queryParams.length + 1;
+    queryParams.push(businessUnit ?? null);
+
     const result = await this.pool.query<{ business_unit: string; revenue: string; count: string }>(
-      `SELECT business_unit,
-              COALESCE(SUM(total), 0) AS revenue,
-              COUNT(*)::int AS count
-       FROM orders
-       WHERE created_at >= $1::timestamptz
-         AND created_at < ($2::date + INTERVAL '1 day')
-         AND status IN ('paid', 'confirmed', 'completed')
-         ${filter}
-       GROUP BY business_unit`,
+      `WITH agg AS (
+         SELECT business_unit,
+                COALESCE(SUM(total), 0) AS revenue,
+                COUNT(*)::int AS count
+           FROM orders
+          WHERE created_at >= $1::timestamptz
+            AND created_at < ($2::date + INTERVAL '1 day')
+            AND status IN ('paid', 'confirmed', 'completed')
+            ${filter}
+          GROUP BY business_unit
+       ),
+       own AS (
+         SELECT code
+           FROM business_units
+          WHERE tenant_id = $${tenantParam}
+            AND is_active = true
+            AND ($${unitParam}::text IS NULL OR code = $${unitParam})
+       )
+       SELECT COALESCE(a.business_unit, o.code) AS business_unit,
+              COALESCE(a.revenue, 0) AS revenue,
+              COALESCE(a.count, 0) AS count
+         FROM agg a
+         FULL OUTER JOIN own o ON o.code = a.business_unit`,
       queryParams,
     );
 
-    const breakdown: Record<string, PaymentMethodBreakdown> = {
-      AIRE: { revenue: 0, count: 0 },
-      LEAD: { revenue: 0, count: 0 },
-    };
+    const breakdown: Record<string, PaymentMethodBreakdown> = {};
     for (const row of result.rows) {
       breakdown[row.business_unit] = {
         revenue: parseFloat(row.revenue),

@@ -38,6 +38,7 @@ interface KnowledgeItems {
 }
 
 interface KnowledgeResponse {
+  basePrompt: string | null;
   productKnowledge: string | null;
   skills: string | null;
   categories: Categories;
@@ -262,6 +263,7 @@ export default function KnowledgePage() {
     if (!data || !original) return null;
     const payload: Record<string, unknown> = {};
 
+    if (data.basePrompt !== original.basePrompt) payload.basePrompt = data.basePrompt;
     if (data.productKnowledge !== original.productKnowledge) payload.productKnowledge = data.productKnowledge;
     if (data.skills !== original.skills) payload.skills = data.skills;
 
@@ -331,7 +333,7 @@ export default function KnowledgePage() {
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">{t('dash.knowledge.title', 'AI Knowledge')}</h1>
-          <p className="mt-1 text-sm text-text-secondary">{t('dash.knowledge.subtitle', 'Control what Irene (your WhatsApp AI) knows and may share with customers.')}</p>
+          <p className="mt-1 text-sm text-text-secondary">{t('dash.knowledge.subtitle', 'Control how your WhatsApp AI behaves, what it knows, and what it may share with customers.')}</p>
         </div>
         <button className="btn-primary" onClick={save} disabled={saving}>
           {saving ? t('dash.knowledge.saving', 'Saving…') : t('dash.knowledge.saveChanges', 'Save changes')}
@@ -342,11 +344,29 @@ export default function KnowledgePage() {
       {saved && <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700 mb-4">{t('dash.knowledge.savedMsg', 'Saved.')}</div>}
 
       <div className="space-y-5 max-w-3xl">
+        {/* Section 0 — the assistant's standing instructions. Previously writable
+            only by a platform super-admin, so a tenant could not change how their
+            own bot speaks. */}
+        <div className="card">
+          <h2 className="section-title">{t('dash.knowledge.sectionInstructionsTitle', 'Assistant instructions')}</h2>
+          <p className="section-description mb-2">
+            {t('dash.knowledge.instructionsHelp', 'How your assistant should behave — its tone, the language it replies in, and what it must never do. Facts belong in Product knowledge below; this is about style and rules. Leave blank to use the platform default.')}
+          </p>
+          <textarea
+            className="input-field"
+            rows={8}
+            value={data.basePrompt ?? ''}
+            onChange={(e) => setData((d) => (d ? { ...d, basePrompt: e.target.value } : d))}
+            placeholder={t('dash.knowledge.instructionsPlaceholder', 'Reply warmly in Bahasa Indonesia, keep messages short, never invent prices…')}
+            data-testid="base-prompt"
+          />
+        </div>
+
         {/* Section 1 — free-text product knowledge & skills */}
         <div className="card">
           <h2 className="section-title">{t('dash.knowledge.sectionKnowledgeTitle', 'Product knowledge')}</h2>
           <p className="section-description mb-2">
-            {t('dash.knowledge.productKnowledgeHelp', 'Business info Irene may use to answer customers — e.g. branch address & contact, terms, FAQ.')}
+            {t('dash.knowledge.productKnowledgeHelp', 'Business info your assistant may use to answer customers — e.g. branch address & contact, terms, FAQ.')}
           </p>
           <textarea
             className="input-field"
@@ -374,9 +394,9 @@ export default function KnowledgePage() {
 
         {/* Section 3 + 4 — sharing categories with per-item visibility */}
         <div className="card">
-          <h2 className="section-title">{t('dash.knowledge.sectionSharingTitle', 'Data you allow Irene to share with customers')}</h2>
+          <h2 className="section-title">{t('dash.knowledge.sectionSharingTitle', 'Data you allow your assistant to share with customers')}</h2>
           <p className="section-description mb-3">
-            {t('dash.knowledge.sectionSharingHelp', "Turn a category off and Irene won't reveal that information to customers.")}
+            {t('dash.knowledge.sectionSharingHelp', "Turn a category off and your assistant won't reveal that information to customers.")}
           </p>
 
           <div className="space-y-3">

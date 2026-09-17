@@ -168,3 +168,67 @@ and rebuild the affected service(s):
 git reset --hard <previous-commit>
 ./scripts/deploy-vps.sh build backend    # + frontend if it changed
 ```
+
+---
+
+## 6. Backups — set this up before onboarding a second company
+
+One Postgres instance holds **every** tenant's orders, memberships and ledger.
+A lost volume is not one customer's outage, it is all of them at once.
+
+```bash
+# One-off dump (writes backups/airin-<stamp>.sql.gz, then verifies it)
+./scripts/backup-db.sh
+
+# What is on disk
+./scripts/backup-db.sh --list
+
+# Prove a specific dump is restorable (gzip integrity + pg_dump completion marker)
+./scripts/backup-db.sh --verify backups/airin-20260916-021500.sql.gz
+```
+
+Install the nightly job (02:15, 14-day retention):
+
+```bash
+(crontab -l 2>/dev/null; \
+ echo '15 2 * * * cd /home/ubuntu/aire && ./scripts/backup-db.sh >> /var/log/airin-backup.log 2>&1') \
+ | crontab -
+```
+
+The script writes to `*.partial` and only renames on success, so an interrupted
+run can never leave a file that *looks* like a usable backup. It also refuses to
+report success unless the dump ends with pg_dump's own completion marker — size
+alone is not evidence of a good backup.
+
+**Restore (destructive — this drops and recreates every object):**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop backend
+gunzip -c backups/airin-<stamp>.sql.gz \
+  | docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+      exec -T postgres psql -U aire -d aire
+docker compose -f docker-compose.yml -f docker-compose.prod.yml start backend
+```
+
+Copy dumps off the VPS periodically. A backup on the same disk as the database
+does not survive the failure it exists for.
+
+---
+
+## 7. Onboarding a new company (tenant)
+
+1. **Super-admin → Tenants → Create Tenant.** Set **Type of business**
+   (`vertical`) on the first step. This is effectively permanent: it decides the
+   starter business units and whether vehicle fields (plate, brand, model, bays,
+   LPR) exist for them at all. A car wash gets Wash/Detailing; a services, F&B or
+   laundry tenant gets no vehicle concepts anywhere in the UI.
+2. Provisioning seeds business units, payment methods and the chart of accounts
+   automatically. The vehicle catalog is seeded **only** for a vehicle vertical.
+3. The owner login created here is gated into the onboarding wizard on first
+   sign-in (legal entity → branch → services → staff → finance).
+4. Per-tenant WhatsApp/AI credentials are configured by the tenant themselves
+   under AI Agent, or by a super-admin via "view as".
+
+`ALLOW_SELF_SIGNUP` must stay `false` in production — `POST /api/auth/register`
+would otherwise let anyone create an active tenant, bypassing this flow, the
+vertical choice, and billing.

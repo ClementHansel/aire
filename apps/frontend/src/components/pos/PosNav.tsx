@@ -17,15 +17,18 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { getUser, clearSession, refreshCachedUser } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
+import { useTenantCapabilities } from '@/lib/useModules';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { AirinLogo } from '@/components/shared/AirinLogo';
 
 export type PosTab = 'new-order' | 'orders' | 'queue' | 'summary' | 'shift';
 
-const TABS: { id: PosTab; label: string; key: string }[] = [
+const TABS: { id: PosTab; label: string; key: string; capability?: 'bays' }[] = [
   { id: 'new-order', label: 'New Order', key: 'pos.newOrder' },
   { id: 'orders', label: 'Orders', key: 'pos.orders' },
-  { id: 'queue', label: 'Queue', key: 'pos.queue' },
+  // The queue is a board of cars waiting for a bay. A business with neither has
+  // nothing to show there, so the tab is hidden rather than opening empty.
+  { id: 'queue', label: 'Queue', key: 'pos.queue', capability: 'bays' },
   { id: 'summary', label: 'Summary', key: 'pos.summary' },
   { id: 'shift', label: 'Shift', key: 'pos.shift' },
 ];
@@ -77,6 +80,10 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
 
   const activeTab = TABS.find((tab) => tab.id === active);
   const activeLabel = activeTab ? t(activeTab.key, activeTab.label) : 'POS';
+  // Capabilities default to the car-wash superset while loading, so the Queue
+  // tab never flickers out from under a cashier who is mid-shift.
+  const { capabilities } = useTenantCapabilities();
+  const visibleTabs = TABS.filter((tab) => !tab.capability || capabilities[tab.capability]);
   // Prefer an explicit subtitle from the page; otherwise show the resolved
   // branch name once it loads.
   const resolvedSubtitle = subtitle ?? (agentName ? `${t('pos.agent', 'Branch')}: ${agentName}` : undefined);
@@ -97,7 +104,7 @@ export function PosNav({ agent, active, title, subtitle }: PosNavProps) {
         {/* No "Hub" escape here — a registered POS terminal stays in the POS
             shell; leaving happens by signing out (which shows the cashier gate). */}
         <nav className="hidden sm:flex gap-1 text-sm" data-testid="pos-nav">
-          {TABS.map((tab) =>
+          {visibleTabs.map((tab) =>
             tab.id === active ? (
               <span key={tab.id} className="btn-ghost py-1.5 px-3 bg-surface-sunken" data-testid={`pos-nav-${tab.id}-active`}>
                 {t(tab.key, tab.label)}

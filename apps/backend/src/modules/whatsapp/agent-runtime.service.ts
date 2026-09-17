@@ -5,6 +5,8 @@ import { SettingsService } from '../settings/settings.service';
 import { ChatMessage } from '../agent/llm-router.service';
 import type { AgentRole } from '../agent-registry/agent-registry.service';
 import { CustomerAgentService } from './customer-agent.service';
+import { TenantFeaturesService } from '../../common/tenant-features';
+import { DEFAULT_VERTICAL, VERTICAL_COPY, type TenantVertical } from '@aire/shared';
 import {
   CustomerContextService, ResolvedCustomer, CustomerScopedContext, PublicInfo,
 } from './customer-context.service';
@@ -44,8 +46,24 @@ export class AgentRuntimeService {
     @Inject(DATABASE_POOL) private readonly pool: Pool,
     private readonly context: CustomerContextService,
     private readonly settings: SettingsService,
+    private readonly features: TenantFeaturesService,
     @Optional() private readonly customerAgent?: CustomerAgentService,
   ) {}
+
+  /**
+   * Who this bot is speaking FOR. Resolved here rather than passed in by every
+   * caller, so no inbound path can forget it and silently fall back to the
+   * founding tenant's identity.
+   */
+  private async businessIdentity(tenantId: string): Promise<{ name: string | null; vertical: TenantVertical }> {
+    const [row, profile] = await Promise.all([
+      this.pool
+        .query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [tenantId])
+        .catch(() => ({ rows: [] as { name: string }[] })),
+      this.features.getProfile(tenantId),
+    ]);
+    return { name: row.rows[0]?.name ?? null, vertical: profile.vertical };
+  }
 
   detectIntent(text: string): Intent {
     const t = text.toLowerCase();
@@ -115,6 +133,7 @@ export class AgentRuntimeService {
     // Explicit human request always escalates, regardless of mode.
     if (intent === 'human') return { text: '', escalate: true, mode: 'rigid', agentName };
 
+    const business = await this.businessIdentity(params.tenantId);
     const customer = await this.context.resolveCustomer(params.tenantId, params.resolvePhone ?? params.fromPhone);
     const [ctx, pub] = await Promise.all([
       customer ? this.context.getCustomerContext(params.tenantId, customer) : Promise.resolve(null),
@@ -138,6 +157,7 @@ export class AgentRuntimeService {
         persona,
         customer,
         pub,
+        business,
       });
       if (fluid) {
         const proposedBooking = fluid.toolsUsed.some((t) => t.tool === 'create_booking' && t.ok);
@@ -146,7 +166,11 @@ export class AgentRuntimeService {
       this.logger.warn(`Fluid reply failed for tenant ${params.tenantId}; falling back to rigid`);
     }
 
-    const rigid = this.rigidReply(intent, customer, ctx, pub, params.basePrompt, params.displayName ?? null);
+    const rigid = this.rigidReply(intent, customer, ctx, pub, params.basePrompt, params.displayName ?? null, {
+      agentName: agent?.name ?? null,
+      businessName: business.name,
+      vertical: business.vertical,
+    });
     return { text: rigid.text, escalate: rigid.escalate, mode: 'rigid', agentName };
   }
 
@@ -158,61 +182,81 @@ export class AgentRuntimeService {
     pub: PublicInfo,
     basePrompt: string | null,
     displayName: string | null = null,
+    brand: { agentName: string | null; businessName: string | null; vertical: TenantVertical } = {
+      agentName: null, businessName: null, vertical: DEFAULT_VERTICAL,
+    },
   ): { text: string; escalate: boolean } {
     const who = customer?.name ?? displayName;
     const hi = who ? `Halo kak ${who}!` : 'Halo kak!';
 
     // These templates only run when the LLM is off or errored, so they are the
     // customer's whole impression of the bot in that window. They are written in
-    // Irene's warm casual voice — "kakak", not the formal "Anda", and never a
-    // bare fact with no friendly wrapper (Samuel 2026-08-03: "judes banget").
+    // a warm casual voice — "kakak", not the formal "Anda", and never a bare fact
+    // with no friendly wrapper (Samuel 2026-08-03: "judes banget").
+    //
+    // Every name and every noun here is the TENANT'S. These used to be literals
+    // ("Aku Irene, CS-nya Aire", "booking cuci mobil", 🚗) which would have had a
+    // lab-services or laundry customer reading a car wash's script.
+    // A tenant who has not named an agent yet gets "kami" (we), NOT an invented
+    // persona: naming someone's bot for them is a branding decision, and the old
+    // literal fallback 'Assistant' reads as unfinished software to a customer.
+    const named = brand.agentName?.trim() ? brand.agentName.trim() : null;
+    const me = named ?? 'kami';
+    const of = brand.businessName ? `, CS-nya ${brand.businessName}` : '';
+    // Only introduce a name when there IS one; otherwise still say whose line
+    // this is, so the customer knows they reached the right company.
+    const intro = named
+      ? `Aku ${named}${of}. `
+      : brand.businessName ? `Ini ${brand.businessName}. ` : '';
+    const { serviceWord, emoji } = VERTICAL_COPY[brand.vertical];
 
     switch (intent) {
       case 'greeting':
-        return { text: `${hi} 😊 Aku Irene, CS-nya Aire. Ada yang bisa Irene bantu hari ini? Mau tanya harga, lokasi, membership, voucher, atau mau booking cuci mobil? 🚗✨`, escalate: false };
+        return { text: `${hi} 😊 ${intro}Ada yang bisa ${me} bantu hari ini? Mau tanya harga, lokasi, membership, voucher, atau mau booking ${serviceWord}? ${emoji}✨`, escalate: false };
 
       case 'status': {
-        if (ctx?.activeQueue) return { text: `${hi} 😊 Irene cek ya — pesanan ${ctx.activeQueue.orderNumber} kakak ${ctx.activeQueue.status === 'in_progress' ? 'lagi dikerjakan sekarang' : `masih mengantri di posisi ${ctx.activeQueue.position}`}. Ditunggu sebentar ya kak 🚗`, escalate: false };
-        if (ctx?.recentOrders.length) { const o = ctx.recentOrders[0]!; return { text: `${hi} 😊 Pesanan terakhir kakak ${o.orderNumber} statusnya "${o.status}" (${fmt(o.total)}). Ada yang mau Irene bantu cek lagi?`, escalate: false }; }
-        return { text: `${hi} 😊 Irene belum nemu pesanan aktif dari nomor ini nih. Kalau kakak baru saja transaksi, tunggu sebentar ya — biasanya cepat kok masuknya 🙏`, escalate: false };
+        if (ctx?.activeQueue) return { text: `${hi} 😊 ${me} cek ya — pesanan ${ctx.activeQueue.orderNumber} kakak ${ctx.activeQueue.status === 'in_progress' ? 'lagi dikerjakan sekarang' : `masih mengantri di posisi ${ctx.activeQueue.position}`}. Ditunggu sebentar ya kak ${emoji}`, escalate: false };
+        if (ctx?.recentOrders.length) { const o = ctx.recentOrders[0]!; return { text: `${hi} 😊 Pesanan terakhir kakak ${o.orderNumber} statusnya "${o.status}" (${fmt(o.total)}). Ada yang mau ${me} bantu cek lagi?`, escalate: false }; }
+        return { text: `${hi} 😊 ${me} belum nemu pesanan aktif dari nomor ini nih. Kalau kakak baru saja transaksi, tunggu sebentar ya — biasanya cepat kok masuknya 🙏`, escalate: false };
       }
 
       case 'membership': {
         if (ctx?.memberships.length) {
           const m = ctx.memberships[0]!;
-          return { text: `${hi} 😊 Membership kakak: ${m.plan} — status ${m.status}, berlaku sampai ${m.endDate}${m.usesLeft != null ? `, sisa ${m.usesLeft} cuci` : ''}. Ada lagi yang mau ditanyakan kak?`, escalate: false };
+          return { text: `${hi} 😊 Membership kakak: ${m.plan} — status ${m.status}, berlaku sampai ${m.endDate}${m.usesLeft != null ? `, sisa ${m.usesLeft}x pakai` : ''}. Ada lagi yang mau ditanyakan kak?`, escalate: false };
         }
         if (pub.plans.length) return { text: `${hi} 😊 Ini paket membership kami ya kak:\n${pub.plans.map((m) => `• ${m.name}: ${fmt(m.price)} (${m.durationMonths} bln)`).join('\n')}\n\nKalau kakak mau tahu detailnya, tinggal bilang aja ya 🚗`, escalate: false };
-        return { text: `${hi} 😊 Untuk saat ini belum ada paket membership yang aktif kak. Tapi Irene bisa bantu info harga cuci atau voucher — mau?`, escalate: false };
+        return { text: `${hi} 😊 Untuk saat ini belum ada paket membership yang aktif kak. Tapi ${me} bisa bantu info harga ${serviceWord} atau voucher — mau?`, escalate: false };
       }
 
       case 'price': {
         if (pub.services.length) {
           const top = pub.services.slice(0, 12).map((s) => `• [${s.unit}] ${s.name}: ${fmt(s.price)}`).join('\n');
-          return { text: `${hi} 😊 Ini sebagian layanan & harga kami ya kak:\n${top}\n\nKalau kakak mau harga layanan tertentu, sebut aja namanya — Irene bantu cek 🚗`, escalate: false };
+          return { text: `${hi} 😊 Ini sebagian layanan & harga kami ya kak:\n${top}\n\nKalau kakak mau harga layanan tertentu, sebut aja namanya — ${me} bantu cek ${emoji}`, escalate: false };
         }
-        return { text: `${hi} 😊 Daftar harganya lagi Irene siapkan nih kak. Boleh chat Irene lagi sebentar lagi ya 🙏`, escalate: false };
+        return { text: `${hi} 😊 Daftar harganya lagi ${me} siapkan nih kak. Boleh chat ${me} lagi sebentar lagi ya 🙏`, escalate: false };
       }
 
       case 'voucher': {
         if (ctx?.voucherPacks.length) return { text: `${hi} 😊 Kakak punya ${ctx.voucherPacks.length} paket voucher. Tinggal tunjukkan kode vouchernya ke kasir ya kak, nanti langsung dipotong 🎫`, escalate: false };
-        return { text: `${hi} 😊 Kakak belum punya voucher nih. Kami ada paket voucher cuci hemat lho — mau Irene ceritakan?`, escalate: false };
+        return { text: `${hi} 😊 Kakak belum punya voucher nih. Kami ada paket voucher hemat lho — mau ${me} ceritakan?`, escalate: false };
       }
 
       case 'booking': {
-        if (ctx?.bookings.length) { const b = ctx.bookings[0]!; return { text: `${hi} 😊 Booking kakak berikutnya: ${b.service ?? 'layanan'} pada ${b.scheduledAt} (${b.status}). Sampai ketemu di outlet ya kak 🚗`, escalate: false }; }
-        return { text: `${hi} 😊 Boleh banget kak! Kakak mau booking untuk tanggal & jam berapa, dan layanan apa? Nanti Irene bantu jadwalkan ya 🚗`, escalate: false };
+        if (ctx?.bookings.length) { const b = ctx.bookings[0]!; return { text: `${hi} 😊 Booking kakak berikutnya: ${b.service ?? 'layanan'} pada ${b.scheduledAt} (${b.status}). Sampai ketemu di outlet ya kak ${emoji}`, escalate: false }; }
+        return { text: `${hi} 😊 Boleh banget kak! Kakak mau booking untuk tanggal & jam berapa, dan layanan apa? Nanti ${me} bantu jadwalkan ya ${emoji}`, escalate: false };
       }
 
       case 'hours':
-        return { text: basePrompt?.trim() ? basePrompt.split('\n')[0]! : `${hi} 😊 Kami buka setiap hari kok kak. Boleh sebutkan area kakak? Nanti Irene kasih tahu jam & cabang terdekat 📍`, escalate: false };
+        return { text: basePrompt?.trim() ? basePrompt.split('\n')[0]! : `${hi} 😊 Kami buka setiap hari kok kak. Boleh sebutkan area kakak? Nanti ${me} kasih tahu jam & cabang terdekat 📍`, escalate: false };
 
       default:
-        // Unknown (but not an explicit human/complaint request) → a friendly Irene
-        // prompt that steers to what she can do, rather than dumping to a human on
-        // a first "hello". Genuine human requests are caught earlier as intent 'human'.
+        // Unknown (but not an explicit human/complaint request) → a friendly
+        // prompt that steers to what the agent can do, rather than dumping to a
+        // human on a first "hello". Genuine human requests are caught earlier as
+        // intent 'human'.
         return {
-          text: `${hi} 😊 Aku Irene, CS-nya Aire. Irene bisa bantu info harga & layanan, membership, voucher, status pesanan, atau booking. Kakak lagi butuh yang mana?`,
+          text: `${hi} 😊 ${intro}${me} bisa bantu info harga & layanan, membership, voucher, status pesanan, atau booking. Kakak lagi butuh yang mana?`,
           escalate: false,
         };
     }

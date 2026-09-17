@@ -69,7 +69,7 @@ function AgentModal({ initial, onClose, onSaved }: { initial: Agent | null; onCl
           {error && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.agents.agentName', 'Agent name')}</label>
-            <input className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="KADEK" />
+            <input className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder={t('dash.agents.agentNamePlaceholder', 'e.g. Kalia')} />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.agents.role', 'Role')}</label>
@@ -83,7 +83,7 @@ function AgentModal({ initial, onClose, onSaved }: { initial: Agent | null; onCl
           </div>
           <div>
             <label className="block text-sm font-medium mb-1.5">{t('dash.agents.promptInstructions', 'Prompt / instructions')}</label>
-            <textarea className="input-field" rows={4} value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} placeholder={t('dash.agents.promptPlaceholder', 'You are KADEK, the friendly front desk assistant for AIRE…')} />
+            <textarea className="input-field" rows={4} value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} placeholder={t('dash.agents.promptPlaceholder', 'You are the friendly front desk assistant for this business…')} />
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} /> {t('dash.agents.active', 'Active')}

@@ -91,10 +91,12 @@ describe('AdminService', () => {
       expect(result.slug).toBe('new-wash');
       expect(result.plan).toBe('standard');
       // New tenants are seeded with the default automation settings (same as
-      // self-service register), not an empty object.
+      // self-service register), not an empty object. The trailing 'carwash' is
+      // the vertical: unspecified means the platform default, which is what
+      // every tenant created before verticals existed is.
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO tenants'),
-        ['New Wash', 'new-wash', 'standard', JSON.stringify(DEFAULT_AUTOMATION_SETTINGS)],
+        ['New Wash', 'new-wash', 'standard', JSON.stringify(DEFAULT_AUTOMATION_SETTINGS), 'carwash'],
       );
     });
 
@@ -125,7 +127,7 @@ describe('AdminService', () => {
       // Caller settings are merged over the defaults.
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO tenants'),
-        ['Premium Wash', 'premium-wash', 'premium', JSON.stringify({ ...DEFAULT_AUTOMATION_SETTINGS, maxOutlets: 10 })],
+        ['Premium Wash', 'premium-wash', 'premium', JSON.stringify({ ...DEFAULT_AUTOMATION_SETTINGS, maxOutlets: 10 }), 'carwash'],
       );
     });
 

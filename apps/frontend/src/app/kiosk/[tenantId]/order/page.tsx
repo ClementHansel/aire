@@ -85,10 +85,13 @@ export default function KioskOrderPage() {
   const [error, setError] = useState('');
 
   const [step, setStep] = useState<Step>('identify');
-  const [businessUnit, setBusinessUnit] = useState<string>('AIRE');
+  // Seeded EMPTY, not with a unit code: the tenant's real units arrive with the
+  // menu and the effect below lands on the first one. Seeding 'AIRE' meant the
+  // founding tenant's brand was the initial tab for every tenant.
+  const [businessUnit, setBusinessUnit] = useState<string>('');
   // Which menu tab is showing: a service business unit, or retail products.
   // A unit code, or the literal 'products' pseudo-tab.
-  const [tab, setTab] = useState<string>('AIRE');
+  const [tab, setTab] = useState<string>('');
   const [cart, setCart] = useState<CartLine[]>([]);
 
   const [name, setName] = useState('');
@@ -265,7 +268,7 @@ export default function KioskOrderPage() {
   };
 
   const reset = () => {
-    setStep('identify'); setCart([]); setBusinessUnit('AIRE'); setTab('AIRE');
+    setStep('identify'); setCart([]); setBusinessUnit(kioskUnits[0] ?? ''); setTab(kioskUnits[0] ?? '');
     setName(''); setPhone(''); setPlate(''); setBrand(''); setModel('');
     setMembershipId(null); setSelectedPlate(null); setMemberName(null);
     setIdentifyInput(''); setIdentifyMsg('');

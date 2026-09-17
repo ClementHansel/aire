@@ -8,6 +8,7 @@ import { ShiftService } from '../shift/shift.service';
 import { KioskService } from './kiosk.service';
 import { CreateOrderRequest, JWTPayload, MemberLookupResponse, BusinessUnit } from '@aire/shared';
 import { KioskContext } from './kiosk-token.guard';
+import { BusinessUnitService } from '../business-unit';
 
 /** Order payload submitted by a self-service kiosk. */
 export interface KioskOrderDto {
@@ -35,6 +36,7 @@ export class KioskOrderService {
     private readonly paymentService: PaymentService,
     private readonly kioskService: KioskService,
     private readonly shiftService: ShiftService,
+    private readonly businessUnits: BusinessUnitService,
   ) {}
 
   /**
@@ -108,13 +110,17 @@ export class KioskOrderService {
     );
     // Same rule as the cashier's own board: the car is here, so service has
     // started and the clock runs from now (AIRIN-170).
+    // Falls back to the TENANT'S own first unit, never a hardcoded 'AIRE' —
+    // that is the founding tenant's brand and any other tenant would get a queue
+    // row filed under a unit code they do not own.
+    const queueUnit = await this.businessUnits.resolveCode(ctx.tenantId, dto.businessUnit);
     await this.pool.query(
       `INSERT INTO vehicle_queue
         (tenant_id, outlet_id, plate, brand, model, customer_name, customer_phone, business_unit, position, order_id, status, started_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'serving',NOW())`,
       [
         ctx.tenantId, ctx.outletId, plate, dto.customer.brand ?? null, dto.customer.model ?? null,
-        dto.customer.name, dto.customer.phone, dto.businessUnit ?? 'AIRE',
+        dto.customer.name, dto.customer.phone, queueUnit,
         posRes.rows[0]?.next ?? 1, created.id,
       ],
     );

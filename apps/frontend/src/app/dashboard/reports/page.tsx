@@ -269,14 +269,22 @@ export default function ReportsPage() {
 
           {/* Business unit P&L split. When a unit is selected, show only that
               unit — a two-card "split" with one card zeroed is as confusing as
-              the old behaviour of showing both at full revenue (AIRIN-130). */}
+              the old behaviour of showing both at full revenue (AIRIN-130).
+              The card set is THE TENANT'S units: this used to be a hardcoded
+              AIRE/LEAD pair with hardcoded labels and colours, so every other
+              tenant read someone else's brand names off their own P&L. */}
           <div className={`grid grid-cols-1 gap-4 mb-6 ${businessUnit ? '' : 'sm:grid-cols-2'}`}>
-            {(businessUnit ? [businessUnit] as const : ['AIRE', 'LEAD'] as const).map((bu) => {
-              const v = data.byBusinessUnit?.[bu] ?? { revenue: 0, count: 0 };
+            {(businessUnit ? businessUnits.filter((u) => u.code === businessUnit) : businessUnits).map((unit) => {
+              const v = data.byBusinessUnit?.[unit.code] ?? { revenue: 0, count: 0 };
               return (
-                <div key={bu} className="card">
+                <div key={unit.code} className="card">
                   <div className="flex items-center justify-between">
-                    <span className={`badge ${bu === 'LEAD' ? 'bg-violet-50 text-violet-700' : 'bg-sky-50 text-sky-700'}`}>{bu === 'AIRE' ? t('dash.reports.aireCarWash', 'AIRE · Car Wash') : t('dash.reports.leadDetailing', 'LEAD · Detailing')}</span>
+                    <span
+                      className="badge"
+                      style={{ backgroundColor: `${unit.color}1a`, color: unit.color }}
+                    >
+                      {unit.name}
+                    </span>
                     <span className="text-xs text-text-muted">{v.count} {t('dash.reports.orders', 'orders')}</span>
                   </div>
                   <p className="text-2xl font-bold text-text-primary mt-2">{fmt(v.revenue)}</p>

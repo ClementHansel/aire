@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { Role, JWTPayload } from '@aire/shared';
 import { Roles, CurrentUser } from '../../common/decorators';
-import { RolesGuard, RlsContextGuard } from '../../common/guards';
+import { RolesGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { AgentService } from './agent.service';
 import { ProposalService } from './proposal.service';
@@ -172,7 +172,7 @@ export class AgentController {
    * Requirement: 6.3
    */
   @Get(':tenantId/proposals')
-  @UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TenantOwner)
   async listProposals(
     @Param('tenantId') tenantId: string,
@@ -190,7 +190,7 @@ export class AgentController {
    * Requirement: 6.4
    */
   @Post(':tenantId/proposals/:id/approve')
-  @UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TenantOwner)
   async approveProposal(
     @Param('tenantId') tenantId: string,
@@ -219,7 +219,7 @@ export class AgentController {
    * Requirement: 6.5
    */
   @Post(':tenantId/proposals/:id/reject')
-  @UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TenantOwner)
   async rejectProposal(
     @Param('tenantId') tenantId: string,

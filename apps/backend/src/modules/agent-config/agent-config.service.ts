@@ -70,6 +70,10 @@ export type OpeningHours = Partial<Record<OpeningHoursDay, DayHours>>;
 
 export interface KnowledgeOutlet { id: string; name: string; phone: string | null; mapsUrl: string | null; openingHours: OpeningHours | null; customerVisible: boolean; }
 export interface KnowledgeResponse {
+  /** The assistant's standing instructions — identity, tone, what it must not
+   *  say. Previously writable only by a platform super-admin, which meant a
+   *  tenant could not change how their own bot speaks. */
+  basePrompt: string | null;
   productKnowledge: string | null;
   skills: string | null;
   /** Per-category visibility flags for the customer AI (see CUSTOMER_KNOWLEDGE_CATEGORIES). */
@@ -78,6 +82,7 @@ export interface KnowledgeResponse {
   items: { services: KnowledgeItem[]; promotions: KnowledgeItem[]; plans: KnowledgeItem[]; outlets: KnowledgeOutlet[] };
 }
 export interface KnowledgeUpdateDto {
+  basePrompt?: string | null;
   productKnowledge?: string | null;
   skills?: string | null;
   categories?: Record<string, boolean>;
@@ -112,16 +117,28 @@ export function sanitizeOpeningHours(raw: unknown): OpeningHours | null {
 // Bahasa Indonesia defaults — kept identical to migration 074_agent_default_prompts.sql
 // (column DEFAULTs + backfill) so a tenant with no agent_configs row still shows/serves
 // the same working, grounded assistant the DB defaults to.
+/**
+ * The starting instructions for a tenant who has not written their own.
+ *
+ * Deliberately says NOTHING about who the assistant is or what the business
+ * sells. This used to open with "Kamu adalah Irene, customer service (CS) dari
+ * Aire — usaha cuci mobil & detailing (AIRE car wash, LEAD detailing)", which is
+ * the founding tenant's identity: every new company's bot introduced itself as
+ * Airin's car wash. Identity now comes from the tenant's own persona + business
+ * name, composed in CustomerAgentService.systemPrompt().
+ *
+ * What remains is the part that is true for ANY business on the platform: tone,
+ * WhatsApp formatting, and the grounding/escalation rules.
+ */
 const DEFAULT_BASE_PROMPT =
-  'Kamu adalah Irene, customer service (CS) dari Aire — usaha cuci mobil & detailing (AIRE car wash, LEAD detailing). '
-  + 'Kamu seorang cewek yang ramah, hangat, dan asik diajak ngobrol. '
-  + 'Di awal percakapan, buka dengan perkenalan yang hangat dan agak panjang: sapa pelanggan, perkenalkan dirimu dengan nama & peran, lalu tawarkan bantuan — misalnya: "Halo kak! 😊 Aku Irene, CS-nya AIRE. Ada yang bisa Irene bantu hari ini? Mau tanya harga, lokasi, membership, atau mau booking cuci mobil? 🚗✨". Jangan membalas dengan satu kalimat singkat saja di awal. '
+  'Kamu adalah customer service (CS) untuk bisnis ini. Kamu ramah, hangat, dan asik diajak ngobrol. '
+  + 'Di awal percakapan, buka dengan perkenalan yang hangat dan agak panjang: sapa pelanggan, perkenalkan dirimu dengan nama & peran, lalu tawarkan bantuan. Jangan membalas dengan satu kalimat singkat saja di awal. '
   + 'Balas pakai gaya chat WhatsApp yang santai, ramah, dan natural — boleh panggil pelanggan "kak", pakai emoji secukupnya, dan jangan kaku atau terlalu formal. '
   + 'Ini WhatsApp, bukan Markdown: untuk menebalkan pakai satu bintang *begini*, jangan pakai dua bintang (**salah**), dan jangan pakai format link Markdown [teks](url) — tulis URL apa adanya. '
   + 'Tetap singkat dan jelas, dalam Bahasa Indonesia. Format uang sebagai Rp. '
   + 'Kamu bisa membantu: memberi lokasi & jam buka cabang, daftar harga layanan, info & paket membership, sisa voucher beserta kodenya, '
   + 'tanggal berakhir membership, serta membantu membuat janji/booking. '
-  + 'PENTING: JANGAN pernah mengarang harga, promo, jam buka, atau data pelanggan — ambil semua informasi HANYA dari tools yang tersedia. '
+  + 'PENTING: JANGAN pernah mengarang harga, promo, jam buka, layanan, atau data pelanggan — ambil semua informasi HANYA dari tools yang tersedia. '
   + 'Kalau kamu tidak yakin, tidak punya tool yang sesuai, pelanggan kesal, atau minta ngobrol sama orang/CS manusia, gunakan tool escalate_to_human.';
 
 const DEFAULT_SKILLS =
@@ -137,12 +154,18 @@ const DEFAULT_SKILLS =
   + '- Di luar kemampuan, data tidak ada, atau pelanggan minta orang -> escalate_to_human.\n'
   + '- Jangan pernah menebak; kalau ragu, escalate.';
 
-const DEFAULT_PRODUCT_KNOWLEDGE =
-  'AIRE adalah layanan cuci mobil; LEAD adalah layanan detailing. '
-  + 'Harga layanan, paket membership, dan promo yang PERSIS selalu diambil dari sistem lewat tools (get_service_prices, get_membership_plans, get_promotions) — jangan mengarang angka atau nama paket.\n'
-  + 'MEMBERSHIP: satu-satunya jenis membership adalah "Unlimited Wash" (cuci sepuasnya). Berlaku untuk maksimal 3 plat nomor mobil, dan maksimal 1x cuci per hari per mobil. Durasinya (mis. 1 bulan / 3 bulan) dan harganya beda per area — ambil dari get_membership_plans. TIDAK ADA membership bernama "Silver", "Gold", atau tier lain; jangan sebutkan atau mengarang tingkatan.\n'
-  + 'VOUCHER: ada paket voucher cuci (mis. voucher 10x). Voucher TIDAK terikat ke satu pelanggan — siapa saja bisa memakainya, jadi boleh dibeli lalu dibagikan/dishare ke orang lain.\n'
-  + 'PEMBELIAN: pembelian membership maupun voucher dilakukan di outlet, bukan lewat chat. Kamu boleh menjelaskan detail & cara kerjanya, tapi untuk membeli arahkan pelanggan ke outlet AIRE terdekat (pakai get_branch_info).';
+/**
+ * Product knowledge is FACTS about the business, so there is no safe generic
+ * default: a new tenant starts empty and fills this in (AI Knowledge page, as
+ * text or by uploading documents).
+ *
+ * It used to default to AIRE's own facts — "satu-satunya jenis membership
+ * adalah Unlimited Wash", "maksimal 3 plat nomor", "arahkan pelanggan ke outlet
+ * AIRE terdekat". Another company inheriting that would have had its bot state
+ * a competitor's membership rules to its own customers, confidently and in
+ * detail. An empty knowledge base simply makes the bot defer to its tools.
+ */
+const DEFAULT_PRODUCT_KNOWLEDGE: string | null = null;
 
 const DEFAULTS: Omit<AgentConfigResponse, 'aiEnabled' | 'llmProvider' | 'llmKeyConfigured'> = {
   basePrompt: DEFAULT_BASE_PROMPT, productKnowledge: DEFAULT_PRODUCT_KNOWLEDGE, skills: DEFAULT_SKILLS, escalationNumber: null,
@@ -274,7 +297,7 @@ export class AgentConfigService {
   /** Read the product knowledge, skills, category flags, and per-item visibility. */
   async getKnowledge(tenantId: string): Promise<KnowledgeResponse> {
     const [cfg, svc, promo, plan, out] = await Promise.all([
-      this.pool.query('SELECT product_knowledge, skills, customer_knowledge FROM agent_configs WHERE tenant_id = $1', [tenantId]),
+      this.pool.query('SELECT base_prompt, product_knowledge, skills, customer_knowledge FROM agent_configs WHERE tenant_id = $1', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM services WHERE tenant_id = $1 AND is_active = true ORDER BY business_unit, sort_order, name', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM promotions WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM membership_plans WHERE tenant_id = $1 AND is_active = true ORDER BY price', [tenantId]),
@@ -286,6 +309,7 @@ export class AgentConfigService {
     for (const k of CUSTOMER_KNOWLEDGE_CATEGORIES) categories[k] = flags[k] !== false; // missing = visible
     const item = (x: any): KnowledgeItem => ({ id: x.id, name: x.name, customerVisible: x.customer_visible !== false });
     return {
+      basePrompt: r.base_prompt ?? null,
       productKnowledge: r.product_knowledge ?? null,
       skills: r.skills ?? null,
       categories,
@@ -300,10 +324,11 @@ export class AgentConfigService {
 
   /** Update product knowledge, skills, category flags, per-item visibility, and branch contacts. */
   async setKnowledge(tenantId: string, dto: KnowledgeUpdateDto): Promise<KnowledgeResponse> {
-    if (dto.productKnowledge !== undefined || dto.skills !== undefined || dto.categories !== undefined) {
+    if (dto.basePrompt !== undefined || dto.productKnowledge !== undefined || dto.skills !== undefined || dto.categories !== undefined) {
       // Ensure a config row exists (defaults from migration 074/080), then update.
       await this.pool.query('INSERT INTO agent_configs (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING', [tenantId]).catch(() => undefined);
       const set: string[] = []; const v: unknown[] = [tenantId]; let i = 2;
+      if (dto.basePrompt !== undefined) { set.push(`base_prompt = $${i++}`); v.push(dto.basePrompt); }
       if (dto.productKnowledge !== undefined) { set.push(`product_knowledge = $${i++}`); v.push(dto.productKnowledge); }
       if (dto.skills !== undefined) { set.push(`skills = $${i++}`); v.push(dto.skills); }
       if (dto.categories !== undefined) {

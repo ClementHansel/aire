@@ -10,6 +10,9 @@ export * from './constants';
 // Per-tenant module registry (enable/disable modules per tenant)
 export * from './modules';
 
+// Tenant verticals — what shape of business a tenant runs (carwash/services/fnb/laundry)
+export * from './verticals';
+
 // Error Codes
 export * from './error-codes';
 

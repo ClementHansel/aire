@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { TENANT_MODULES } from '@aire/shared';
+import { TENANT_MODULES, TENANT_VERTICALS, DEFAULT_VERTICAL, type TenantVertical } from '@aire/shared';
 import { api } from '@/lib/api';
 import { isAuthenticated } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
@@ -86,7 +86,7 @@ function CreateTenantWizard({ onClose, onSaved }: { onClose: () => void; onSaved
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
-  const [account, setAccount] = useState({ name: '', slug: '', plan: 'standard', ownerName: '', ownerEmail: '', ownerPassword: '' });
+  const [account, setAccount] = useState({ name: '', slug: '', plan: 'standard', vertical: DEFAULT_VERTICAL as TenantVertical, ownerName: '', ownerEmail: '', ownerPassword: '' });
   const [planOptions, setPlanOptions] = useState<{ code: string; name: string }[]>([]);
   const [modules, setModules] = useState<Record<string, boolean>>(() => Object.fromEntries(TENANT_MODULES.map((m) => [m.key, true])));
   const [legal, setLegal] = useState<LegalEntityInput>(EMPTY_LEGAL);
@@ -106,7 +106,7 @@ function CreateTenantWizard({ onClose, onSaved }: { onClose: () => void; onSaved
     setSaving(true); setError('');
     try {
       await api.post('/admin/tenants', {
-        name: account.name, slug: account.slug, plan: account.plan, modules,
+        name: account.name, slug: account.slug, plan: account.plan, vertical: account.vertical, modules,
         owner: { name: account.ownerName, email: account.ownerEmail, password: account.ownerPassword },
         legalEntity: legal.name.trim() ? { name: legal.name, npwp: legal.npwp || undefined, address: legal.address || undefined, phone: legal.phone || undefined } : undefined,
         branch: branch.name.trim() ? {
@@ -144,6 +144,22 @@ function CreateTenantWizard({ onClose, onSaved }: { onClose: () => void; onSaved
               </select>
             </Field>
           </div>
+          {/* The vertical is effectively permanent: it decides the starter
+              business units and whether vehicle fields exist at all, so it must
+              be chosen before the tenant is provisioned rather than corrected
+              after their catalog is built. */}
+          <Field label={t('admin.tenants.vertical', 'Type of business')}>
+            <select
+              className="input-field"
+              value={account.vertical}
+              onChange={(e) => setAccount({ ...account, vertical: e.target.value as TenantVertical })}
+            >
+              {TENANT_VERTICALS.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+            </select>
+            <p className="text-xs text-text-muted mt-1">
+              {TENANT_VERTICALS.find((v) => v.key === account.vertical)?.description}
+            </p>
+          </Field>
           <div className="border-t border-border pt-3">
             <p className="text-sm font-medium text-text-primary mb-2">{t('admin.wiz.ownerLogin', 'Owner login')}</p>
             <div className="space-y-3">

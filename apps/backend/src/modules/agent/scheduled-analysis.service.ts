@@ -247,7 +247,7 @@ export class ScheduledAnalysisService {
       .filter(Boolean)
       .join('\n');
 
-    const systemPrompt = `You are an AI operations analyst for a car wash/service business. 
+    const systemPrompt = `You are an AI operations analyst for a service business. Do not assume an industry — read what this business sells from the metrics and tools provided. 
 Analyze the provided metrics and suggest actionable automation steps.
 You MUST respond with a valid JSON array of action objects.
 Each action object must have: actionType (tool name), parameters (object), reasoning (string), confidence (number 0-1).

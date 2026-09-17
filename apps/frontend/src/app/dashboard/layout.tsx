@@ -31,7 +31,11 @@ import {
 // TENANT_MODULES). Items without a `module` are core and always shown.
 // `permission` (optional) hides the item from users whose custom role lacks that
 // granular RBAC key. Items without one are shown to everyone (subject to `module`).
-interface NavItem { id: string; label: string; href: string; icon: LucideIcon; module?: string; permission?: string; roles?: AuthUser['role'][] }
+// `capability` gates on what the tenant's BUSINESS is (see @aire/shared
+// verticals.ts), as opposed to `module`, which gates on what they bought. A
+// lab-services tenant has no vehicles, so a Vehicle Catalog is not a feature
+// they are missing — it is a screen that can never mean anything to them.
+interface NavItem { id: string; label: string; href: string; icon: LucideIcon; module?: string; capability?: 'vehicles' | 'bays' | 'lpr'; permission?: string; roles?: AuthUser['role'][] }
 interface NavSection { title: string | null; items: NavItem[] }
 
 // Grouped navigation. Sections keep related tools together and prevent the
@@ -79,7 +83,7 @@ const navSections: NavSection[] = [
       { id: 'kiosks', label: 'Kiosks', href: '/dashboard/kiosks', icon: Tablet, module: 'catalog' },
       { id: 'pos-devices', label: 'POS Terminals', href: '/dashboard/pos-devices', icon: MonitorSmartphone, module: 'catalog' },
       { id: 'barcode-settings', label: 'Barcode', href: '/dashboard/barcode-settings', icon: Barcode, module: 'catalog', permission: 'products.write' },
-      { id: 'vehicles', label: 'Vehicle Catalog', href: '/dashboard/vehicles', icon: Car, module: 'catalog' },
+      { id: 'vehicles', label: 'Vehicle Catalog', href: '/dashboard/vehicles', icon: Car, module: 'catalog', capability: 'vehicles' },
     ],
   },
   {
@@ -88,7 +92,7 @@ const navSections: NavSection[] = [
       { id: 'inventory', label: 'Inventory', href: '/dashboard/inventory', icon: Package, module: 'inventory' },
       { id: 'procurement', label: 'Procurement', href: '/dashboard/procurement', icon: ShoppingCart, module: 'inventory' },
       { id: 'opname', label: 'Stock Opname', href: '/dashboard/opname', icon: ClipboardCheck, module: 'inventory' },
-      { id: 'cctv', label: 'CCTV', href: '/dashboard/cctv', icon: Cctv },
+      { id: 'cctv', label: 'CCTV', href: '/dashboard/cctv', icon: Cctv, module: 'cctv' },
       { id: 'topology', label: 'Topology', href: '/dashboard/topology', icon: Waypoints },
       { id: 'devices', label: 'Devices', href: '/dashboard/devices', icon: HardDrive },
     ],
@@ -154,7 +158,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [checked, setChecked] = useState(false);
-  const { modules } = useTenantModules();
+  const { modules, capabilities } = useTenantModules();
   const { permissions } = usePermissions();
   const { companyName, logoUrl } = useBranding();
   const { t } = useI18n();
@@ -217,13 +221,17 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // Role-gated items (e.g. Billing → tenant_owner only) are cosmetic — the server
   // enforces access on every endpoint. Undefined `roles` = visible to all roles.
   const roleAllows = (item: NavItem) => !item.roles || (user != null && item.roles.includes(user.role));
+  /** An untagged item is available to every vertical; a tagged one only where
+   *  the capability is on. Capabilities default to the car-wash superset while
+   *  the fetch is in flight, so nothing flickers away from an existing tenant. */
+  const capabilityAllows = (item: NavItem) => !item.capability || capabilities[item.capability];
 
   // Hide nav for modules the tenant has disabled; drop sections left empty.
   const visibleSections = navSections
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
+        (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && capabilityAllows(item) && hasPermission(permissions, item.permission) && roleAllows(item),
       ),
     }))
     .filter((section) => section.items.length > 0);
@@ -231,7 +239,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // ai_assistant module, and lean mode's hold list.
   const assistantAvailable = !isHeld('assistant') && moduleEnabled(modules, 'ai_assistant');
   const visibleMobileItems = mobileItems.filter(
-    (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && hasPermission(permissions, item.permission) && roleAllows(item),
+    (item) => !isHeld(item.id) && moduleEnabled(modules, item.module) && capabilityAllows(item) && hasPermission(permissions, item.permission) && roleAllows(item),
   );
 
   if (!checked) {

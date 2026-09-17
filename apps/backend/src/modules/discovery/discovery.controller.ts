@@ -9,7 +9,7 @@ import {
 import { Role } from '@aire/shared';
 import { Roles } from '../../common/decorators';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { RolesGuard, RlsContextGuard } from '../../common/guards';
+import { RolesGuard } from '../../common/guards';
 import { DiscoveryService } from './discovery.service';
 import { SettingsService } from '../settings/settings.service';
 import type { DeviceConfirmation, DeviceHealthCheck, ScanSession } from './discovery.types';
@@ -24,7 +24,8 @@ interface ScanRequest {
  * Discovery Controller.
  *
  * REST endpoints for network device discovery, confirmation, and health monitoring.
- * Applies RlsContextGuard for tenant scoping and RolesGuard for role checks.
+ * Tenant scoping is enforced in the service layer (every query carries a
+ * tenant predicate); RolesGuard enforces the role check.
  *
  * - Scan and confirm operations require Tenant_Owner role (write operations).
  * - Device listing and health checks are available to Tenant_Owner.
@@ -32,7 +33,7 @@ interface ScanRequest {
  * Requirements: 9.4, 9.5
  */
 @Controller('api/discovery')
-@UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class DiscoveryController {
   constructor(
     private readonly discoveryService: DiscoveryService,

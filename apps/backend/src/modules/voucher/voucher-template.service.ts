@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { VoucherType, VALID_VOUCHER_TYPES, ERR_VOUCHER_PACK_NOT_FOUND } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { VoucherTemplate, VoucherTemplateRow, CreateVoucherTemplateDto } from './voucher.interfaces';
+import { BusinessUnitService } from '../business-unit';
 
 /**
  * Manages voucher templates — the sellable catalog of voucher packs.
@@ -11,7 +12,10 @@ import { VoucherTemplate, VoucherTemplateRow, CreateVoucherTemplateDto } from '.
  */
 @Injectable()
 export class VoucherTemplateService {
-  constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(DATABASE_POOL) private readonly pool: Pool,
+    private readonly businessUnits: BusinessUnitService,
+  ) {}
 
   /** List active templates for a tenant (the Sell Pack catalog). */
   async listCatalog(tenantId: string): Promise<VoucherTemplate[]> {
@@ -46,12 +50,24 @@ export class VoucherTemplateService {
       throw new BadRequestException('Percentage value must be between 1 and 100');
     }
 
+    // When the caller names no unit, fall back to the TENANT'S first unit rather
+    // than the literal 'AIRE' the COALESCE used to inject — that is the founding
+    // tenant's brand, and for anyone else it credits pack revenue to a unit code
+    // they do not own (the exact bug migration 098 set out to fix).
+    // The column is NOT NULL, so refuse clearly rather than letting the DB's
+    // legacy 'AIRE' default silently take over.
+    const unit = await this.businessUnits.resolveCode(tenantId, dto.businessUnit);
+    if (!unit) {
+      throw new BadRequestException(
+        'Create at least one business unit before adding a voucher pack',
+      );
+    }
     const res = await this.pool.query<VoucherTemplateRow>(
       `INSERT INTO voucher_templates
         (tenant_id, name, type, value, max_uses, sale_price, validity_days,
          service_ids, outlet_ids, brand_scope, min_order_amount, start_date, expiry_date,
          business_unit, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,'AIRE'),true)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true)
        RETURNING *`,
       [
         tenantId,
@@ -67,7 +83,7 @@ export class VoucherTemplateService {
         dto.minOrderAmount ?? 0,
         dto.startDate ?? null,
         dto.expiryDate ?? null,
-        dto.businessUnit?.trim() || null,
+        unit,
       ],
     );
     return this.map(res.rows[0]!);
@@ -150,7 +166,7 @@ export class VoucherTemplateService {
       minOrderAmount: parseFloat(r.min_order_amount),
       startDate: r.start_date,
       expiryDate: r.expiry_date,
-      businessUnit: r.business_unit ?? 'AIRE',
+      businessUnit: r.business_unit,
       isActive: r.is_active,
     };
   }

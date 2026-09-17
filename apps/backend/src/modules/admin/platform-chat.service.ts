@@ -224,7 +224,11 @@ export class PlatformChatService {
             this.metrics.getBranches(t.id).catch(() => []),
             this.pool
               .query<{ feature_flags: Record<string, unknown> }>(
-                `SELECT COALESCE(settings->'feature_flags', '{}'::jsonb) AS feature_flags FROM tenants WHERE id = $1`,
+                // camelCase 'featureFlags' is the key AdminService writes and
+                // TenantModulesController reads. This read used snake_case, so it
+                // always resolved to '{}' and the assistant reported every tenant
+                // as having no modules configured.
+                `SELECT COALESCE(settings->'featureFlags', '{}'::jsonb) AS feature_flags FROM tenants WHERE id = $1`,
                 [t.id],
               )
               .then((r) => r.rows[0]?.feature_flags ?? {}),

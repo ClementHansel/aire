@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Role, JWTPayload } from '@aire/shared';
 import { Roles, CurrentUser } from '../../common/decorators';
-import { RolesGuard, RlsContextGuard } from '../../common/guards';
+import { RolesGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/auth.guard';
 import { SettingsService } from './settings.service';
 import type { TenantAutomationSettings, PublicTenantSettings } from './settings.interfaces';
@@ -18,13 +18,14 @@ import type { TenantAutomationSettings, PublicTenantSettings } from './settings.
  * Settings Controller.
  *
  * REST endpoints for managing per-tenant automation settings.
- * Applies RlsContextGuard for tenant scoping and RolesGuard for role checks.
+ * Tenant scoping is enforced in the service layer (every query carries a
+ * tenant predicate); RolesGuard enforces the role check.
  * Minimum role: Tenant_Owner (Platform_Super_Admin also has access via hierarchy).
  *
  * Requirements: 1.5, 12.2
  */
 @Controller('api/settings')
-@UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.TenantOwner)
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}

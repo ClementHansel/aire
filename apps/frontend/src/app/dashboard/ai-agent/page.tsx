@@ -10,6 +10,10 @@ interface AgentConfig {
   kirimConfigured: boolean; kirimPhoneId: string | null; aiReplyEnabled: boolean; perBranchWaEnabled: boolean; wahaMockEnabled: boolean;
 }
 
+/** The tenant's own customer-service persona. Only the NAME is editable here —
+ *  role/prompt/workflow live on the full Agent Workflow page. */
+interface TenantAgent { id: string; name: string; role: string; prompt: string | null }
+
 interface BranchWaConfig {
   outletId: string; name: string;
   waProvider: 'waha' | 'kirim'; waNumber: string | null; wahaSession: string | null;
@@ -20,13 +24,25 @@ export default function AiAgentPage() {
   const { t } = useI18n();
   const [cfg, setCfg] = useState<AgentConfig | null>(null);
   const [kirimApiKey, setKirimApiKey] = useState('');
+  // The assistant's name. It used to be editable ONLY on the Agent Workflow page,
+  // which lean mode hides from every tenant owner — so a business could not name
+  // its own bot and every reply fell back to a generic "kami".
+  const [agent, setAgent] = useState<TenantAgent | null>(null);
+  const [agentName, setAgentName] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setError('');
-    try { setCfg(await api.get<AgentConfig>('/agent-config')); }
+    try {
+      setCfg(await api.get<AgentConfig>('/agent-config'));
+      // Non-fatal: a tenant with no persona yet simply gets an empty field.
+      const agents = await api.get<TenantAgent[]>('/agents').catch(() => [] as TenantAgent[]);
+      const primary = agents.find((a) => a.role === 'customer_service') ?? agents[0] ?? null;
+      setAgent(primary);
+      setAgentName(primary?.name ?? '');
+    }
     catch (err) { setError(err instanceof Error ? err.message : t('dash.aiAgent.failedToLoad', 'Failed to load')); }
   }, [t]);
   useEffect(() => { load(); }, [load]);
@@ -42,6 +58,16 @@ export default function AiAgentPage() {
         waProvider: cfg.waProvider, waNumber: cfg.waNumber, wahaSession: cfg.wahaSession, kirimPhoneId: cfg.kirimPhoneId,
         aiReplyEnabled: cfg.aiReplyEnabled, perBranchWaEnabled: cfg.perBranchWaEnabled, wahaMockEnabled: cfg.wahaMockEnabled, ...(kirimApiKey ? { kirimApiKey } : {}),
       });
+      // Persist the assistant name alongside the connection settings, so one
+      // "Save changes" does what the page appears to promise.
+      const wanted = agentName.trim();
+      if (wanted && wanted !== (agent?.name ?? '')) {
+        const saved = agent
+          ? await api.put<TenantAgent>(`/agents/${agent.id}`, { name: wanted })
+          : await api.post<TenantAgent>('/agents', { name: wanted, role: 'customer_service' });
+        setAgent(saved);
+        setAgentName(saved.name);
+      }
       setCfg(updated); setKirimApiKey(''); setSaved(true);
     } catch (err) { setError(err instanceof Error ? err.message : t('dash.aiAgent.saveFailed', 'Save failed')); }
     finally { setSaving(false); }
@@ -62,6 +88,24 @@ export default function AiAgentPage() {
       {saved && <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700 mb-4">{t('dash.aiAgent.savedMsg', 'Saved.')}</div>}
 
       <div className="space-y-5 max-w-3xl">
+        {/* Assistant identity. First card because it is the thing a new tenant
+            most obviously wants to set, and because an unnamed assistant
+            introduces itself only as "kami". */}
+        <div className="card">
+          <h2 className="section-title">{t('dash.aiAgent.assistantName', 'Assistant name')}</h2>
+          <p className="section-description">
+            {t('dash.aiAgent.assistantNameDesc', 'What your AI introduces itself as to customers on WhatsApp — for example "Halo kak! Aku Kalia, CS-nya Kalibrasi." Leave blank and it will simply say "kami" instead of using a name.')}
+          </p>
+          <input
+            className="input-field mt-3"
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+            placeholder={t('dash.aiAgent.assistantNamePlaceholder', 'e.g. Kalia')}
+            maxLength={60}
+            data-testid="assistant-name"
+          />
+        </div>
+
         {/* AI reply toggle */}
         <div className="card flex items-center justify-between">
           <div>

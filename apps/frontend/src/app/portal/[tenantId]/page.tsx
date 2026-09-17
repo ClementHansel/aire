@@ -24,7 +24,8 @@ interface MemberResp {
   vouchers?: Voucher[];
 }
 interface PublicMenuItem { id: string; name: string; category: string; businessUnit: string; price: number }
-interface PublicMenu { tenantName: string; services: PublicMenuItem[]; products?: PublicMenuItem[]; plans: { name: string; durationMonths: number; price: number }[] }
+interface PublicMenuUnit { code: string; name: string; color: string }
+interface PublicMenu { tenantName: string; units?: PublicMenuUnit[]; services: PublicMenuItem[]; products?: PublicMenuItem[]; plans: { name: string; durationMonths: number; price: number }[] }
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
@@ -509,15 +510,22 @@ function MenuView({ tenantId }: { tenantId: string }) {
   }, [tenantId]);
   if (!menu) return <p className="text-sm text-text-muted">{t('portal.loading', 'Loading…')}</p>;
   const allItems = [...menu.services, ...(menu.products ?? [])];
-  const units = Array.from(new Set(allItems.map((s) => s.businessUnit)));
+  // Prefer the tenant's declared units (name + order) and fall back to whatever
+  // codes the items carry, so a menu item filed under a retired unit still shows.
+  const declared: { code: string; name: string }[] = menu.units ?? [];
+  const itemCodes = Array.from(new Set(allItems.map((s) => s.businessUnit)));
+  const units: { code: string; name: string }[] = [
+    ...declared.filter((u) => itemCodes.includes(u.code)),
+    ...itemCodes.filter((c) => !declared.some((u) => u.code === c)).map((c) => ({ code: c, name: c })),
+  ];
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold text-text-primary">{t('portal.menu.title', 'Services & prices')}</h1>
       {units.map((u) => (
-        <section key={u}>
-          <h2 className="text-sm font-semibold text-text-secondary mb-2 pb-1 border-b border-border">{u === 'LEAD' ? 'LEAD · Detailing' : 'AIRE · Car Wash'}</h2>
+        <section key={u.code}>
+          <h2 className="text-sm font-semibold text-text-secondary mb-2 pb-1 border-b border-border">{u.name}</h2>
           <div className="divide-y divide-border">
-            {allItems.filter((s) => s.businessUnit === u).map((s) => (
+            {allItems.filter((s) => s.businessUnit === u.code).map((s) => (
               <div key={s.id} className="flex items-center justify-between py-2 text-sm">
                 <span className="text-text-primary">{s.name}</span>
                 <span className="font-semibold text-primary-600">{fmt(s.price)}</span>

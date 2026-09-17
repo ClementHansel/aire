@@ -27,7 +27,7 @@ import { ROLES_KEY } from '../decorators/roles.decorator';
  *
  * Usage:
  *   @Roles(Role.OutletAdmin)
- *   @UseGuards(JwtAuthGuard, RlsContextGuard, RolesGuard)
+ *   @UseGuards(JwtAuthGuard, RolesGuard)
  */
 @Injectable()
 export class RolesGuard implements CanActivate {

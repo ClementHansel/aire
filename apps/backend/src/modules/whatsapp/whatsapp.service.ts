@@ -17,10 +17,17 @@ import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 // import cycle (see agent/staff-chat.port.ts for the full explanation).
 import { STAFF_CHAT, type StaffChatPort } from '../agent/staff-chat.port';
 
-/** Once-per-chat identity request, appended after the first reply to an unknown sender. */
-const IDENTITY_ASK =
-  'Oh iya, biar Irene bisa bantu lebih lengkap (cek membership, voucher, atau bikin booking), '
-  + 'boleh info nomor HP yang terdaftar di Aire, nomor member, atau plat mobilnya ya kak? 😊';
+/**
+ * Once-per-chat identity request, appended after the first reply to an unknown
+ * sender. Named after the TENANT'S agent and business — it used to hardcode
+ * "Irene" and "terdaftar di Aire", so every other company's customers were asked
+ * for their membership at a business they had never heard of.
+ */
+function identityAsk(agentName: string, businessName: string | null): string {
+  const at = businessName ? ` di ${businessName}` : '';
+  return `Oh iya, biar ${agentName} bisa bantu lebih lengkap (cek membership, voucher, atau bikin booking), `
+    + `boleh info nomor HP yang terdaftar${at}, nomor member, atau plat kendaraannya ya kak? 😊`;
+}
 
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
@@ -184,6 +191,26 @@ export class WhatsappService implements OnModuleInit {
    *    back to the tenant line.
    * With per-branch off, or no outletId, the tenant connection is used unchanged.
    */
+  /** The tenant's own agent name for message authorship, or a neutral 'AI'.
+   *  Never another tenant's persona. */
+  private async agentLabel(tenantId: string): Promise<string> {
+    const r = await this.pool
+      .query<{ name: string }>(
+        `SELECT name FROM agents WHERE tenant_id = $1 AND is_active = true ORDER BY position, created_at LIMIT 1`,
+        [tenantId],
+      )
+      .catch(() => ({ rows: [] as { name: string }[] }));
+    return r.rows[0]?.name ?? 'AI';
+  }
+
+  /** The tenant's business name, for copy that tells a customer whose line this is. */
+  private async businessName(tenantId: string): Promise<string | null> {
+    const r = await this.pool
+      .query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [tenantId])
+      .catch(() => ({ rows: [] as { name: string }[] }));
+    return r.rows[0]?.name ?? null;
+  }
+
   private async config(tenantId: string, outletId?: string | null): Promise<AgentCfgRow | null> {
     const r = await this.pool.query('SELECT * FROM agent_configs WHERE tenant_id = $1', [tenantId]);
     const cfg: AgentCfgRow | undefined = r.rows[0];
@@ -746,7 +773,7 @@ export class WhatsappService implements OnModuleInit {
         customerName: boundCustomer.name,
       });
       if (ack) {
-        await this.addMessage(tenantId, conv.id, 'outbound', ack, true, 'Irene');
+        await this.addMessage(tenantId, conv.id, 'outbound', ack, true, await this.agentLabel(tenantId));
         await this.sendText(tenantId, params.from, ack, outletId);
       }
       return;
@@ -794,7 +821,7 @@ export class WhatsappService implements OnModuleInit {
     // Ask for identity ONCE per chat when we still don't know the sender, so we
     // can personalise from here on (introduce → ask → bind on their reply).
     if (this.customerContext && !isGroup && !boundCustomer && !conv.identity_prompted) {
-      outText = `${outText}\n\n${IDENTITY_ASK}`;
+      outText = `${outText}\n\n${identityAsk(result.agentName, await this.businessName(tenantId))}`;
       await this.markIdentityPrompted(conv.id);
     }
     await this.addMessage(tenantId, conv.id, 'outbound', outText, true, result.agentName);

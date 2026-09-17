@@ -15,6 +15,7 @@ import { MemberManagementPanel } from '@/components/pos/MemberManagementPanel';
 import { useI18n } from '@/lib/i18n';
 import { useServiceTypeLabels } from '@/lib/useServiceTypeLabels';
 import { useBusinessUnits } from '@/lib/useBusinessUnits';
+import { useTenantCapabilities } from '@/lib/useModules';
 import { filterOfferableDetections, upsertDetection } from '@/lib/lprSuggestions';
 import { normalizePlate, maxLineDiscount, applyMembershipPricing, LPR_DETECTED_EVENT, type DynamicDiscountRule, type MembershipBenefit, type PlateDetection, type PlateDetectedPayload } from '@aire/shared';
 import type { MemberLookupResponse, MembershipDetail, PlateInfo } from '@aire/shared/interfaces/member';
@@ -162,6 +163,9 @@ export default function NewOrderPage() {
   // corrected to the tenant's own first unit once the list arrives (AIRIN-176).
   const [businessUnit, setBusinessUnit] = useState<string>('AIRE');
   const { units: posBusinessUnits } = useBusinessUnits();
+  // Whether this tenant's business involves vehicles at all. A car wash keeps
+  // the plate/brand/model block; a lab-services or laundry tenant never sees it.
+  const { capabilities } = useTenantCapabilities();
   // If the tenant renamed or retired the seeded pair, 'AIRE' is not one of
   // their tabs and the catalog would render empty. Snap to their first unit as
   // soon as the list lands — but only while the current tab is unknown, so a
@@ -1153,9 +1157,11 @@ export default function NewOrderPage() {
       setError(t('pos.new.enterCustomerService', 'Enter customer name, phone, and add at least one service.'));
       return;
     }
-    // Plate is mandatory: every order is a vehicle, and reports/queue/LPR/member
-    // matching all key off it (Samuel 2026-08-03).
-    if (!normalizePlate(plate).normalized) {
+    // Plate is mandatory FOR A VEHICLE BUSINESS: there, every order is a car and
+    // reports/queue/LPR/member matching all key off the plate (Samuel
+    // 2026-08-03). For a tenant whose vertical has no vehicles there is nothing
+    // to type, so requiring it would make the till impossible to use at all.
+    if (capabilities.vehicles && !normalizePlate(plate).normalized) {
       setError(t('pos.new.plateRequired', 'Enter the license plate.'));
       return;
     }
@@ -1165,7 +1171,12 @@ export default function NewOrderPage() {
         // Plate is canonicalised here too, so a plate typed straight into the
         // field (never routed through member search) is stored in the same shape
         // as one that was — otherwise the two paths disagree (AIRIN-117).
-        customer: { name: name.trim(), phone: phone.trim(), licensePlate: normalizePlate(plate).normalized, brand: brand.trim() || undefined, model: model.trim() || undefined },
+        // Vehicle identity is only sent when the tenant HAS vehicles. Sending an
+        // empty plate would write a blank identity that member matching and the
+        // queue would then try to key off.
+        customer: capabilities.vehicles
+          ? { name: name.trim(), phone: phone.trim(), licensePlate: normalizePlate(plate).normalized, brand: brand.trim() || undefined, model: model.trim() || undefined }
+          : { name: name.trim(), phone: phone.trim() },
         items: cart.map((l) => ({ serviceId: l.serviceId, quantity: l.qty, manualDiscount: l.manualDiscount || undefined })),
         businessUnit,
         salespersonName: salesperson.trim() || undefined,
@@ -1585,18 +1596,23 @@ export default function NewOrderPage() {
             )}
             {/* Field order follows how a car is actually received: the plate is
                 read off the bumper first, then the car, and only then the person
-                (AIRIN-169). */}
-            <PlateInput
-              placeholder={t('pos.new.licensePlate', 'License plate *')}
-              value={plate}
-              onChange={setPlate}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list="veh-brands" value={brand} onChange={(e) => setBrand(e.target.value)} />
-              <datalist id="veh-brands">{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
-              <input className="input-field" placeholder={t('pos.new.vehicleType', 'Vehicle type')} list="veh-types" value={model} onChange={(e) => setModel(e.target.value)} />
-              <datalist id="veh-types">{(vehicleBrands.find((b) => b.name === brand)?.types ?? []).map((t) => <option key={t.id} value={t.name} />)}</datalist>
-            </div>
+                (AIRIN-169). The whole block belongs to vehicle businesses — for
+                any other vertical the order starts at the customer. */}
+            {capabilities.vehicles && (
+              <>
+                <PlateInput
+                  placeholder={t('pos.new.licensePlate', 'License plate *')}
+                  value={plate}
+                  onChange={setPlate}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input className="input-field" placeholder={t('pos.new.vehicleBrand', 'Vehicle brand')} list="veh-brands" value={brand} onChange={(e) => setBrand(e.target.value)} />
+                  <datalist id="veh-brands">{vehicleBrands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
+                  <input className="input-field" placeholder={t('pos.new.vehicleType', 'Vehicle type')} list="veh-types" value={model} onChange={(e) => setModel(e.target.value)} />
+                  <datalist id="veh-types">{(vehicleBrands.find((b) => b.name === brand)?.types ?? []).map((t) => <option key={t.id} value={t.name} />)}</datalist>
+                </div>
+              </>
+            )}
             <input className="input-field" placeholder={t('pos.new.customerName', 'Customer name *')} value={name} onChange={(e) => setName(e.target.value)} />
             <input className="input-field" placeholder={t('pos.new.phone', 'Phone (e.g. 08123…) *')} value={phone} onChange={(e) => setPhone(e.target.value)} />
             {employees.length > 0 ? (

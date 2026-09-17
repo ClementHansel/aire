@@ -14,21 +14,24 @@ export interface BusinessUnit {
 }
 
 /**
- * The two units every tenant is seeded with (migration 096). Used ONLY as a
- * fallback while the fetch is in flight or has failed — never as the allowed
- * set, which is whatever the tenant owns (AIRIN-176).
+ * What the hook reports before the tenant's real units arrive: NOTHING.
+ *
+ * This used to be a literal AIRE/LEAD pair, on the reasoning that an empty list
+ * would render a till with no tabs. That reasoning only held while every tenant
+ * WAS AIRE/LEAD. For any other tenant those codes match none of their services,
+ * so the fallback rendered two tabs that were guaranteed to be empty — and
+ * labelled them with another company's brands. A brief tab-less moment, which
+ * the consuming effects resolve as soon as the fetch lands, is the better of the
+ * two (AIRIN-176).
  */
-export const FALLBACK_BUSINESS_UNITS: BusinessUnit[] = [
-  { id: 'fallback-aire', code: 'AIRE', name: 'AIRE', color: '#0ea5e9', sortOrder: 0, isActive: true },
-  { id: 'fallback-lead', code: 'LEAD', name: 'LEAD', color: '#8b5cf6', sortOrder: 1, isActive: true },
-];
+export const FALLBACK_BUSINESS_UNITS: BusinessUnit[] = [];
 
 /**
  * The tenant's business units (AIRIN-176).
  *
- * Falling back to AIRE/LEAD rather than an empty list is deliberate: these
- * drive the POS catalog tabs, so an empty list would render a till with no way
- * to reach any service. A stale-but-working tab beats a blank one.
+ * Consumers must tolerate an empty list: it is both the pre-fetch state and the
+ * genuine answer for a tenant who has retired every unit. The POS, reports and
+ * service form all snap to `units[0]` once the list lands.
  */
 export function useBusinessUnits(activeOnly = true): {
   units: BusinessUnit[];

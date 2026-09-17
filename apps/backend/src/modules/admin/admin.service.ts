@@ -6,6 +6,8 @@ import { DATABASE_POOL } from '../auth/database.provider';
 import { assignTenantCode } from '../../common/tenant-code';
 import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
 import { seedDefaultBusinessUnits } from '../business-unit/business-unit.defaults';
+import { seedDefaultAgentConfig } from '../agent-config/agent-config.defaults';
+import { TenantVertical, asVertical, resolveCapabilities } from '@aire/shared';
 import { seedDefaultVehicleCatalog } from '../vehicle-catalog/vehicle-catalog.defaults';
 import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
@@ -41,6 +43,10 @@ export interface CreateTenantDto {
   name: string;
   slug: string;
   plan?: string;
+  /** What shape of business this tenant runs. Decides the starter business units
+   *  and whether vehicle concepts (plates, bays, LPR) exist for them at all.
+   *  Defaults to 'carwash', which is what every pre-existing tenant is. */
+  vertical?: TenantVertical;
   settings?: Record<string, unknown>;
   /** Module enablement map (key → enabled); merged into settings.featureFlags. */
   modules?: Record<string, boolean>;
@@ -235,11 +241,12 @@ export class AdminService {
     }
 
     const baseSettings = { ...DEFAULT_AUTOMATION_SETTINGS, ...(dto.settings ?? {}) };
+    const vertical = asVertical(dto.vertical);
     const result = await this.pool.query<TenantRow>(
-      `INSERT INTO tenants (name, slug, plan, settings)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO tenants (name, slug, plan, settings, vertical)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id, name, slug, plan, status, settings, created_at, updated_at`,
-      [dto.name, dto.slug, dto.plan ?? 'standard', JSON.stringify(baseSettings)],
+      [dto.name, dto.slug, dto.plan ?? 'standard', JSON.stringify(baseSettings), vertical],
     );
     const row = result.rows[0];
     if (!row) {
@@ -251,12 +258,20 @@ export class AdminService {
     // tenant can take payment and the ledger has accounts from day one. All
     // non-fatal/idempotent, mirroring AuthService.register.
     await assignTenantCode(this.pool, tenantId).catch(() => undefined);
-    await seedDefaultBusinessUnits(this.pool, tenantId).catch(() => undefined);
+    await seedDefaultBusinessUnits(this.pool, tenantId, vertical).catch(() => undefined);
     await seedDefaultPaymentMethods(this.pool, tenantId).catch(() => undefined);
     await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
+    // The WhatsApp/AI record. Without it a tenant onboarding onto the CHATBOT
+    // first can connect a number and never get a reply, because inbound messages
+    // cannot be attributed to any tenant.
+    await seedDefaultAgentConfig(this.pool, tenantId).catch(() => undefined);
     // Starter vehicle brands/models — without this the POS vehicle pickers and
-    // the Vehicle Catalog page open empty for every admin-created tenant.
-    await seedDefaultVehicleCatalog(this.pool, tenantId).catch(() => undefined);
+    // the Vehicle Catalog page open empty for every admin-created tenant. Only
+    // for a vertical that HAS vehicles; a laundry or lab tenant would otherwise
+    // be seeded with a catalog of car manufacturers they can never use.
+    if (resolveCapabilities(vertical, null).vehicles) {
+      await seedDefaultVehicleCatalog(this.pool, tenantId).catch(() => undefined);
+    }
 
     // Module enablement (only known keys are honored).
     if (dto.modules && Object.keys(dto.modules).length > 0) {

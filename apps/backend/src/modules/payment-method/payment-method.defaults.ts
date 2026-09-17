@@ -23,12 +23,19 @@ export interface DefaultPaymentMethod {
 /**
  * A sensible starter set every new tenant gets so cashiers can take payment on
  * day one. Kept generic (no bank-specific accounts) — tenants edit/add their own.
+ *
+ * `businessUnit: null` means "settles to whatever unit the order belongs to"
+ * (see PaymentModal's `settlesTo`). Three of these used to be pinned to the
+ * literal 'AIRE' — the founding tenant's brand — so a new tenant was seeded with
+ * payment methods bound to a unit code they did not own, and every card sale
+ * settled to a phantom unit. Null is both generic and more correct: a tenant who
+ * genuinely needs a unit-specific method sets one explicitly.
  */
 export const DEFAULT_PAYMENT_METHODS: DefaultPaymentMethod[] = [
   { name: 'Cash', kind: 'cash', businessUnit: null, color: '#16a34a' },
-  { name: 'QRIS', kind: 'qris', businessUnit: 'AIRE', color: '#4f46e5' },
-  { name: 'Debit / Credit (EDC)', kind: 'edc', businessUnit: 'AIRE', color: '#ea580c' },
-  { name: 'Bank Transfer', kind: 'transfer', businessUnit: 'AIRE', color: '#475569' },
+  { name: 'QRIS', kind: 'qris', businessUnit: null, color: '#4f46e5' },
+  { name: 'Debit / Credit (EDC)', kind: 'edc', businessUnit: null, color: '#ea580c' },
+  { name: 'Bank Transfer', kind: 'transfer', businessUnit: null, color: '#475569' },
 ];
 
 /**

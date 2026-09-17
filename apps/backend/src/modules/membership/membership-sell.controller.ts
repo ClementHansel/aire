@@ -18,6 +18,7 @@ import { MembershipSellService } from './membership-sell.service';
 import { MembershipRenewalService } from './membership-renewal.service';
 import { MembershipIdentityService } from './membership-identity.service';
 import { PlateRegistrationDto } from './dto';
+import { TenantFeaturesService } from '../../common/tenant-features';
 
 interface SellMembershipBody {
   planId: string;
@@ -56,6 +57,7 @@ export class MembershipSellController {
     private readonly checkout: PosCheckoutService,
     private readonly renewalService: MembershipRenewalService,
     private readonly identity: MembershipIdentityService,
+    private readonly features: TenantFeaturesService,
   ) {}
 
   /**
@@ -173,9 +175,14 @@ export class MembershipSellController {
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
   async activate(@CurrentUser() user: JWTPayload, @Param('id') id: string, @Body() body: ActivateBody) {
-    if (!Array.isArray(body.plates) || body.plates.length === 0) {
+    const plates = Array.isArray(body.plates) ? body.plates : [];
+    // A vehicle business must name at least one car, because that plate is what
+    // every later benefit check matches on. For a tenant with no vehicles the
+    // membership belongs to the CUSTOMER, so an empty list is the normal case
+    // and demanding a plate would make memberships unsellable.
+    if (plates.length === 0 && (await this.features.can(user.tenant_id, 'vehicles'))) {
       throw new BadRequestException('At least one plate is required to activate the membership');
     }
-    return this.sellService.activateMembership(id, { plates: body.plates }, user.tenant_id, user.sub);
+    return this.sellService.activateMembership(id, { plates }, user.tenant_id, user.sub);
   }
 }

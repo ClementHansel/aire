@@ -9,6 +9,7 @@ import { assignTenantCode } from '../../common/tenant-code';
 import { seedDefaultPaymentMethods } from '../payment-method/payment-method.defaults';
 import { seedDefaultBusinessUnits } from '../business-unit/business-unit.defaults';
 import { seedDefaultChartOfAccounts } from '../accounting/chart-of-accounts.defaults';
+import { seedDefaultAgentConfig } from '../agent-config/agent-config.defaults';
 import { seedDefaultVehicleCatalog } from '../vehicle-catalog/vehicle-catalog.defaults';
 import {
   JWTPayload,
@@ -21,6 +22,8 @@ import {
   ERR_AUTH_TOO_MANY_ATTEMPTS,
   ERR_AUTH_REFRESH_TOKEN_INVALID,
   ERR_AUTH_REFRESH_TOKEN_EXPIRED,
+  asVertical,
+  resolveCapabilities,
 } from '@aire/shared';
 import { DATABASE_POOL } from './database.provider';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
@@ -61,6 +64,25 @@ const TENANT_STATUS_TTL_MS = 15_000;
  */
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_SECONDS = 15 * 60;
+
+/**
+ * Whether anyone on the internet may create a tenant on this deployment.
+ *
+ * Defaults to DISABLED. On the hosted platform a tenant is a customer we have
+ * agreed terms with: a super-admin provisions it (AdminService.createTenant),
+ * which is also the only path that can set the right `vertical` and plan. Left
+ * open, `POST /api/auth/register` lets an anonymous caller mint an active
+ * 'standard' tenant — spam, unbilled usage, and rows in the same database as
+ * paying customers.
+ *
+ * Set ALLOW_SELF_SIGNUP=true to re-enable (e.g. a public trial or a dev box).
+ */
+const SELF_SIGNUP_ENABLED = process.env.ALLOW_SELF_SIGNUP === 'true';
+
+/** When signup IS open, cap it per source so it cannot be scripted. Reuses the
+ *  same Redis counter pattern as the login lockout — no new dependency. */
+const MAX_SIGNUPS_PER_WINDOW = 3;
+const SIGNUP_WINDOW_SECONDS = 60 * 60;
 
 @Injectable()
 export class AuthService {
@@ -136,8 +158,17 @@ export class AuthService {
   /**
    * Self-service tenant signup: creates a new tenant + its owner user and
    * returns tokens (auto-login).
+   *
+   * Disabled unless ALLOW_SELF_SIGNUP=true — see SELF_SIGNUP_ENABLED. On the
+   * hosted platform tenants are provisioned by a super-admin instead.
    */
-  async register(dto: RegisterRequest): Promise<LoginResponse> {
+  async register(dto: RegisterRequest, sourceKey?: string): Promise<LoginResponse> {
+    if (!SELF_SIGNUP_ENABLED) {
+      throw new ForbiddenException(
+        'Self-service signup is closed. Please contact us to have your business set up.',
+      );
+    }
+    await this.assertSignupAllowed(sourceKey);
     const email = (dto.email ?? '').trim().toLowerCase();
     const name = (dto.name ?? '').trim();
     const tenantName = (dto.tenantName ?? '').trim();
@@ -162,10 +193,14 @@ export class AuthService {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Self-signup cannot know the business shape, so it takes the platform
+      // default. A super-admin can change `vertical` afterwards; nothing here
+      // depends on it except which starter business units get seeded below.
+      const vertical = asVertical((dto as { vertical?: string }).vertical);
       const tenantRes = await client.query<{ id: string }>(
-        `INSERT INTO tenants (name, slug, plan, status, settings)
-         VALUES ($1, $2, 'standard', 'active', $3) RETURNING id`,
-        [tenantName, slug, JSON.stringify(DEFAULT_AUTOMATION_SETTINGS)],
+        `INSERT INTO tenants (name, slug, plan, status, settings, vertical)
+         VALUES ($1, $2, 'standard', 'active', $3, $4) RETURNING id`,
+        [tenantName, slug, JSON.stringify(DEFAULT_AUTOMATION_SETTINGS), vertical],
       );
       const tenantId = tenantRes.rows[0]!.id;
       const userRes = await client.query<UserRow>(
@@ -181,17 +216,23 @@ export class AuthService {
 
       // Give the new tenant a ready-to-use set of payment methods so cashiers can
       // take payment immediately (non-fatal — tenant can add them manually later).
-      await seedDefaultBusinessUnits(this.pool, tenantId).catch(() => undefined);
+      await seedDefaultBusinessUnits(this.pool, tenantId, vertical).catch(() => undefined);
       await seedDefaultPaymentMethods(this.pool, tenantId).catch(() => undefined);
 
       // Seed a default chart of accounts so the ledger auto-posting has accounts
       // to book against from day one (non-fatal — also lazily seeded on first post).
       await seedDefaultChartOfAccounts(this.pool, tenantId).catch(() => undefined);
+      // WhatsApp/AI record — see seedDefaultAgentConfig. Chatbot-first tenants
+      // otherwise connect a number that can never be resolved to them.
+      await seedDefaultAgentConfig(this.pool, tenantId).catch(() => undefined);
 
       // Starter vehicle brands/models, so the POS vehicle pickers and the
       // Vehicle Catalog page are not empty on day one (migrations 035/036 only
-      // ever back-filled tenants that existed when they ran).
-      await seedDefaultVehicleCatalog(this.pool, tenantId).catch(() => undefined);
+      // ever back-filled tenants that existed when they ran). Skipped for a
+      // vertical with no vehicles — a car-manufacturer list is noise there.
+      if (resolveCapabilities(vertical, null).vehicles) {
+        await seedDefaultVehicleCatalog(this.pool, tenantId).catch(() => undefined);
+      }
 
       void this.eventBus?.emit({
         type: DomainEventType.TenantCreated,
@@ -502,6 +543,30 @@ export class AuthService {
    * 429 is raised. Otherwise the usual 401 invalid-credentials is thrown. A Redis
    * outage degrades gracefully to a plain 401 (no lockout, but login still works).
    */
+  /**
+   * Caps how many tenants one source may create per window. Best-effort: if
+   * Redis is unavailable we allow the signup rather than block a legitimate
+   * customer — the ALLOW_SELF_SIGNUP flag, not this counter, is what actually
+   * keeps the endpoint closed.
+   */
+  private async assertSignupAllowed(sourceKey?: string): Promise<void> {
+    if (!sourceKey) return;
+    try {
+      const key = `signup:${sourceKey}`;
+      const count = await this.redis.incr(key);
+      if (count === 1) await this.redis.expire(key, SIGNUP_WINDOW_SECONDS);
+      if (count > MAX_SIGNUPS_PER_WINDOW) {
+        throw new HttpException(
+          'Too many signups from this address. Please try again later.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      this.logger.warn(`signup rate-limit bookkeeping failed: ${String(e)}`);
+    }
+  }
+
   private async registerLoginFailure(email: string): Promise<never> {
     try {
       const key = `loginfail:${email}`;

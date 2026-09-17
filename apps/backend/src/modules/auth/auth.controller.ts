@@ -7,6 +7,7 @@ import {
   HttpStatus,
   BadRequestException,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { AuthService, RegisterRequest } from './auth.service';
 import {
@@ -45,8 +46,15 @@ export class AuthController {
    */
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  async register(@Body() body: RegisterRequest): Promise<LoginResponse> {
-    return this.authService.register(body);
+  async register(
+    @Body() body: RegisterRequest,
+    @Req() req: { ip?: string; headers?: Record<string, unknown> },
+  ): Promise<LoginResponse> {
+    // Behind nginx the socket address is the proxy, so prefer the forwarded
+    // address when present. Only used as a rate-limit bucket — never trusted
+    // for authorization — so a spoofed value costs the caller their own bucket.
+    const forwarded = String(req?.headers?.['x-forwarded-for'] ?? '').split(',')[0]?.trim();
+    return this.authService.register(body, forwarded || req?.ip || undefined);
   }
 
   /**
