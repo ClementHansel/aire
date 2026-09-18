@@ -146,6 +146,25 @@ function stubFreshGatewayFetch() {
   return { calls, wasCreated: () => created };
 }
 
+/**
+ * A gateway whose session is FAILED. `paired` controls whether WAHA reports a
+ * `me` account — the only thing that distinguishes "the QR expired unscanned"
+ * from "the phone revoked this pairing", since both land on FAILED.
+ */
+function stubFailedSessionFetch(paired: boolean) {
+  const fn = vi.fn(async (url: string) => {
+    if (/\/api\/sessions\/[^/]+$/.test(url)) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'FAILED', me: paired ? { id: '628991111425@c.us' } : null }),
+      } as unknown as Response;
+    }
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response;
+  });
+  vi.stubGlobal('fetch', fn);
+}
+
 describe('WhatsApp transport isolation between tenants', () => {
   const prevMock = process.env.WAHA_MOCK;
   const prevUrl = process.env.WAHA_URL;
@@ -171,7 +190,7 @@ describe('WhatsApp transport isolation between tenants', () => {
     const calls = stubFetch('WORKING');
     const svc = new WhatsappService(pool as never, stubRuntime());
 
-    expect(await svc.status(BETA)).toEqual({ status: 'not_configured' });
+    expect(await svc.status(BETA)).toMatchObject({ status: 'not_configured' });
     // The decisive part: it never asked the gateway at all, so it cannot have
     // reported another tenant's session as its own.
     expect(calls).toHaveLength(0);
@@ -239,7 +258,7 @@ describe('WhatsApp transport isolation between tenants', () => {
     const svc = new WhatsappService(pool as never, stubRuntime());
 
     expect(await svc.sendText(BETA, CUSTOMER, 'hi')).toBe(false);
-    expect(await svc.status(BETA)).toEqual({ status: 'not_configured' });
+    expect(await svc.status(BETA)).toMatchObject({ status: 'not_configured' });
     expect(calls).toHaveLength(0);
   });
 
@@ -330,7 +349,42 @@ describe('WhatsApp transport isolation between tenants', () => {
     stubFreshGatewayFetch();
     const svc = new WhatsappService(pool as never, stubRuntime());
 
-    // 'stopped' would read as "exists, just not running" and hide the real state.
-    expect(await svc.status(BETA)).toEqual({ status: 'missing' });
+    // 'stopped' would read as "exists, just not running" and hide the real state,
+    // and the reason has to tell the owner what to press.
+    const st = await svc.status(BETA);
+    expect(st.status).toBe('missing');
+    expect(st.reason).toMatch(/Connect \/ Get QR/);
+  });
+
+  // ── Diagnosing FAILED ──────────────────────────────────────────────────────
+  // WAHA force-stops a session whose QR goes unscanned ("QR refs attempts
+  // ended") and reports FAILED — indistinguishable, from the status alone, from
+  // a pairing the phone revoked. The owner needs opposite advice for each, so a
+  // bare "Failed" is a dead end.
+
+  it('an unscanned-QR failure says the QR expired, not that the connection broke', async () => {
+    const pool = createPool([
+      { tenantId: BETA, wahaSession: 'default', gatewayId: BETA_GATEWAY_ID, token: BETA_TOKEN },
+    ]);
+    stubFailedSessionFetch(false); // never paired → nobody ever scanned it
+    const svc = new WhatsappService(pool as never, stubRuntime());
+
+    const st = await svc.status(BETA);
+    expect(st.status).toBe('FAILED');
+    expect(st.reason).toMatch(/QR code expired/i);
+    expect(st.reason).not.toMatch(/revoked/i);
+  });
+
+  it('a revoked pairing says the device was logged out on the phone', async () => {
+    const pool = createPool([
+      { tenantId: BETA, wahaSession: 'default', gatewayId: BETA_GATEWAY_ID, token: BETA_TOKEN },
+    ]);
+    stubFailedSessionFetch(true); // was paired → WhatsApp dropped it
+    const svc = new WhatsappService(pool as never, stubRuntime());
+
+    const st = await svc.status(BETA);
+    expect(st.status).toBe('FAILED');
+    expect(st.reason).toMatch(/revoked|logged out/i);
+    expect(st.reason).not.toMatch(/expired/i);
   });
 });

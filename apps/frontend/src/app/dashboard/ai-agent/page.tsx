@@ -379,8 +379,9 @@ const WA_STATUS_LABEL: Record<string, string> = {
   WORKING: 'Connected',
   SCAN_QR_CODE: 'Waiting for QR scan',
   STARTING: 'Starting…',
-  FAILED: 'Failed — could not connect',
+  FAILED: 'Not connected',
   stopped: 'Not started',
+  STOPPED: 'Not started',
   // The session does not exist on its gateway yet — Connect creates it.
   missing: 'Not created yet — press Connect',
   qr: 'Waiting for QR scan',
@@ -400,7 +401,12 @@ function WahaConnect({ outletId }: { outletId?: string }) {
   const suffix = outletId ? `?outletId=${encodeURIComponent(outletId)}` : '';
 
   const refresh = async () => {
-    try { const s = await api.get<{ status: string }>(`/whatsapp/status${suffix}`); setStatus(s.status); setReason(undefined); } catch { setStatus('unreachable'); }
+    // Keep the reason: a bare "Failed" hides whether the QR simply expired
+    // (press Connect again) or the phone logged this device out.
+    try {
+      const s = await api.get<{ status: string; reason?: string }>(`/whatsapp/status${suffix}`);
+      setStatus(s.status); setReason(s.reason);
+    } catch { setStatus('unreachable'); setReason(undefined); }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [outletId]);
 

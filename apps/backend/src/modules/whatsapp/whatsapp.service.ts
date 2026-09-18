@@ -434,13 +434,28 @@ export class WhatsappService implements OnModuleInit {
    * which is every new tenant under one-gateway-per-tenant.
    */
   private async rawStatus(gw: WaGateway, session: string): Promise<string> {
+    return (await this.rawSession(gw, session)).status;
+  }
+
+  /**
+   * Like {@link rawStatus}, plus whether this session has ever been paired to a
+   * phone (WAHA reports the paired account in `me`).
+   *
+   * That flag is what makes FAILED diagnosable. WAHA force-stops a session whose
+   * QR goes unscanned ("QR refs attempts ended") and the result is FAILED —
+   * identical, from the status alone, to a pairing that WhatsApp revoked. The
+   * two need opposite explanations: one is "your QR expired, get another", the
+   * other is "the phone logged this device out". `me` tells them apart, because
+   * a session that was never scanned never had an account.
+   */
+  private async rawSession(gw: WaGateway, session: string): Promise<{ status: string; paired: boolean }> {
     try {
       const res = await fetch(`${gw.url}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders(gw) });
-      if (res.status === 404) return 'missing';
-      if (!res.ok) return 'stopped';
-      const data = (await res.json()) as { status?: string };
-      return data.status ?? 'unknown';
-    } catch { return 'unreachable'; }
+      if (res.status === 404) return { status: 'missing', paired: false };
+      if (!res.ok) return { status: 'stopped', paired: false };
+      const data = (await res.json()) as { status?: string; me?: { id?: string } | null };
+      return { status: data.status ?? 'unknown', paired: !!data.me?.id };
+    } catch { return { status: 'unreachable', paired: false }; }
   }
 
   /**
@@ -512,16 +527,35 @@ export class WhatsappService implements OnModuleInit {
     };
   }
 
-  async status(tenantId: string, outletId?: string | null): Promise<{ status: string }> {
+  async status(tenantId: string, outletId?: string | null): Promise<{ status: string; reason?: string }> {
     const cfg = await this.config(tenantId, outletId);
     if (this.isMockActive(cfg)) return { status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { status: 'not_configured' };
     if (cfg?.wa_provider === 'kirim') return { status: cfg.kirim_api_key ? 'configured' : 'not_configured' };
     const session = this.sessionOf(cfg);
-    if (!session) return { status: 'not_configured' };
+    if (!session) return { status: 'not_configured', reason: 'No WAHA session name is set for this line.' };
     const gw = await this.gatewayFor(cfg);
-    if (!gw) return { status: 'not_configured' };
-    return { status: await this.rawStatus(gw, session) };
+    if (!gw) return { status: 'not_configured', reason: 'The WhatsApp gateway assigned to this line is missing or deactivated.' };
+
+    const s = await this.rawSession(gw, session);
+    // A bare "Failed" tells the owner nothing they can act on. Say which failure
+    // it is — the fix differs, and in the common case (an expired QR) nothing is
+    // actually wrong.
+    if (s.status === 'FAILED') {
+      return {
+        status: s.status,
+        reason: s.paired
+          ? 'The pairing was revoked — the device was logged out on the phone. Press Connect / Get QR to pair again.'
+          : 'The QR code expired before anyone scanned it. Press Connect / Get QR for a fresh one, then scan it within about two minutes.',
+      };
+    }
+    if (s.status === 'missing') {
+      return { status: s.status, reason: 'The session does not exist on the WhatsApp service yet. Press Connect / Get QR to create it.' };
+    }
+    if (s.status === 'unreachable') {
+      return { status: s.status, reason: `WAHA service '${gw.name}' is not reachable.` };
+    }
+    return { status: s.status };
   }
 
   /**
