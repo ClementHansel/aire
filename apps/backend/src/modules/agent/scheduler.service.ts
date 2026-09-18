@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ScheduledAnalysisService } from './scheduled-analysis.service';
 import { JobMonitorService } from '../job-monitor';
+import { runAsTenant } from '../../common/tenant-context';
 
 /**
  * Schedule configuration for a tenant's periodic AI analysis.
@@ -116,7 +117,11 @@ export class SchedulerService implements OnModuleDestroy {
 
     const intervalMs = INTERVAL_MS[interval];
     const timer = setInterval(() => {
-      this.runJob(tenantId);
+      // Per-tenant work, so it runs SCOPED rather than privileged: the job
+      // belongs to one tenant and row-level security should still confine it.
+      // This is the shape to prefer for a scheduler — runPrivileged is for
+      // sweeps that are cross-tenant by construction.
+      runAsTenant(tenantId, () => this.runJob(tenantId), `scheduler:${tenantId}`);
     }, intervalMs);
 
     this.jobs.set(tenantId, {

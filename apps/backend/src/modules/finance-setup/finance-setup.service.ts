@@ -6,6 +6,7 @@ import { AccountingPoster } from '../accounting/accounting-poster.service';
 import { PayrollService } from '../hr/payroll.service';
 import { ACC } from '../accounting/chart-of-accounts.defaults';
 import { JobMonitorService } from '../job-monitor';
+import { runPrivileged } from '../../common/tenant-context';
 
 const FINANCE_AUTOMATION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
@@ -64,7 +65,8 @@ export class FinanceSetupService implements OnModuleInit, OnModuleDestroy {
     // Self-owned automation heartbeat (single-node, in-memory — same pattern as
     // membership-lifecycle). Runs a few times a day; all actions are idempotent.
     if (process.env.DISABLE_FINANCE_AUTOMATION === 'true') return;
-    this.timer = setInterval(() => { void this.runAutomationTracked(); }, FINANCE_AUTOMATION_INTERVAL_MS);
+    // Platform-wide finance automation pass; no request behind it.
+    this.timer = setInterval(() => { void runPrivileged(() => this.runAutomationTracked()); }, FINANCE_AUTOMATION_INTERVAL_MS);
     if (typeof this.timer.unref === 'function') this.timer.unref();
   }
 

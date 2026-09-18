@@ -16,6 +16,7 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from '../whatsapp';
 import { NotificationRendererService, renderNotification } from '../notification/notification-renderer.service';
+import { runPrivileged } from '../../common/tenant-context';
 
 export type FeedbackQuestionType = 'rating' | 'nps' | 'text';
 /** A single survey question shown on the public form. */
@@ -115,7 +116,9 @@ export class FeedbackService implements OnModuleInit, OnModuleDestroy {
     // Delayed-send sweep: dispatch surveys whose configured send delay has elapsed.
     // Dependency-free interval (mirrors membership-lifecycle); overlapping runs are guarded.
     this.sweepTimer = setInterval(() => {
-      void this.dispatchDue().catch((e) => this.logger.warn(`feedback sweep failed: ${e instanceof Error ? e.message : e}`));
+      // Sweeps due surveys across all tenants; no request behind it.
+      void runPrivileged(() => this.dispatchDue()
+        .catch((e) => this.logger.warn(`feedback sweep failed: ${e instanceof Error ? e.message : e}`)));
     }, FEEDBACK_SWEEP_INTERVAL_MS);
     this.sweepTimer.unref?.();
   }

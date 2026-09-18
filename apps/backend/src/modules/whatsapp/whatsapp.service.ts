@@ -16,6 +16,7 @@ import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 // Token + type only — importing AgentChatService itself would close a runtime
 // import cycle (see agent/staff-chat.port.ts for the full explanation).
 import { STAFF_CHAT, type StaffChatPort } from '../agent/staff-chat.port';
+import { runPrivileged } from '../../common/tenant-context';
 
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
@@ -198,9 +199,12 @@ export class WhatsappService implements OnModuleInit {
     // (no @nestjs/schedule), guarded against overlap, and unref'd so it never
     // holds the process open. Skipped entirely if the booking gate isn't wired.
     if (!this.pendingBooking) return;
-    void this.runApprovalSla().catch((e) => this.logger.warn(`initial approval SLA sweep failed: ${String(e)}`));
+    // One scan across every tenant's pending approvals; no request behind it.
+    void runPrivileged(() => this.runApprovalSla()
+      .catch((e) => this.logger.warn(`initial approval SLA sweep failed: ${String(e)}`)));
     setInterval(() => {
-      void this.runApprovalSla().catch((e) => this.logger.warn(`approval SLA sweep failed: ${String(e)}`));
+      void runPrivileged(() => this.runApprovalSla()
+        .catch((e) => this.logger.warn(`approval SLA sweep failed: ${String(e)}`)));
     }, APPROVAL_SLA_SWEEP_MS).unref?.();
   }
 

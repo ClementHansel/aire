@@ -29,6 +29,7 @@ import { DATABASE_POOL } from './database.provider';
 import { DEFAULT_AUTOMATION_SETTINGS } from '../settings/settings.interfaces';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { runPrivileged } from '../../common/tenant-context';
 
 export interface RegisterRequest {
   tenantName: string;
@@ -402,7 +403,12 @@ export class AuthService {
     const hit = this.tenantStatusCache.get(tenantId);
     const now = Date.now();
     if (hit && now - hit.at < TENANT_STATUS_TTL_MS) return hit.status;
-    const res = await this.pool.query<{ status: string }>('SELECT status FROM tenants WHERE id = $1', [tenantId]);
+    // Runs while authenticating, inside the guard — before the interceptor
+    // that would set the tenant context. `tenants` has no tenant_id column
+    // and so no policy, but the read still has to go somewhere: privileged,
+    // explicitly, rather than tripping the no-context warning on every call.
+    const res = await runPrivileged(() => this.pool.query<{ status: string }>(
+      'SELECT status FROM tenants WHERE id = $1', [tenantId]));
     const status = res.rows[0]?.status ?? 'cancelled';
     this.tenantStatusCache.set(tenantId, { status, at: now });
     return status;

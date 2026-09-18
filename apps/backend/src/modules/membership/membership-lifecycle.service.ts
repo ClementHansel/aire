@@ -6,6 +6,7 @@ import { DomainEventType } from '../events/event.types';
 import { NotificationService, NotificationType } from '../notification/notification.service';
 import { JobMonitorService } from '../job-monitor';
 import { MEMBERSHIP_GRACE_DAYS } from '@aire/shared';
+import { runPrivileged } from '../../common/tenant-context';
 
 export type MembershipEventType =
   | 'activated' | 'renewed' | 'entered_grace' | 'revoked' | 'expired'
@@ -47,8 +48,11 @@ export class MembershipLifecycleService implements OnModuleInit {
   onModuleInit(): void {
     // Fire once at boot, then on a coarse interval. Guarded so overlapping runs
     // are skipped. Kept dependency-free (no @nestjs/schedule).
-    void this.sweep();
-    setInterval(() => { void this.sweep(); }, TRANSITION_INTERVAL_MS).unref?.();
+    // Cross-tenant by design: runTransitions is one UPDATE over every
+    // tenant's memberships, returning tenant_id per row. Privileged, not
+    // per-tenant — a tenant predicate here would be wrong, not safer.
+    void runPrivileged(() => this.sweep());
+    setInterval(() => { void runPrivileged(() => this.sweep()); }, TRANSITION_INTERVAL_MS).unref?.();
   }
 
   /** One maintenance pass: advance statuses first, then send expiry reminders. */

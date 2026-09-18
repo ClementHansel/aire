@@ -17,6 +17,7 @@ import {
 import type { DiscoveredDeviceType } from '../settings/settings.interfaces';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
+import { runPrivileged } from '../../common/tenant-context';
 
 /**
  * The categories a `branch_devices` row can take. `camera | controller |
@@ -178,7 +179,8 @@ export class DeviceRegistryService implements OnModuleInit, OnModuleDestroy {
     // liveness from branch_bridges.last_seen_at every 30s so topology + alerts
     // reflect reality. Guarded so unit tests (no bus/pool) don't start a timer.
     if (this.bridgeEvents && !this.reconcileTimer) {
-      this.reconcileTimer = setInterval(() => void this.reconcileLiveness(), 30_000);
+      // Sweeps every tenant's devices for liveness; no request behind it.
+      this.reconcileTimer = setInterval(() => void runPrivileged(() => this.reconcileLiveness()), 30_000);
       if (typeof this.reconcileTimer.unref === 'function') this.reconcileTimer.unref();
     }
   }

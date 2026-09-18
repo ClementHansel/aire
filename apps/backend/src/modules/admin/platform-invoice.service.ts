@@ -7,6 +7,7 @@ import { PlatformTaxService } from './platform-tax.service';
 import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { JobMonitorService } from '../job-monitor';
+import { runPrivileged } from '../../common/tenant-context';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /** Days an invoice can be overdue before the tenant is flagged past_due / suspended. */
@@ -103,9 +104,11 @@ export class PlatformInvoiceService implements OnModuleInit {
       this.logger.log('Auto invoice generation disabled (PLATFORM_INVOICE_AUTOGEN=false).');
       return;
     }
-    void this.runBillingJob().catch((e) => this.logger.warn(`initial billing job failed: ${e}`));
+    // Platform scope: it invoices every tenant and ages the whole dunning
+    // ledger. Privileged, explicitly.
+    void runPrivileged(() => this.runBillingJob().catch((e) => this.logger.warn(`initial billing job failed: ${e}`)));
     setInterval(() => {
-      void this.runBillingJob().catch((e) => this.logger.warn(`billing job failed: ${e}`));
+      void runPrivileged(() => this.runBillingJob().catch((e) => this.logger.warn(`billing job failed: ${e}`)));
     }, INVOICE_JOB_INTERVAL_MS).unref?.();
   }
 

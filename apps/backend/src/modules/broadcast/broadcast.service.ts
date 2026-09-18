@@ -13,6 +13,7 @@ import { EventBusService } from '../events/event-bus.service';
 import { DomainEventType } from '../events/event.types';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { JobMonitorService } from '../job-monitor';
+import { runPrivileged } from '../../common/tenant-context';
 
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
@@ -91,9 +92,12 @@ export class BroadcastService implements OnModuleInit {
     // Promote due 'scheduled' campaigns to 'sending' at boot, then every minute.
     // Dependency-free (no @nestjs/schedule), overlap-guarded, and unref'd so it
     // never holds the process open — mirrors WhatsappService's approval SLA sweep.
-    void this.runScheduledSweep().catch((e) => this.logger.warn(`initial broadcast scheduler sweep failed: ${String(e)}`));
+    // Finds due campaigns across all tenants; no request behind it.
+    void runPrivileged(() => this.runScheduledSweep()
+      .catch((e) => this.logger.warn(`initial broadcast scheduler sweep failed: ${String(e)}`)));
     setInterval(() => {
-      void this.runScheduledSweep().catch((e) => this.logger.warn(`broadcast scheduler sweep failed: ${String(e)}`));
+      void runPrivileged(() => this.runScheduledSweep()
+        .catch((e) => this.logger.warn(`broadcast scheduler sweep failed: ${String(e)}`)));
     }, SCHEDULE_SWEEP_MS).unref?.();
   }
 
