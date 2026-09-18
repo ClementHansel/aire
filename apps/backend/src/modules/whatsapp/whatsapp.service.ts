@@ -391,6 +391,29 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
+  /**
+   * Create the session on this gateway and start it in one call. WAHA has no
+   * "start a session that does not exist" — `POST /api/sessions/<name>/start`
+   * 404s until the session has been created with `POST /api/sessions`.
+   */
+  private async wahaSessionCreate(gw: WaGateway, session: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${gw.url}/api/sessions`, {
+        method: 'POST',
+        headers: this.wahaHeaders(gw, true),
+        body: JSON.stringify({ name: session, start: true }),
+      });
+      // 201 created; 409/422 means it already exists, which is just as good.
+      if (res.ok || res.status === 409 || res.status === 422) return true;
+      const detail = await res.text().catch(() => '');
+      this.logger.warn(`WAHA create '${session}' on '${gw.name}' → HTTP ${res.status} ${detail.slice(0, 200)}`);
+      return false;
+    } catch (e) {
+      this.logger.warn(`WAHA create '${session}' on '${gw.name}' failed: ${String(e)}`);
+      return false;
+    }
+  }
+
   /** Poll the session until it leaves STARTING, or the budget runs out. */
   private async awaitSettled(gw: WaGateway, session: string, tries = 5, delayMs = 1500): Promise<string> {
     let status = await this.rawStatus(gw, session);
@@ -401,10 +424,19 @@ export class WhatsappService implements OnModuleInit {
     return status;
   }
 
-  /** The session's status straight from WAHA, with no tenant/mock interpretation. */
+  /**
+   * The session's status straight from WAHA, with no tenant/mock interpretation.
+   *
+   * 404 is reported as 'missing', NOT 'stopped'. On a gateway that has never
+   * held this session WAHA answers "Session not found", and a missing session
+   * cannot be started — it has to be CREATED first. Collapsing the two into
+   * 'stopped' made Connect/Get QR silently no-op on every fresh container,
+   * which is every new tenant under one-gateway-per-tenant.
+   */
   private async rawStatus(gw: WaGateway, session: string): Promise<string> {
     try {
       const res = await fetch(`${gw.url}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders(gw) });
+      if (res.status === 404) return 'missing';
       if (!res.ok) return 'stopped';
       const data = (await res.json()) as { status?: string };
       return data.status ?? 'unknown';
@@ -442,6 +474,16 @@ export class WhatsappService implements OnModuleInit {
     if (status === 'unreachable') return { status, reason: `WAHA service '${gw.name}' is not reachable.` };
     if (WhatsappService.WAHA_HEALTHY.includes(status)) return { status };
 
+    // Not on this gateway at all (a freshly provisioned container): create it.
+    // `start` alone would 404 forever.
+    if (status === 'missing') {
+      this.logger.log(`WAHA session '${session}' does not exist on '${gw.name}'; creating it.`);
+      if (!await this.wahaSessionCreate(gw, session)) {
+        return { status: 'missing', reason: `Could not create the session on WAHA service '${gw.name}'.` };
+      }
+      return { status: await this.awaitSettled(gw, session) };
+    }
+
     if (status !== 'FAILED') {
       // Never started, or stopped: a plain start is enough.
       await this.wahaSessionCall(gw, session, 'start');
@@ -457,7 +499,10 @@ export class WhatsappService implements OnModuleInit {
     // Still FAILED: the credentials are revoked. Wipe and re-pair from scratch.
     this.logger.warn(`WAHA session '${session}' on '${gw.name}' still FAILED after restart; wiping revoked credentials to force re-pairing.`);
     await this.wahaSessionCall(gw, session, 'logout');
-    await this.wahaSessionCall(gw, session, 'start');
+    // Some WAHA versions DELETE the session on logout rather than just clearing
+    // its credentials, so `start` would 404. Create covers both shapes.
+    if (await this.rawStatus(gw, session) === 'missing') await this.wahaSessionCreate(gw, session);
+    else await this.wahaSessionCall(gw, session, 'start');
     status = await this.awaitSettled(gw, session);
     return {
       status,

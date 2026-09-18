@@ -381,6 +381,8 @@ const WA_STATUS_LABEL: Record<string, string> = {
   STARTING: 'Starting…',
   FAILED: 'Failed — could not connect',
   stopped: 'Not started',
+  // The session does not exist on its gateway yet — Connect creates it.
+  missing: 'Not created yet — press Connect',
   qr: 'Waiting for QR scan',
   kirim: 'Using kirimdev (no QR needed)',
   configured: 'Configured',

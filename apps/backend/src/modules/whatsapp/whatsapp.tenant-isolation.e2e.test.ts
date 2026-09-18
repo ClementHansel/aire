@@ -119,6 +119,33 @@ function stubFetch(status = 'WORKING') {
   return calls;
 }
 
+/**
+ * A freshly provisioned gateway: it does not hold the session yet, so
+ * `GET /api/sessions/<name>` 404s and `POST /api/sessions/<name>/start` 404s
+ * too. Only `POST /api/sessions` can bring it into being. Once created, the
+ * status reads SCAN_QR_CODE.
+ */
+function stubFreshGatewayFetch() {
+  const calls: { url: string; method?: string; body?: unknown }[] = [];
+  let created = false;
+  const fn = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+    calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : undefined });
+    const isCreate = url.endsWith('/api/sessions') && init?.method === 'POST';
+    if (isCreate) { created = true; return { ok: true, status: 201, json: async () => ({}), text: async () => '' } as unknown as Response; }
+    if (/\/api\/sessions\/[^/]+$/.test(url)) {
+      return created
+        ? { ok: true, status: 200, json: async () => ({ status: 'SCAN_QR_CODE' }) } as unknown as Response
+        : { ok: false, status: 404, json: async () => ({}), text: async () => 'Session not found' } as unknown as Response;
+    }
+    if (url.includes('/start') || url.includes('/restart') || url.includes('/logout')) {
+      return { ok: false, status: 404, json: async () => ({}), text: async () => 'Session not found' } as unknown as Response;
+    }
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response;
+  });
+  vi.stubGlobal('fetch', fn);
+  return { calls, wasCreated: () => created };
+}
+
 describe('WhatsApp transport isolation between tenants', () => {
   const prevMock = process.env.WAHA_MOCK;
   const prevUrl = process.env.WAHA_URL;
@@ -273,5 +300,37 @@ describe('WhatsApp transport isolation between tenants', () => {
     await svc.handleInbound({ session: 'legacy-session', from: CUSTOMER, text: 'halo' });
     expect(pool.messages.filter((m) => m.direction === 'inbound')).toHaveLength(1);
     expect(pool.messages[0]!.tenantId).toBe(ACME);
+  });
+
+  // ── Provisioning a brand-new gateway ───────────────────────────────────────
+
+  it('CREATES the session on a fresh gateway instead of no-opping on a 404', async () => {
+    // Found in live testing: a container that has never held the session 404s
+    // on GET and on /start. Only POST /api/sessions can create it — so
+    // Connect/Get QR silently did nothing on every newly provisioned tenant.
+    const pool = createPool([
+      { tenantId: BETA, wahaSession: 'default', gatewayId: BETA_GATEWAY_ID, token: BETA_TOKEN },
+    ]);
+    const { calls, wasCreated } = stubFreshGatewayFetch();
+    const svc = new WhatsappService(pool as never, stubRuntime());
+
+    const ensured = await svc.ensureSession(BETA);
+
+    expect(wasCreated()).toBe(true);
+    expect(ensured.status).toBe('SCAN_QR_CODE');
+    const create = calls.find((c) => c.url === 'http://waha-beta:3000/api/sessions' && c.method === 'POST');
+    expect(create).toBeDefined();
+    expect(create!.body).toMatchObject({ name: 'default', start: true });
+  });
+
+  it('reports the session as missing, not stopped, when the gateway does not hold it', async () => {
+    const pool = createPool([
+      { tenantId: BETA, wahaSession: 'default', gatewayId: BETA_GATEWAY_ID, token: BETA_TOKEN },
+    ]);
+    stubFreshGatewayFetch();
+    const svc = new WhatsappService(pool as never, stubRuntime());
+
+    // 'stopped' would read as "exists, just not running" and hide the real state.
+    expect(await svc.status(BETA)).toEqual({ status: 'missing' });
   });
 });
