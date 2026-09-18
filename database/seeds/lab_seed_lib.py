@@ -36,7 +36,8 @@ CANON = {
     "capacitance": ("F", {"pF": 1e-12, "nF": 1e-9, "uF": 1e-6, "F": 1}),
     "inductance": ("H", {"uH": 1e-6, "mH": 1e-3, "H": 1}),
     "power": ("W", {"W": 1, "kW": 1e3}),
-    "time": ("s", {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1}),
+    "time": ("s", {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1,
+                    "min": 60, "jam": 3600}),
     "frequency": ("Hz", {"Hz": 1, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}),
     "rotation": ("rpm", {"rpm": 1}),
     "mass": ("kg", {"mg": 1e-6, "g": 1e-3, "kg": 1, "ton": 1e3}),
@@ -92,8 +93,9 @@ CANON = {
     "gas_ppb": ("ppb", {"ppb": 1}),
     "mass_concentration": ("mg/Nm3", {"mg/Nm3": 1}),
     "opacity": ("m-1", {"m-1": 1}),
-    "tds": ("mg/L", {"mg/L": 1, "ppm": 1}),
-    "flow": ("L/min", {"L/min": 1, "L/s": 60, "m3/h": 16.6667, "L/h": 1.0 / 60}),
+    "tds": ("mg/L", {"mg/L": 1, "ppm": 1, "g/L": 1e3}),
+    "flow": ("L/min", {"L/min": 1, "L/s": 60, "m3/min": 1000,
+              "m3/h": 16.6667, "L/h": 1.0 / 60}),
     "energy": ("kWh", {"kWh": 1, "Wh": 1e-3}),
     "sound": ("dB", {"dB": 1}),
     "light": ("lux", {"lux": 1, "Lux": 1}),
@@ -117,6 +119,15 @@ CANON = {
     "percent_reading": ("%", {"%": 1}),
     "density": ("g/cm3", {"g/cm3": 1, "g/mL": 1}),
     "viscosity": ("cP", {"cP": 1, "cSt": 1, "mPas": 1}),
+    # Electric charge, for partial-discharge meters.
+    "charge": ("pC", {"pC": 1, "nC": 1e3, "uC": 1e6}),
+    # Sugar scale (International Sugar Scale, degrees Z) for polarimeters --
+    # not an angle, even though the same instrument also reads optical rotation.
+    "sugar_degree": ("Z", {"Z": 1}),
+    "particle_conc": ("Pc/m3", {"Pc/m3": 1}),
+    "aerosol_conc": ("ug/L", {"ug/L": 1}),
+    # Fibre attenuation coefficient: dB per km, not a plain dB level.
+    "attenuation_per_km": ("dB/km", {"dB/km": 1}),
 }
 
 
