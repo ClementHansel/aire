@@ -17,18 +17,6 @@ import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 // import cycle (see agent/staff-chat.port.ts for the full explanation).
 import { STAFF_CHAT, type StaffChatPort } from '../agent/staff-chat.port';
 
-/**
- * Once-per-chat identity request, appended after the first reply to an unknown
- * sender. Named after the TENANT'S agent and business — it used to hardcode
- * "Irene" and "terdaftar di Aire", so every other company's customers were asked
- * for their membership at a business they had never heard of.
- */
-function identityAsk(agentName: string, businessName: string | null): string {
-  const at = businessName ? ` di ${businessName}` : '';
-  return `Oh iya, biar ${agentName} bisa bantu lebih lengkap (cek membership, voucher, atau bikin booking), `
-    + `boleh info nomor HP yang terdaftar${at}, nomor member, atau plat kendaraannya ya kak? 😊`;
-}
-
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
   skills: string | null;
@@ -1049,12 +1037,27 @@ export class WhatsappService implements OnModuleInit {
     // booking is already confirmed). Read the summary back deterministically and
     // ask for YA/BATAL — the booking is only created after the customer confirms.
     if (result.proposedBooking && result.bookingSummary) {
-      outText = `Baik kak, Irene siapkan booking berikut ya:\n\n${result.bookingSummary}\n\nBalas *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan. 🙏`;
+      // `result.agentName`, never a literal: this said "Irene" — the demo car
+      // wash's persona — to every tenant's customers, including ones whose
+      // assistant introduces itself by another name two lines earlier.
+      outText = `Baik kak, ${result.agentName} siapkan booking berikut ya:\n\n${result.bookingSummary}\n\nBalas *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan. 🙏`;
     }
     // Ask for identity ONCE per chat when we still don't know the sender, so we
     // can personalise from here on (introduce → ask → bind on their reply).
+    //
+    // The wording lives in the notification catalogue ('customer_identity_ask'),
+    // not here. It used to be built inline, which meant it asked every tenant's
+    // customers for "plat kendaraannya" — a calibration lab has no plates — and
+    // the owner could not find that sentence in any prompt, because it was in
+    // TypeScript. Owners can now edit it per tenant under
+    // Settings → Notifications, and non-vehicle verticals get a default without
+    // the plate. A disabled entry returns null: skip the ask, keep the reply.
     if (this.customerContext && !isGroup && !boundCustomer && !conv.identity_prompted) {
-      outText = `${outText}\n\n${identityAsk(result.agentName, await this.businessName(tenantId))}`;
+      const ask = await renderNotification(this.renderer, tenantId, 'customer_identity_ask', {
+        agentName: result.agentName,
+        businessName: await this.businessName(tenantId),
+      });
+      if (ask) outText = `${outText}\n\n${ask}`;
       await this.markIdentityPrompted(conv.id);
     }
     await this.addMessage(tenantId, conv.id, 'outbound', outText, true, result.agentName);

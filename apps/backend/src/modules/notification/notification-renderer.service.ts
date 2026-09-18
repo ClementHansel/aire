@@ -52,7 +52,26 @@ export class NotificationRendererService {
    */
   private tableMissing = false;
 
+  /**
+   * Tenant vertical cache. Read on every render that has a per-vertical default,
+   * and it effectively never changes (migration 100 calls it "effectively
+   * permanent"), so it is cached for the process lifetime rather than by TTL.
+   */
+  private verticals = new Map<string, string | null>();
+
   constructor(@Inject(DATABASE_POOL) private readonly pool: Pool) {}
+
+  /** The tenant's line of business, for {@link NotificationDefinition.defaultBodyByVertical}. */
+  private async verticalOf(tenantId: string): Promise<string | null> {
+    const hit = this.verticals.get(tenantId);
+    if (hit !== undefined) return hit;
+    const r = await this.pool
+      .query<{ vertical: string }>('SELECT vertical FROM tenants WHERE id = $1', [tenantId])
+      .catch(() => ({ rows: [] as { vertical: string }[] }));
+    const v = r.rows[0]?.vertical ?? null;
+    this.verticals.set(tenantId, v);
+    return v;
+  }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
 
@@ -74,7 +93,24 @@ export class NotificationRendererService {
     const override = (await this.overrides(tenantId)).get(key);
     if (override && !override.enabled) return null;
 
-    const body = override?.body?.trim() ? override.body : def.defaultBody;
+    // Precedence: the owner's own wording, then this vertical's default, then
+    // the stock (car-wash) default. Only look the vertical up when an entry
+    // actually has per-vertical wording — most do not.
+    let body: string;
+    if (override?.body?.trim()) {
+      body = override.body;
+    } else {
+      body = def.defaultBody;
+      // Only hit the database when this entry actually has per-vertical
+      // wording — most do not.
+      if (def.defaultBodyByVertical) {
+        const vertical = await this.verticalOf(tenantId);
+        const byVertical = vertical
+          ? def.defaultBodyByVertical[vertical as keyof typeof def.defaultBodyByVertical]
+          : undefined;
+        if (byVertical) body = byVertical;
+      }
+    }
     return fillTemplate(body, vars, optionalVars(def));
   }
 

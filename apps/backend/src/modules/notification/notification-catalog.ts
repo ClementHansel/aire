@@ -79,6 +79,12 @@ export interface NotificationVariable {
   optional?: boolean;
 }
 
+/**
+ * The tenant's line of business (`tenants.vertical`, migration 100). Only used
+ * here to pick a default wording.
+ */
+export type NotificationVertical = 'carwash' | 'services' | 'fnb' | 'laundry';
+
 export interface NotificationDefinition {
   key: string;
   /** Short name shown in the UI list and the document heading. */
@@ -89,6 +95,19 @@ export interface NotificationDefinition {
   trigger: string;
   variables: NotificationVariable[];
   defaultBody: string;
+  /**
+   * Wording that replaces `defaultBody` for particular verticals.
+   *
+   * The stock bodies were written for a car wash and several of them name a
+   * vehicle — "sebutkan nomor HP atau plat mobil kakak". Sent by a calibration
+   * lab that is exactly the kind of line that makes an owner ask where it came
+   * from, because it is in no prompt they can see. A per-tenant override could
+   * fix it one tenant at a time; this fixes the DEFAULT, so a non-vehicle
+   * tenant reads correctly on day one without touching anything.
+   *
+   * An explicit owner override still wins over both.
+   */
+  defaultBodyByVertical?: Partial<Record<NotificationVertical, string>>;
   /**
    * Whether the owner may switch this message off. Security codes and booking
    * acknowledgements are load-bearing — turning them off breaks a flow rather
@@ -130,6 +149,27 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Berlaku sampai {endDate}.',
       'Tinggal sebutkan nomor HP atau plat mobil kakak di kasir untuk pakai benefitnya ya 😊',
     ].join('\n'),
+    defaultBodyByVertical: {
+      // No plate: these tenants do not service vehicles.
+      services: [
+        'Halo kak {customerName}! 🎉',
+        'Selamat, membership *{planName}* kakak sudah aktif!',
+        'Berlaku sampai {endDate}.',
+        'Tinggal sebutkan nomor HP kakak saat transaksi untuk pakai benefitnya ya 😊',
+      ].join('\n'),
+      fnb: [
+        'Halo kak {customerName}! 🎉',
+        'Selamat, membership *{planName}* kakak sudah aktif!',
+        'Berlaku sampai {endDate}.',
+        'Tinggal sebutkan nomor HP kakak di kasir untuk pakai benefitnya ya 😊',
+      ].join('\n'),
+      laundry: [
+        'Halo kak {customerName}! 🎉',
+        'Selamat, membership *{planName}* kakak sudah aktif!',
+        'Berlaku sampai {endDate}.',
+        'Tinggal sebutkan nomor HP kakak di kasir untuk pakai benefitnya ya 😊',
+      ].join('\n'),
+    },
     canDisable: true,
   }),
   D({
@@ -469,6 +509,37 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Pesan ini membawa kode keamanan. Mengubahnya berisiko membuat pelanggan gagal masuk, jadi teksnya dikunci.',
   }),
   D({
+    key: 'customer_identity_ask',
+    title: 'Permintaan identitas pelanggan (sekali per chat)',
+    category: 'account',
+    audience: 'customer',
+    trigger:
+      'Ditambahkan di bawah balasan pertama asisten WhatsApp bila pengirimnya belum dikenali. '
+      + 'Dikirim maksimal satu kali per percakapan, supaya asisten bisa mengecek membership, voucher, atau membuat booking milik pelanggan tersebut.',
+    variables: [
+      { name: 'agentName', description: 'Nama asisten (persona) Anda', sample: 'Kalia' },
+      { name: 'businessName', description: 'Nama bisnis Anda', sample: 'PT Dinamika Kalibrasi Indonesia', optional: true },
+    ],
+    defaultBody:
+      'Oh iya, biar {agentName} bisa bantu lebih lengkap (cek membership, voucher, atau bikin booking), '
+      + 'boleh info nomor HP yang terdaftar di {businessName}, nomor member, atau plat kendaraannya ya kak? 😊',
+    defaultBodyByVertical: {
+      // A calibration lab, salon or clinic has no plates to ask for. This line
+      // used to be built in TypeScript at the call site, so "plat kendaraannya"
+      // reached every tenant and appeared in no prompt the owner could inspect.
+      services:
+        'Oh iya, biar {agentName} bisa bantu lebih lengkap (cek membership, voucher, atau bikin jadwal), '
+        + 'boleh info nomor HP yang terdaftar di {businessName} atau nomor membernya ya kak? 😊',
+      fnb:
+        'Oh iya, biar {agentName} bisa bantu lebih lengkap (cek membership, voucher, atau bikin pesanan), '
+        + 'boleh info nomor HP yang terdaftar di {businessName} atau nomor membernya ya kak? 😊',
+      laundry:
+        'Oh iya, biar {agentName} bisa bantu lebih lengkap (cek membership, voucher, atau status laundry), '
+        + 'boleh info nomor HP yang terdaftar di {businessName} atau nomor membernya ya kak? 😊',
+    },
+    canDisable: true,
+  }),
+  D({
     key: 'customer_linked_ack',
     title: 'Nomor WhatsApp berhasil dikenali',
     category: 'account',
@@ -478,6 +549,12 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     variables: [{ name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' }],
     defaultBody:
       'Makasih kak {customerName}! 😊 Sekarang kami sudah bisa bantu cek membership, voucher, atau booking kakak. Ada yang bisa dibantu?',
+    defaultBodyByVertical: {
+      services:
+        'Makasih kak {customerName}! 😊 Sekarang kami sudah bisa bantu cek membership, voucher, atau jadwal kakak. Ada yang bisa dibantu?',
+      laundry:
+        'Makasih kak {customerName}! 😊 Sekarang kami sudah bisa bantu cek membership, voucher, atau status laundry kakak. Ada yang bisa dibantu?',
+    },
     canDisable: true,
   }),
 
