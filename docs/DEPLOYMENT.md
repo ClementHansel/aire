@@ -228,7 +228,7 @@ does not survive the failure it exists for.
    sign-in (legal entity → branch → services → staff → finance).
 4. Per-tenant WhatsApp/AI credentials are configured by the tenant themselves
    under AI Agent, or by a super-admin via "view as".
-5. **Give the tenant its own WhatsApp gateway** — see section 8. Skipping this
+5. **Give the tenant its own WhatsApp gateway** — see section 9. Skipping this
    leaves the tenant with no WhatsApp line at all (it will honestly report "Not
    configured"); it does NOT quietly share the existing one.
 
@@ -236,7 +236,83 @@ does not survive the failure it exists for.
 would otherwise let anyone create an active tenant, bypassing this flow, the
 vertical choice, and billing.
 
-## 8. WhatsApp gateways — one container per tenant
+## 8. Row-level security (tenant isolation in the database)
+
+Tenant isolation is enforced by **application code**: every query against a
+tenant-owned table must carry `tenant_id`. Postgres RLS is not yet a backstop,
+and until it is, a forgotten predicate is a silent cross-tenant leak. Two have
+happened: the reports leak (July 2026) and the public kiosk queue-status leak
+(`2928584`).
+
+**Where this stands.** Migration 104 finished the database half:
+
+```bash
+# Policies and RLS-enabled tables, before -> after 104
+#   35 policies / 29 tables  ->  113 policies / 107 tables
+docker exec aire-postgres psql -U aire -d aire -tAc \
+  "SELECT (SELECT count(*) FROM pg_policies WHERE schemaname='public'),
+          (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='public' AND c.relkind='r' AND c.relrowsecurity);"
+```
+
+It also created the role the policies bind to, `aire_app` (LOGIN, **NOSUPERUSER,
+NOBYPASSRLS**). All of it is **inert** today, because the backend still connects
+as `aire`, which is SUPERUSER and BYPASSRLS — so every policy is skipped. That
+is deliberate: the database side is ready and provably correct, and switching it
+on is a separate, reversible change.
+
+**What it buys, measured on a clone of this schema.** Acting as `aire_app` with
+`app.tenant_id` set to tenant B:
+
+| case | before | with RLS |
+|---|---|---|
+| `SELECT count(*) FROM wa_conversations` (no predicate) | both tenants | only B |
+| `SELECT … FROM customers WHERE id = '<A's id>'` | A's row | 0 rows |
+| `INSERT … (tenant_id = A)` | succeeds | `new row violates row-level security policy` |
+| `UPDATE … WHERE tenant_id = A` | updates A | 0 rows |
+| `app.tenant_id` unset | n/a | 0 rows — **fail-closed** |
+
+That is what turns the ~256 unscoped queries in the tenant-scope baseline from
+unknown risk into bounded risk.
+
+### Turning it on (phase 2, not yet done)
+
+Three things are required, in this order. Do not do them piecemeal.
+
+1. **Set a password and switch the connection.**
+   ```bash
+   docker exec aire-postgres psql -U aire -d aire \
+     -c "ALTER ROLE aire_app PASSWORD '<generated>';"
+   # then point the backend's DATABASE_URL / POSTGRES_USER at aire_app
+   ```
+
+2. **Set `app.tenant_id` per request.** Nothing in the backend does this today
+   (`grep -rn "set_config" apps/backend/src` returns nothing). It needs a
+   request-scoped tenant context and a pool that applies it. Two traps, both
+   measured:
+   - **Never set the empty string.** `current_setting('app.tenant_id', true)`
+     returning `''` makes `''::uuid` raise *invalid input syntax for type uuid*,
+     and the connection keeps erroring until the setting is reset. A request
+     with no tenant (login, a public webhook before resolution) must **RESET**
+     the setting, not blank it.
+   - **Set it on every checkout, never inherit.** A session-level `set_config`
+     survives on a pooled connection across requests. Re-scoping on the same
+     connection works correctly, so per-checkout assignment is sound — but
+     relying on a previous request's value would serve the wrong tenant.
+
+3. **Audit every path with no tenant in context** and give it a privileged
+   connection. This is the risky part, and the reason the flip is not a
+   one-liner: a super-admin endpoint, a cron sweep (membership expiry, approval
+   SLA, notification drain, broadcast scheduler) or a webhook handler that runs
+   with no `app.tenant_id` gets **zero rows, silently** — fail-closed protects
+   data but breaks automation quietly. The ~37 platform-scoped queries the
+   tenant-scope triage identified are the starting list; they need a second pool
+   connecting as `aire` (BYPASSRLS), selected explicitly rather than by default.
+
+Until step 3 is complete, leave the backend on `aire`. A half-migrated rollout
+trades a leak risk for a silent-data-loss risk.
+
+## 9. WhatsApp gateways — one container per tenant
 
 The WAHA image we run is tier **CORE**, which serves exactly **one** session and
 it must be named `default`:
