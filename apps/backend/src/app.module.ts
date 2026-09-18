@@ -69,6 +69,8 @@ import { TaxInvoiceModule } from './modules/tax-invoice/tax-invoice.module';
 import { BarcodeModule } from './modules/barcode/barcode.module';
 import { CampaignModule } from './modules/campaign';
 import { LprModule } from './modules/lpr';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { TenantContextInterceptor } from './common/tenant-context';
 
 @Module({
   imports: [
@@ -147,6 +149,13 @@ import { LprModule } from './modules/lpr';
     LprModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Puts the request's tenant into the async context so DATABASE_POOL can
+    // scope its queries (see common/tenant-context). Global on purpose: a
+    // controller that opts out would silently fall back to the privileged
+    // connection. Inert while RLS_ENFORCE is off.
+    { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+  ],
 })
 export class AppModule {}

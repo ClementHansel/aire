@@ -275,42 +275,65 @@ on is a separate, reversible change.
 That is what turns the ~256 unscoped queries in the tenant-scope baseline from
 unknown risk into bounded risk.
 
-### Turning it on (phase 2, not yet done)
+### Turning it on
 
-Three things are required, in this order. Do not do them piecemeal.
+The plumbing exists (`common/tenant-context`): `DATABASE_POOL` provides a
+`TenantScopedPool`, and a global interceptor puts the request's tenant into an
+async context. It is **inert** until both env vars below are set, so the code is
+already deployed with enforcement off.
 
-1. **Set a password and switch the connection.**
-   ```bash
-   docker exec aire-postgres psql -U aire -d aire \
-     -c "ALTER ROLE aire_app PASSWORD '<generated>';"
-   # then point the backend's DATABASE_URL / POSTGRES_USER at aire_app
-   ```
+```bash
+# 1. give the RLS-bound role a password
+docker exec aire-postgres psql -U aire -d aire   -c "ALTER ROLE aire_app PASSWORD '<generated>';"
 
-2. **Set `app.tenant_id` per request.** Nothing in the backend does this today
-   (`grep -rn "set_config" apps/backend/src` returns nothing). It needs a
-   request-scoped tenant context and a pool that applies it. Two traps, both
-   measured:
-   - **Never set the empty string.** `current_setting('app.tenant_id', true)`
-     returning `''` makes `''::uuid` raise *invalid input syntax for type uuid*,
-     and the connection keeps erroring until the setting is reset. A request
-     with no tenant (login, a public webhook before resolution) must **RESET**
-     the setting, not blank it.
-   - **Set it on every checkout, never inherit.** A session-level `set_config`
-     survives on a pooled connection across requests. Re-scoping on the same
-     connection works correctly, so per-checkout assignment is sound — but
-     relying on a previous request's value would serve the wrong tenant.
+# 2. in .env — BOTH are required, and both must be listed in the backend's
+#    compose `environment:` block or they never reach the container
+DATABASE_URL_APP=postgresql://aire_app:<generated>@postgres:5432/aire
+RLS_ENFORCE=true
+RLS_STRICT=false      # true = throw on a context-less query (staging only)
 
-3. **Audit every path with no tenant in context** and give it a privileged
-   connection. This is the risky part, and the reason the flip is not a
-   one-liner: a super-admin endpoint, a cron sweep (membership expiry, approval
-   SLA, notification drain, broadcast scheduler) or a webhook handler that runs
-   with no `app.tenant_id` gets **zero rows, silently** — fail-closed protects
-   data but breaks automation quietly. The ~37 platform-scoped queries the
-   tenant-scope triage identified are the starting list; they need a second pool
-   connecting as `aire` (BYPASSRLS), selected explicitly rather than by default.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d backend
+# the log line to look for:
+#   Row-level security ENFORCED (strict=false)
+```
 
-Until step 3 is complete, leave the backend on `aire`. A half-migrated rollout
-trades a leak risk for a silent-data-loss risk.
+`DATABASE_URL` stays as it is: the owner connection is still used for
+deliberately cross-tenant work.
+
+**What gets scoped.** Every HTTP request, via the interceptor: a tenant user is
+scoped to their tenant, a platform super-admin runs privileged (their endpoints
+read across tenants by definition), and an unauthenticated request runs
+privileged because public routes resolve their own tenant from a token or
+parameter. The connection carries three settings, because the policies read all
+three — `app.tenant_id`, `app.role`, `app.outlet_id`:
+
+| policy on | rule |
+|---|---|
+| most tables (migration 104) | `tenant_id = app.tenant_id` |
+| `outlets`, `orders`, `services`, `bays`, `employee_shifts`, `audit_logs` | whole tenant for `tenant_owner` / `platform_super_admin`, otherwise `outlet_id = app.outlet_id` |
+| `users` | own tenant, plus tenant-less platform rows for `platform_super_admin` |
+
+Leaving `app.role` unset would make a cashier see **no outlets** — an empty
+application — which is why the context carries it. `app.outlet_id` is written as
+the all-zero UUID when the caller has no outlet, never as `''`.
+
+**What is NOT scoped: background work.** Schedulers and event-bus subscribers
+run outside any request and have no tenant. Those queries run on the privileged
+connection and log once per origin:
+
+```
+No tenant context; running on the privileged connection (RLS not applied).
+Narrow this to runAsTenant, or mark it runPrivileged. Origin: …
+```
+
+That is deliberate. Throwing instead would take every scheduler down the moment
+the flag flips; warning keeps them behaving exactly as they do today and turns
+the log into the work list. Narrow them one at a time — `runAsTenant(tenantId,
+…)` inside a per-tenant loop is better than `runPrivileged`, because it keeps
+the backstop. Run staging with `RLS_STRICT=true` to surface the whole list at
+once.
+
+**Rollback** is one env change: drop `RLS_ENFORCE` and restart the backend.
 
 ## 9. WhatsApp gateways — one container per tenant
 

@@ -134,6 +134,16 @@ services:
       # here to reach the container at all: compose passes only the variables
       # this block names, so setting it in .env alone does nothing.
       WA_WEBHOOK_REQUIRE_TOKEN: ${WA_WEBHOOK_REQUIRE_TOKEN:-}
+      # Row-level security (migration 104 + common/tenant-context). Enforcement
+      # needs BOTH: the RLS-bound role's connection string, and the opt-in flag.
+      # Unset = queries run as the owner and no policy applies, i.e. exactly the
+      # behaviour before the wrapper existed. See docs/DEPLOYMENT.md section 8.
+      DATABASE_URL_APP: ${DATABASE_URL_APP:-}
+      RLS_ENFORCE: ${RLS_ENFORCE:-}
+      # Throw on a query with no tenant context instead of running it
+      # privileged. Staging only: it is how the remaining context-less
+      # background paths get found.
+      RLS_STRICT: ${RLS_STRICT:-}
       KIRIM_URL: ${KIRIM_URL:-https://api.kirimdev.com/v1}
       KIRIM_WEBHOOK_SECRET: ${KIRIM_WEBHOOK_SECRET:-}
       SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:-}
