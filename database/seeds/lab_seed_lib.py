@@ -44,7 +44,9 @@ CANON = {
     "pressure": ("bar", {"bar": 1, "mbar": 1e-3, "kPa": 0.01, "MPa": 10,
                           "psi": 0.0689476, "kgf/cm2": 0.980665,
                           # 1 mmHg = 133.322 Pa
-                          "mmHg": 0.00133322}),
+                          "mmHg": 0.00133322,
+                          "Pa": 1e-5, "hPa": 1e-3}),
+    "magnetic_flux": ("mT", {"mT": 1, "T": 1e3, "G": 0.1}),
     # Hardness scales are NOT interconvertible (HRA/HRC/HRD measure with
     # different indenters and loads), so each is its own quantity rather than
     # one "hardness" that would silently compare across scales.
