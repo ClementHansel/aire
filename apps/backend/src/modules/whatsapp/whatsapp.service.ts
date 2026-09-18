@@ -1037,10 +1037,16 @@ export class WhatsappService implements OnModuleInit {
     // booking is already confirmed). Read the summary back deterministically and
     // ask for YA/BATAL — the booking is only created after the customer confirms.
     if (result.proposedBooking && result.bookingSummary) {
-      // `result.agentName`, never a literal: this said "Irene" — the demo car
-      // wash's persona — to every tenant's customers, including ones whose
-      // assistant introduces itself by another name two lines earlier.
-      outText = `Baik kak, ${result.agentName} siapkan booking berikut ya:\n\n${result.bookingSummary}\n\nBalas *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan. 🙏`;
+      // Wording from the catalogue ('booking_confirm_prompt'), not a literal.
+      // Inline, it said "Irene" — the demo car wash's persona — to every
+      // tenant's customers, and called it a "booking" to businesses that call
+      // it a jadwal. The YA/BATAL keywords are load-bearing, so that entry is
+      // locked against editing rather than merely overridable.
+      const prompt = await renderNotification(this.renderer, tenantId, 'booking_confirm_prompt', {
+        agentName: result.agentName,
+        bookingSummary: result.bookingSummary,
+      });
+      if (prompt) outText = prompt;
     }
     // Ask for identity ONCE per chat when we still don't know the sender, so we
     // can personalise from here on (introduce → ask → bind on their reply).

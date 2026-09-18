@@ -360,6 +360,29 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Cabang: {outletName}',
       'Silakan menuju kasir ya kak. Terima kasih!',
     ].join('\n'),
+    // `{plate}` is optional, so its line already vanishes for a tenant with no
+    // vehicles — but the fixed line above says "dicuci" outright, which no
+    // rule can drop.
+    defaultBodyByVertical: {
+      services: [
+        'Halo kak {customerName}! ✨',
+        'Pesanan kakak sudah selesai 🎉',
+        'Cabang: {outletName}',
+        'Silakan menuju kasir ya kak. Terima kasih!',
+      ].join('\n'),
+      fnb: [
+        'Halo kak {customerName}! ✨',
+        'Pesanan kakak sudah siap 🎉',
+        'Cabang: {outletName}',
+        'Silakan menuju kasir ya kak. Terima kasih!',
+      ].join('\n'),
+      laundry: [
+        'Halo kak {customerName}! ✨',
+        'Laundry kakak sudah selesai 🎉',
+        'Cabang: {outletName}',
+        'Silakan diambil ya kak. Terima kasih!',
+      ].join('\n'),
+    },
     canDisable: true,
   }),
 
@@ -507,6 +530,38 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     canDisable: false,
     lockedReason:
       'Pesan ini membawa kode keamanan. Mengubahnya berisiko membuat pelanggan gagal masuk, jadi teksnya dikunci.',
+  }),
+  D({
+    key: 'booking_confirm_prompt',
+    title: 'Konfirmasi booking yang diusulkan asisten (YA / BATAL)',
+    category: 'booking',
+    audience: 'customer',
+    trigger:
+      'Saat asisten WhatsApp menyiapkan booking dari percakapan. Ringkasannya dibacakan ulang oleh sistem — bukan oleh model — lalu pelanggan membalas YA atau BATAL. Booking baru dibuat setelah balasan YA.',
+    variables: [
+      { name: 'agentName', description: 'Nama asisten (persona) Anda', sample: 'Kalia' },
+      { name: 'bookingSummary', description: 'Ringkasan booking yang dibaca ulang sistem', sample: 'Kalibrasi Thermocouple · 20 September 2026 10:00' },
+    ],
+    defaultBody: [
+      'Baik kak, {agentName} siapkan booking berikut ya:',
+      '',
+      '{bookingSummary}',
+      '',
+      'Balas *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan. 🙏',
+    ].join('\n'),
+    defaultBodyByVertical: {
+      services: [
+        'Baik kak, {agentName} siapkan jadwal berikut ya:',
+        '',
+        '{bookingSummary}',
+        '',
+        'Balas *YA* untuk konfirmasi, atau *BATAL* untuk membatalkan. 🙏',
+      ].join('\n'),
+    },
+    canDisable: false,
+    lockedReason:
+      'Pesan ini meminta balasan *YA* atau *BATAL*, dan sistem hanya membuat booking setelah balasan YA. '
+      + 'Menghapus kata kunci itu membuat booking pelanggan tidak pernah terkonfirmasi, jadi teksnya dikunci.',
   }),
   D({
     key: 'customer_identity_ask',
@@ -692,6 +747,26 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Ada penawaran khusus buat kakak: {offer}',
       'Mau kami bantu jadwalkan cuci berikutnya?',
     ].join('\n'),
+    defaultBodyByVertical: {
+      services: [
+        'Halo kak {customerName}! 😊',
+        'Sudah lama nih kakak nggak menggunakan layanan kami!',
+        'Ada penawaran khusus buat kakak: {offer}',
+        'Mau kami bantu jadwalkan layanan berikutnya?',
+      ].join('\n'),
+      fnb: [
+        'Halo kak {customerName}! 😊',
+        'Sudah lama nih kakak nggak mampir!',
+        'Ada penawaran khusus buat kakak: {offer}',
+        'Mau kami bantu siapkan pesanan kakak?',
+      ].join('\n'),
+      laundry: [
+        'Halo kak {customerName}! 😊',
+        'Sudah lama nih kakak nggak mampir!',
+        'Ada penawaran khusus buat kakak: {offer}',
+        'Mau kami bantu jadwalkan laundry berikutnya?',
+      ].join('\n'),
+    },
     canDisable: true,
   }),
   D({
@@ -711,9 +786,50 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       '{offer}',
       'Mau kami jelaskan detailnya kak?',
     ].join('\n'),
+    defaultBodyByVertical: {
+      services: [
+        'Halo kak {customerName}! 😊',
+        'Dari pola pemakaian layanan kakak, ada paket membership yang kelihatannya lebih hemat nih.',
+        '{offer}',
+        'Mau kami jelaskan detailnya kak?',
+      ].join('\n'),
+      fnb: [
+        'Halo kak {customerName}! 😊',
+        'Dari pola pesanan kakak, ada paket membership yang kelihatannya lebih hemat nih.',
+        '{offer}',
+        'Mau kami jelaskan detailnya kak?',
+      ].join('\n'),
+      laundry: [
+        'Halo kak {customerName}! 😊',
+        'Dari pola laundry kakak, ada paket membership yang kelihatannya lebih hemat nih.',
+        '{offer}',
+        'Mau kami jelaskan detailnya kak?',
+      ].join('\n'),
+    },
     canDisable: true,
   }),
 ];
+
+/**
+ * Legacy `templateName` values that NotificationService still accepts, mapped to
+ * their catalogue key.
+ *
+ * Kept here rather than in the service because the right-hand side must be a
+ * real catalogue key: an alias pointing at a key that no longer exists silently
+ * degrades to "unknown template, nothing sent". The ratchet test asserts every
+ * target resolves.
+ */
+export const CATALOG_KEY_ALIASES: Record<string, string> = {
+  membership_welcome: 'membership_welcome',
+  expiry_reminder: 'membership_expiry_reminder',
+  voucher_delivery: 'voucher_purchased',
+  campaign_bonus: 'campaign_bonus',
+  queue_completion: 'queue_completion',
+  retention_offer: 'retention_offer',
+  membership_recommendation: 'membership_recommendation',
+  action_proposal_pending: 'action_proposal_pending',
+  escalation: 'escalation_alert',
+};
 
 /** Fast key lookup. */
 export const CATALOG_BY_KEY: ReadonlyMap<string, NotificationDefinition> = new Map(

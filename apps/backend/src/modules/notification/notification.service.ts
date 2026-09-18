@@ -4,6 +4,7 @@ import { SettingsService } from '../settings/settings.service';
 import { JobMonitorService } from '../job-monitor';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { renderNotificationText } from './notification-templates';
+import { CATALOG_KEY_ALIASES } from './notification-catalog';
 import { NotificationRendererService } from './notification-renderer.service';
 
 /**
@@ -12,18 +13,6 @@ import { NotificationRendererService } from './notification-renderer.service';
  * site so existing callers (and the AI tool layer, which passes these names as
  * data) keep working while the catalogue uses clearer names.
  */
-const CATALOG_KEY_ALIASES: Record<string, string> = {
-  membership_welcome: 'membership_welcome',
-  expiry_reminder: 'membership_expiry_reminder',
-  voucher_delivery: 'voucher_purchased',
-  campaign_bonus: 'campaign_bonus',
-  queue_completion: 'queue_completion',
-  retention_offer: 'retention_offer',
-  membership_recommendation: 'membership_recommendation',
-  action_proposal_pending: 'action_proposal_pending',
-  escalation: 'escalation_alert',
-};
-
 /** Sentinel distinguishing "owner switched this off" from "no such template". */
 const DISABLED = Symbol('notification-disabled');
 
