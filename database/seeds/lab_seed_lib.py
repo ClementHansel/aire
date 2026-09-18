@@ -84,6 +84,9 @@ CANON = {
     "conductivity": ("uS/cm", {"uS/cm": 1, "mS/cm": 1e3}),
     "gas_percent": ("%", {"%": 1}),
     "gas_ppm": ("ppm", {"ppm": 1}),
+    "gas_ppb": ("ppb", {"ppb": 1}),
+    "mass_concentration": ("mg/Nm3", {"mg/Nm3": 1}),
+    "opacity": ("m-1", {"m-1": 1}),
     "tds": ("mg/L", {"mg/L": 1, "ppm": 1}),
     "flow": ("L/min", {"L/min": 1, "m3/h": 16.6667, "L/h": 1.0 / 60}),
     "energy": ("kWh", {"kWh": 1, "Wh": 1e-3}),
@@ -108,7 +111,7 @@ CANON = {
     "acceleration": ("m/s2", {"m/s2": 1}),
     "percent_reading": ("%", {"%": 1}),
     "density": ("g/cm3", {"g/cm3": 1}),
-    "viscosity": ("cP", {"cP": 1, "cSt": 1}),
+    "viscosity": ("cP", {"cP": 1, "cSt": 1, "mPas": 1}),
 }
 
 
