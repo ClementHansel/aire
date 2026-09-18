@@ -256,6 +256,13 @@ export class AgentConfigService {
    * see {@link adminUpdateBrain}.
    */
   async update(tenantId: string, dto: UpdateAgentConfigDto): Promise<AgentConfigResponse> {
+    // The session name is the line's address on its gateway, so it must not
+    // already be claimed there. This check used to exist ONLY on the per-branch
+    // path, which is how two tenants could both save 'primary' on the shared
+    // gateway and have inbound routed to whichever row Postgres returned first.
+    if (dto.wahaSession !== undefined) {
+      await this.assertSessionFree(dto.wahaSession, { tenantId });
+    }
     await this.upsertAgentRow(tenantId, {
       escalationNumber: dto.escalationNumber,
       waProvider: dto.waProvider,
@@ -283,6 +290,56 @@ export class AgentConfigService {
       maxMessagesPerDay: dto.maxMessagesPerDay,
     });
     return this.get(tenantId);
+  }
+
+  /**
+   * Reject a WAHA session name already claimed on the SAME gateway.
+   *
+   * Uniqueness is per gateway, not global: with one WAHA Core container per
+   * tenant (Core serves exactly one session, named 'default') two tenants
+   * legitimately both use 'default' on different gateways. What must never
+   * happen is two lines sharing one gateway AND one session name.
+   *
+   * Migration 103 enforces this with a unique index within each table; the
+   * cross-table case (a tenant line vs a branch line on the same gateway)
+   * cannot be expressed as one index and is enforced here. `exclude` names the
+   * row being written so an update of an unchanged session is not a conflict.
+   */
+  private async assertSessionFree(
+    session: string | null | undefined,
+    exclude: { tenantId?: string; outletId?: string },
+  ): Promise<void> {
+    const name = session?.trim();
+    if (!name) return;
+
+    // Which gateway does the row being written sit on? A gateway is assigned by
+    // the super-admin, so it is read from the stored row, never from the DTO.
+    const gwRow = exclude.outletId
+      ? await this.pool.query('SELECT wa_gateway_id FROM outlet_agent_configs WHERE outlet_id = $1', [exclude.outletId])
+      : await this.pool.query('SELECT wa_gateway_id FROM agent_configs WHERE tenant_id = $1', [exclude.tenantId]);
+    const gatewayId: string | null = gwRow.rows[0]?.wa_gateway_id ?? null;
+    // NULL (the platform default gateway) has to compare equal to NULL, which
+    // `=` does not do — hence the all-zero sentinel, as in migration 103.
+    const SENTINEL = '00000000-0000-0000-0000-000000000000';
+    const gwKey = gatewayId ?? SENTINEL;
+
+    const clashTenant = await this.pool.query(
+      `SELECT 1 FROM agent_configs
+        WHERE waha_session = $1
+          AND COALESCE(wa_gateway_id, $2::uuid) = $3::uuid
+          AND ($4::uuid IS NULL OR tenant_id <> $4::uuid)`,
+      [name, SENTINEL, gwKey, exclude.tenantId ?? null],
+    );
+    const clashBranch = await this.pool.query(
+      `SELECT 1 FROM outlet_agent_configs
+        WHERE waha_session = $1
+          AND COALESCE(wa_gateway_id, $2::uuid) = $3::uuid
+          AND ($4::uuid IS NULL OR outlet_id <> $4::uuid)`,
+      [name, SENTINEL, gwKey, exclude.outletId ?? null],
+    );
+    if ((clashTenant.rowCount ?? 0) > 0 || (clashBranch.rowCount ?? 0) > 0) {
+      throw new ConflictException(`WAHA session "${name}" is already in use on this gateway`);
+    }
   }
 
   /**
@@ -434,24 +491,16 @@ export class AgentConfigService {
   /**
    * Upsert a branch's WhatsApp connection. Validates the outlet belongs to the
    * tenant and that the WAHA session isn't already claimed by the tenant line or
-   * another branch (sessions are the inbound discriminator, so they must be
-   * globally unique). kirim key is only overwritten when a non-empty value is given.
+   * another branch ON THE SAME GATEWAY — see {@link assertSessionFree} for why
+   * uniqueness is per gateway rather than global. kirim key is only overwritten
+   * when a non-empty value is given.
    */
   async updateBranchConfig(tenantId: string, outletId: string, dto: UpdateBranchWaConfigDto): Promise<BranchWaConfig> {
     const own = await this.pool.query('SELECT id FROM outlets WHERE id = $1 AND tenant_id = $2', [outletId, tenantId]);
     if (own.rowCount === 0) throw new NotFoundException('Branch not found for this tenant');
 
     const session = dto.wahaSession?.trim() || null;
-    if (session) {
-      const clashTenant = await this.pool.query('SELECT 1 FROM agent_configs WHERE waha_session = $1', [session]);
-      const clashBranch = await this.pool.query(
-        'SELECT 1 FROM outlet_agent_configs WHERE waha_session = $1 AND outlet_id <> $2',
-        [session, outletId],
-      );
-      if ((clashTenant.rowCount ?? 0) > 0 || (clashBranch.rowCount ?? 0) > 0) {
-        throw new ConflictException(`WAHA session "${session}" is already in use`);
-      }
-    }
+    await this.assertSessionFree(session, { outletId });
 
     await this.pool.query(
       `INSERT INTO outlet_agent_configs (outlet_id, tenant_id, wa_provider, wa_number, waha_session, kirim_api_key, kirim_phone_id, updated_at)

@@ -43,6 +43,11 @@ import { PlatformChatService } from './platform-chat.service';
 import { EntitlementService } from '../entitlement';
 import { JobMonitorService } from '../job-monitor';
 import { AgentConfigService } from '../agent-config/agent-config.service';
+import {
+  WaGatewayService,
+  type CreateWaGatewayDto,
+  type UpdateWaGatewayDto,
+} from './wa-gateway.service';
 import { SettingsService } from '../settings/settings.service';
 
 /**
@@ -76,6 +81,7 @@ export class AdminController {
     private readonly auth: AuthService,
     private readonly audit: AuditService,
     private readonly agentConfig: AgentConfigService,
+    private readonly waGateways: WaGatewayService,
     private readonly settings: SettingsService,
     private readonly aiConsole: PlatformChatService,
   ) {}
@@ -591,6 +597,107 @@ export class AdminController {
   async deletePlatformPlan(@Param('id') id: string) {
     await this.plans.remove(id);
     return { ok: true };
+  }
+
+  // ── WhatsApp gateways (which WAHA container serves which tenant) ─────────────
+  //
+  // Platform-owned on purpose: baseUrl is a URL the backend fetches, so a
+  // tenant-editable one would be an SSRF hole. Every route here is
+  // super-admin-only — note the class default is Tenant_Owner.
+
+  /** GET /api/admin/wa-gateways — the gateway registry, with assigned-line counts. */
+  @Get('wa-gateways')
+  @Roles(Role.PlatformSuperAdmin)
+  async listWaGateways() {
+    return this.waGateways.list();
+  }
+
+  /** POST /api/admin/wa-gateways — register a WAHA container (audited). */
+  @Post('wa-gateways')
+  @Roles(Role.PlatformSuperAdmin)
+  async createWaGateway(@CurrentUser() admin: JWTPayload, @Body() dto: CreateWaGatewayDto) {
+    const created = await this.waGateways.create(dto);
+    await this.audit.log({
+      tenantId: admin.tenant_id, userId: admin.sub, operation: 'config_change',
+      entityType: 'wa_gateway', entityId: created.id, afterValue: created,
+    });
+    return created;
+  }
+
+  /** PUT /api/admin/wa-gateways/:id — update a gateway (audited). */
+  @Put('wa-gateways/:id')
+  @Roles(Role.PlatformSuperAdmin)
+  async updateWaGateway(
+    @CurrentUser() admin: JWTPayload, @Param('id') id: string, @Body() dto: UpdateWaGatewayDto,
+  ) {
+    const before = await this.waGateways.getOne(id);
+    const after = await this.waGateways.update(id, dto);
+    await this.audit.log({
+      tenantId: admin.tenant_id, userId: admin.sub, operation: 'config_change',
+      entityType: 'wa_gateway', entityId: id, beforeValue: before, afterValue: after,
+    });
+    return after;
+  }
+
+  /** DELETE /api/admin/wa-gateways/:id — refused while lines still use it. */
+  @Delete('wa-gateways/:id')
+  @Roles(Role.PlatformSuperAdmin)
+  async deleteWaGateway(@CurrentUser() admin: JWTPayload, @Param('id') id: string) {
+    const before = await this.waGateways.getOne(id);
+    await this.waGateways.remove(id);
+    await this.audit.log({
+      tenantId: admin.tenant_id, userId: admin.sub, operation: 'config_change',
+      entityType: 'wa_gateway', entityId: id, beforeValue: before,
+    });
+    return { ok: true };
+  }
+
+  /** GET /api/admin/wa-gateways/:id/probe — live reachability, tier and sessions. */
+  @Get('wa-gateways/:id/probe')
+  @Roles(Role.PlatformSuperAdmin)
+  async probeWaGateway(@Param('id') id: string) {
+    return this.waGateways.probe(id);
+  }
+
+  /** GET /api/admin/wa-transports — per-tenant gateway + session + inbound webhook URL. */
+  @Get('wa-transports')
+  @Roles(Role.PlatformSuperAdmin)
+  async listWaTransports() {
+    return this.waGateways.listTenantTransports();
+  }
+
+  /** PUT /api/admin/tenants/:id/wa-gateway — point a tenant's line at a gateway (audited). */
+  @Put('tenants/:id/wa-gateway')
+  @Roles(Role.PlatformSuperAdmin)
+  async assignWaGateway(
+    @CurrentUser() admin: JWTPayload, @Param('id') id: string, @Body() body: { gatewayId?: string | null } = {},
+  ) {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    const before = (await this.waGateways.listTenantTransports()).find((t) => t.tenantId === tenantId);
+    const after = await this.waGateways.assignTenantGateway(tenantId, body.gatewayId ?? null);
+    await this.audit.log({
+      tenantId, userId: admin.sub, operation: 'config_change',
+      entityType: 'tenant_wa_gateway', entityId: tenantId, beforeValue: before, afterValue: after,
+    });
+    return after;
+  }
+
+  /**
+   * POST /api/admin/tenants/:id/wa-webhook-token — issue a fresh inbound token.
+   * The old URL stops resolving immediately, so the gateway's WHATSAPP_HOOK_URL
+   * has to be updated to the returned path.
+   */
+  @Post('tenants/:id/wa-webhook-token')
+  @Roles(Role.PlatformSuperAdmin)
+  async rotateWaWebhookToken(@CurrentUser() admin: JWTPayload, @Param('id') id: string) {
+    const tenantId = await this.adminService.resolveTenantId(id);
+    const result = await this.waGateways.rotateTenantWebhookToken(tenantId);
+    // The token itself is a credential — audit that it rotated, not its value.
+    await this.audit.log({
+      tenantId, userId: admin.sub, operation: 'config_change',
+      entityType: 'tenant_wa_webhook_token', entityId: tenantId, afterValue: { rotated: true },
+    });
+    return result;
   }
 
   // ── Audit log (platform-wide viewer, super-admin only) ───────────────────────

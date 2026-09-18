@@ -6,7 +6,8 @@ import { useEffect, useState } from 'react';
 import {
   Home, LayoutDashboard, Building2, LifeBuoy, Wallet, CreditCard, BrainCircuit,
   RadioTower, HeartPulse, Workflow, Settings, LogOut, Sun, Moon,
-  LineChart, ScrollText, Users, Megaphone, BookOpen, Activity, Bot, type LucideIcon,
+  LineChart, ScrollText, Users, Megaphone, BookOpen, Activity, Bot, MessageSquare,
+  type LucideIcon,
 } from 'lucide-react';
 import { isImpersonating, stopImpersonation, isAuthenticated, getUser, logout, type AuthUser } from '@/lib/auth';
 import { useI18n, LanguageToggle } from '@/lib/i18n';
@@ -58,6 +59,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: '/admin/monitoring', label: 'Monitoring', labelKey: 'admin.nav.monitoring', icon: RadioTower },
       { href: '/admin/health', label: 'System Health', labelKey: 'admin.nav.health', icon: HeartPulse },
       { href: '/admin/agent-flows', label: 'Agent Flows', labelKey: 'admin.nav.agentFlows', icon: Workflow, superOnly: true },
+      { href: '/admin/wa-gateways', label: 'WhatsApp Gateways', labelKey: 'admin.nav.waGateways', icon: MessageSquare, superOnly: true },
     ],
   },
   {

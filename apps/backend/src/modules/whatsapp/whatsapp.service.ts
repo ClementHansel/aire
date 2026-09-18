@@ -42,11 +42,29 @@ interface AgentCfgRow {
   // Per-branch WhatsApp opt-in (migration 067). When true, config(tenantId, outletId)
   // overlays the branch's own connection from outlet_agent_configs.
   per_branch_wa_enabled?: boolean;
+  // Which WAHA gateway serves this line (migration 103). NULL = the platform
+  // default gateway (env WAHA_URL/WAHA_API_KEY). Needed because the deployed
+  // WAHA image is tier CORE, which serves exactly one session named 'default' —
+  // so a second tenant's line lives on a DIFFERENT container, and the session
+  // name alone cannot address it.
+  wa_gateway_id?: string | null;
+  // Unguessable inbound identity for this line (migration 103). WAHA posts to
+  // /api/whatsapp/webhook/<token>, which both authenticates the gateway and
+  // tells us which line the message arrived on.
+  wa_webhook_token?: string | null;
   // Transient (not a DB column): set by config() when per-branch is on for a
   // branch that has NO connection of its own — so sends become a no-op and
   // status reports not_configured, rather than falling back to the tenant line.
   wa_connection_missing?: boolean;
 }
+
+/**
+ * A resolved WAHA endpoint: which container to talk to and with which key.
+ * Resolved per line from {@link WhatsappService.gatewayFor}, never read straight
+ * off the env at the call site — that global was how every unconfigured tenant
+ * ended up sharing one gateway.
+ */
+interface WaGateway { url: string; apiKey: string; name: string }
 
 /**
  * WhatsApp integration. Connection + behavior are driven entirely by the
@@ -66,6 +84,13 @@ export class WhatsappService implements OnModuleInit {
   /** HMAC secret for verifying kirimdev inbound webhook signatures (X-Kirim-Signature). */
   private readonly kirimWebhookSecret = process.env.KIRIM_WEBHOOK_SECRET || '';
   private kirimWebhookSecretWarned = false;
+  /**
+   * Reject inbound that arrives without a webhook token (migration 103).
+   * Default false so a gateway that has not been re-pointed yet keeps working
+   * through the deploy; set true once every gateway posts to the tokenised URL.
+   */
+  private readonly requireWebhookToken = process.env.WA_WEBHOOK_REQUIRE_TOKEN === 'true';
+
   /** Base URL n8n uses to call back into aire's bridge (internal docker network). */
   private readonly bridgeCallbackBase = process.env.BRIDGE_CALLBACK_BASE || 'http://backend:4000';
 
@@ -100,12 +125,63 @@ export class WhatsappService implements OnModuleInit {
     return !!cfg?.waha_mock;
   }
 
-  /** Headers for WAHA requests. Recent WAHA images require the API key as X-Api-Key. */
-  private wahaHeaders(json = false): Record<string, string> {
+  /**
+   * Headers for WAHA requests. Recent WAHA images require the API key as
+   * X-Api-Key. The key comes from the resolved GATEWAY, not the env global —
+   * a per-tenant container has its own key.
+   */
+  private wahaHeaders(gw: WaGateway, json = false): Record<string, string> {
     const h: Record<string, string> = {};
     if (json) h['Content-Type'] = 'application/json';
-    if (this.wahaApiKey) h['X-Api-Key'] = this.wahaApiKey;
+    if (gw.apiKey) h['X-Api-Key'] = gw.apiKey;
     return h;
+  }
+
+  /** The platform default gateway: the WAHA container shipped in compose. */
+  private defaultGateway(): WaGateway {
+    return { url: this.wahaUrl, apiKey: this.wahaApiKey, name: 'platform default' };
+  }
+
+  /**
+   * Which WAHA container serves this line. `wa_gateway_id` NULL (every line that
+   * predates migration 103) means the platform default, so existing tenants are
+   * untouched. An assigned-but-missing or deactivated gateway resolves to null
+   * rather than silently falling back to the default — falling back is precisely
+   * the bug this whole change removes.
+   */
+  private async gatewayFor(cfg?: { wa_gateway_id?: string | null } | null): Promise<WaGateway | null> {
+    if (!cfg?.wa_gateway_id) return this.defaultGateway();
+    const r = await this.pool
+      .query<{ name: string; base_url: string; api_key: string | null; is_active: boolean }>(
+        'SELECT name, base_url, api_key, is_active FROM wa_gateways WHERE id = $1',
+        [cfg.wa_gateway_id],
+      )
+      .catch(() => ({ rows: [] as { name: string; base_url: string; api_key: string | null; is_active: boolean }[] }));
+    const row = r.rows[0];
+    if (!row) {
+      this.logger.error(`WhatsApp gateway ${cfg.wa_gateway_id} is assigned to a line but does not exist`);
+      return null;
+    }
+    if (!row.is_active) {
+      this.logger.warn(`WhatsApp gateway '${row.name}' is deactivated; line is offline`);
+      return null;
+    }
+    return { url: row.base_url.replace(/\/+$/, ''), apiKey: row.api_key ?? '', name: row.name };
+  }
+
+  /**
+   * The WAHA session for a line, or null when the line has none.
+   *
+   * There is deliberately NO `|| 'default'` fallback. That fallback meant a
+   * tenant who had never configured WhatsApp silently borrowed whichever
+   * tenant owned the session literally named 'default': its status showed
+   * "Connected", its outbound went out from the other tenant's number, and
+   * Connect/Get QR drove (and could re-pair, or log out) the other tenant's
+   * line. An unconfigured line must read as unconfigured.
+   */
+  private sessionOf(cfg?: AgentCfgRow | null): string | null {
+    const s = cfg?.waha_session?.trim();
+    return s ? s : null;
   }
 
   constructor(
@@ -217,16 +293,17 @@ export class WhatsappService implements OnModuleInit {
     if (!cfg) return null;
     if (!outletId || !cfg.per_branch_wa_enabled) return cfg;
     const b = await this.pool.query(
-      'SELECT wa_provider, wa_number, waha_session, kirim_api_key, kirim_phone_id FROM outlet_agent_configs WHERE outlet_id = $1 AND tenant_id = $2',
+      `SELECT wa_provider, wa_number, waha_session, kirim_api_key, kirim_phone_id, wa_gateway_id, wa_webhook_token
+         FROM outlet_agent_configs WHERE outlet_id = $1 AND tenant_id = $2`,
       [outletId, tenantId],
     );
     const branch = b.rows[0];
     if (branch) {
       const hasConnection = !!(branch.waha_session || branch.kirim_api_key);
-      return { ...cfg, wa_provider: branch.wa_provider, wa_number: branch.wa_number, waha_session: branch.waha_session, kirim_api_key: branch.kirim_api_key, kirim_phone_id: branch.kirim_phone_id, wa_connection_missing: !hasConnection };
+      return { ...cfg, wa_provider: branch.wa_provider, wa_number: branch.wa_number, waha_session: branch.waha_session, kirim_api_key: branch.kirim_api_key, kirim_phone_id: branch.kirim_phone_id, wa_gateway_id: branch.wa_gateway_id, wa_webhook_token: branch.wa_webhook_token, wa_connection_missing: !hasConnection };
     }
     // per-branch on but this branch isn't wired: no fallback to the tenant line.
-    return { ...cfg, wa_number: null, waha_session: null, kirim_api_key: null, kirim_phone_id: null, wa_connection_missing: true };
+    return { ...cfg, wa_number: null, waha_session: null, kirim_api_key: null, kirim_phone_id: null, wa_gateway_id: null, wa_webhook_token: null, wa_connection_missing: true };
   }
 
   /**
@@ -241,6 +318,33 @@ export class WhatsappService implements OnModuleInit {
     );
     if (b.rows[0]) return { tenantId: b.rows[0].tenant_id, outletId: b.rows[0].outlet_id };
     const r = await this.pool.query('SELECT tenant_id FROM agent_configs WHERE waha_session = $1 LIMIT 1', [session]);
+    return r.rows[0] ? { tenantId: r.rows[0].tenant_id, outletId: null } : null;
+  }
+
+  /**
+   * Resolve which line an inbound webhook token belongs to (migration 103).
+   *
+   * This REPLACES session-name resolution as the inbound identity. Two reasons:
+   * the session name was public and guessable, so anyone could inject messages
+   * into a tenant's agent over the open internet; and with one WAHA Core
+   * container per tenant every gateway reports the session name 'default', so
+   * the session name cannot distinguish tenants at all.
+   *
+   * Branch tokens win over the tenant token, matching {@link resolveBySession}.
+   */
+  private async resolveByToken(
+    token: string,
+  ): Promise<{ tenantId: string; outletId: string | null } | null> {
+    if (!token || token.length < 16) return null;
+    const b = await this.pool.query(
+      'SELECT tenant_id, outlet_id FROM outlet_agent_configs WHERE wa_webhook_token = $1 LIMIT 1',
+      [token],
+    );
+    if (b.rows[0]) return { tenantId: b.rows[0].tenant_id, outletId: b.rows[0].outlet_id };
+    const r = await this.pool.query(
+      'SELECT tenant_id FROM agent_configs WHERE wa_webhook_token = $1 LIMIT 1',
+      [token],
+    );
     return r.rows[0] ? { tenantId: r.rows[0].tenant_id, outletId: null } : null;
   }
 
@@ -268,12 +372,12 @@ export class WhatsappService implements OnModuleInit {
 
   /** One WAHA session call. Returns the parsed body, or null on transport/HTTP error. */
   private async wahaSessionCall(
-    session: string, action: 'start' | 'restart' | 'logout',
+    gw: WaGateway, session: string, action: 'start' | 'restart' | 'logout',
   ): Promise<{ status?: string } | null> {
     try {
       const res = await fetch(
-        `${this.wahaUrl}/api/sessions/${encodeURIComponent(session)}/${action}`,
-        { method: 'POST', headers: this.wahaHeaders(true) },
+        `${gw.url}/api/sessions/${encodeURIComponent(session)}/${action}`,
+        { method: 'POST', headers: this.wahaHeaders(gw, true) },
       );
       if (!res.ok) {
         this.logger.warn(`WAHA ${action} '${session}' → HTTP ${res.status}`);
@@ -288,19 +392,19 @@ export class WhatsappService implements OnModuleInit {
   }
 
   /** Poll the session until it leaves STARTING, or the budget runs out. */
-  private async awaitSettled(session: string, tries = 5, delayMs = 1500): Promise<string> {
-    let status = await this.rawStatus(session);
+  private async awaitSettled(gw: WaGateway, session: string, tries = 5, delayMs = 1500): Promise<string> {
+    let status = await this.rawStatus(gw, session);
     for (let i = 0; i < tries && status === 'STARTING'; i++) {
       await new Promise((r) => setTimeout(r, delayMs));
-      status = await this.rawStatus(session);
+      status = await this.rawStatus(gw, session);
     }
     return status;
   }
 
   /** The session's status straight from WAHA, with no tenant/mock interpretation. */
-  private async rawStatus(session: string): Promise<string> {
+  private async rawStatus(gw: WaGateway, session: string): Promise<string> {
     try {
-      const res = await fetch(`${this.wahaUrl}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders() });
+      const res = await fetch(`${gw.url}/api/sessions/${encodeURIComponent(session)}`, { headers: this.wahaHeaders(gw) });
       if (!res.ok) return 'stopped';
       const data = (await res.json()) as { status?: string };
       return data.status ?? 'unknown';
@@ -328,29 +432,33 @@ export class WhatsappService implements OnModuleInit {
     // Per-branch on but this branch has no line of its own yet.
     if (cfg?.wa_connection_missing) return { status: 'not_configured' };
     if (cfg?.wa_provider === 'kirim') return { status: cfg.kirim_api_key ? 'configured' : 'not_configured' };
-    const session = cfg?.waha_session || 'default';
+    // No session of its own = not configured. NEVER another tenant's 'default'.
+    const session = this.sessionOf(cfg);
+    if (!session) return { status: 'not_configured', reason: 'No WAHA session name is set for this line.' };
+    const gw = await this.gatewayFor(cfg);
+    if (!gw) return { status: 'not_configured', reason: 'The WhatsApp gateway assigned to this line is missing or deactivated.' };
 
-    let status = await this.rawStatus(session);
-    if (status === 'unreachable') return { status, reason: 'WAHA service is not reachable.' };
+    let status = await this.rawStatus(gw, session);
+    if (status === 'unreachable') return { status, reason: `WAHA service '${gw.name}' is not reachable.` };
     if (WhatsappService.WAHA_HEALTHY.includes(status)) return { status };
 
     if (status !== 'FAILED') {
       // Never started, or stopped: a plain start is enough.
-      await this.wahaSessionCall(session, 'start');
-      return { status: await this.awaitSettled(session) };
+      await this.wahaSessionCall(gw, session, 'start');
+      return { status: await this.awaitSettled(gw, session) };
     }
 
     // FAILED: try a restart first — cheapest recovery, keeps the pairing.
-    this.logger.warn(`WAHA session '${session}' is FAILED; attempting restart.`);
-    await this.wahaSessionCall(session, 'restart');
-    status = await this.awaitSettled(session);
+    this.logger.warn(`WAHA session '${session}' on '${gw.name}' is FAILED; attempting restart.`);
+    await this.wahaSessionCall(gw, session, 'restart');
+    status = await this.awaitSettled(gw, session);
     if (WhatsappService.WAHA_HEALTHY.includes(status)) return { status };
 
     // Still FAILED: the credentials are revoked. Wipe and re-pair from scratch.
-    this.logger.warn(`WAHA session '${session}' still FAILED after restart; wiping revoked credentials to force re-pairing.`);
-    await this.wahaSessionCall(session, 'logout');
-    await this.wahaSessionCall(session, 'start');
-    status = await this.awaitSettled(session);
+    this.logger.warn(`WAHA session '${session}' on '${gw.name}' still FAILED after restart; wiping revoked credentials to force re-pairing.`);
+    await this.wahaSessionCall(gw, session, 'logout');
+    await this.wahaSessionCall(gw, session, 'start');
+    status = await this.awaitSettled(gw, session);
     return {
       status,
       reason: WhatsappService.WAHA_HEALTHY.includes(status)
@@ -364,7 +472,11 @@ export class WhatsappService implements OnModuleInit {
     if (this.isMockActive(cfg)) return { status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { status: 'not_configured' };
     if (cfg?.wa_provider === 'kirim') return { status: cfg.kirim_api_key ? 'configured' : 'not_configured' };
-    return { status: await this.rawStatus(cfg?.waha_session || 'default') };
+    const session = this.sessionOf(cfg);
+    if (!session) return { status: 'not_configured' };
+    const gw = await this.gatewayFor(cfg);
+    if (!gw) return { status: 'not_configured' };
+    return { status: await this.rawStatus(gw, session) };
   }
 
   /**
@@ -380,7 +492,10 @@ export class WhatsappService implements OnModuleInit {
     if (this.isMockActive(cfg)) return { qr: null, status: 'WORKING' };
     if (cfg?.wa_connection_missing) return { qr: null, status: 'not_configured' };
     if (cfg?.wa_provider === 'kirim') return { qr: null, status: 'kirim' };
-    const session = cfg?.waha_session || 'default';
+    const session = this.sessionOf(cfg);
+    if (!session) return { qr: null, status: 'not_configured', reason: 'No WAHA session name is set for this line.' };
+    const gw = await this.gatewayFor(cfg);
+    if (!gw) return { qr: null, status: 'not_configured', reason: 'The WhatsApp gateway assigned to this line is missing or deactivated.' };
 
     const ensured = await this.ensureSession(tenantId, outletId);
     // A QR only exists in SCAN_QR_CODE. Anything else: say what state we're in.
@@ -392,11 +507,11 @@ export class WhatsappService implements OnModuleInit {
     }
 
     try {
-      const res = await fetch(`${this.wahaUrl}/api/${encodeURIComponent(session)}/auth/qr?format=image`, { headers: this.wahaHeaders() });
+      const res = await fetch(`${gw.url}/api/${encodeURIComponent(session)}/auth/qr?format=image`, { headers: this.wahaHeaders(gw) });
       if (!res.ok) {
         const detail = await res.text().catch(() => '');
-        this.logger.warn(`WAHA QR '${session}' → HTTP ${res.status} ${detail.slice(0, 200)}`);
-        return { qr: null, status: await this.rawStatus(session), reason: `WAHA could not produce a QR (HTTP ${res.status}). Try again in a moment.` };
+        this.logger.warn(`WAHA QR '${session}' on '${gw.name}' → HTTP ${res.status} ${detail.slice(0, 200)}`);
+        return { qr: null, status: await this.rawStatus(gw, session), reason: `WAHA could not produce a QR (HTTP ${res.status}). Try again in a moment.` };
       }
       const buf = Buffer.from(await res.arrayBuffer());
       return { qr: `data:image/png;base64,${buf.toString('base64')}`, status: 'qr', reason: ensured.reason };
@@ -457,10 +572,23 @@ export class WhatsappService implements OnModuleInit {
         if (!res.ok) this.logger.warn(`kirim send to ${to} failed: HTTP ${res.status}`);
         return res.ok;
       }
-      const session = cfg.waha_session || 'default';
+      // An unconfigured line sends NOTHING. It used to fall back to session
+      // 'default', which meant this tenant's messages went out from whichever
+      // tenant owned that session — and the customer's reply landed in the
+      // other tenant's inbox.
+      const session = this.sessionOf(cfg);
+      if (!session) {
+        this.logger.warn(`WA send skipped: tenant ${tenantId} has no WAHA session configured`);
+        return false;
+      }
+      const gw = await this.gatewayFor(cfg);
+      if (!gw) {
+        this.logger.error(`WA send skipped: the gateway assigned to tenant ${tenantId} is missing or deactivated`);
+        return false;
+      }
       const chatId = this.toChatId(to);
-      const res = await fetch(`${this.wahaUrl}/api/sendText`, {
-        method: 'POST', headers: this.wahaHeaders(true),
+      const res = await fetch(`${gw.url}/api/sendText`, {
+        method: 'POST', headers: this.wahaHeaders(gw, true),
         body: JSON.stringify({ session, chatId, text }),
       });
       // Surface delivery failures instead of swallowing them — a locally-formatted
@@ -519,7 +647,7 @@ export class WhatsappService implements OnModuleInit {
    */
   private async recordMockOutbox(tenantId: string, cfg: AgentCfgRow, to: string, text: string): Promise<boolean> {
     const provider = cfg.wa_provider === 'kirim' ? 'kirim' : 'waha';
-    const session = provider === 'waha' ? (cfg.waha_session || 'default') : null;
+    const session = provider === 'waha' ? this.sessionOf(cfg) : null;
     const chatId = this.toChatId(to);
     try {
       await this.pool.query(
@@ -621,14 +749,40 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Inbound (from WAHA/kirimdev webhook) ─────────────────────────────────────
-  async handleInbound(params: { tenantId?: string; outletId?: string | null; session?: string; from: string; name?: string; text: string; isGroup?: boolean; author?: string | null; mentions?: string[] }): Promise<void> {
-    // Resolve tenant + branch. A session on a branch line scopes to that outlet;
-    // simulate-inbound may pass tenantId (+optional outletId) directly.
+  async handleInbound(params: { tenantId?: string; outletId?: string | null; token?: string; session?: string; from: string; name?: string; text: string; isGroup?: boolean; author?: string | null; mentions?: string[] }): Promise<void> {
+    // Resolve tenant + branch. Order matters:
+    //  1. an explicit tenantId (simulate-inbound, kirimdev — already resolved),
+    //  2. the webhook TOKEN, the authenticated inbound identity,
+    //  3. the session name, kept only for gateways not yet re-pointed at a
+    //     tokenised hook URL. It is guessable, so it is a migration ramp, not
+    //     an identity: WA_WEBHOOK_REQUIRE_TOKEN=true switches it off.
     let tenantId = params.tenantId ?? null;
     let outletId: string | null = params.outletId ?? null;
+    if (!tenantId && params.token) {
+      const resolved = await this.resolveByToken(params.token);
+      if (!resolved) {
+        this.logger.warn('WhatsApp webhook: unknown token; dropping payload');
+        return;
+      }
+      tenantId = resolved.tenantId; outletId = resolved.outletId;
+    }
     if (!tenantId && params.session) {
+      if (this.requireWebhookToken) {
+        this.logger.warn(
+          `WhatsApp webhook: session-name resolution is disabled (WA_WEBHOOK_REQUIRE_TOKEN); `
+          + `gateway for session '${params.session}' must post to /api/whatsapp/webhook/<token>`,
+        );
+        return;
+      }
       const resolved = await this.resolveBySession(params.session);
-      if (resolved) { tenantId = resolved.tenantId; outletId = resolved.outletId; }
+      if (resolved) {
+        tenantId = resolved.tenantId;
+        outletId = resolved.outletId;
+        this.logger.warn(
+          `WhatsApp webhook: resolved tenant ${resolved.tenantId} by SESSION NAME, not token. `
+          + `Re-point this gateway at /api/whatsapp/webhook/<token> — the session name is public.`,
+        );
+      }
     }
     if (!tenantId || !params.from || !params.text) return;
 

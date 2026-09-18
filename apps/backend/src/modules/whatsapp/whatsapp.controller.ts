@@ -16,9 +16,25 @@ export class WhatsappWebhookController {
   private readonly logger = new Logger(WhatsappWebhookController.name);
   constructor(private readonly service: WhatsappService) {}
 
+  /**
+   * Tokenised WAHA webhook: `/api/whatsapp/webhook/<wa_webhook_token>`.
+   *
+   * The token (migration 103) is what identifies the line. The old tokenless
+   * route below is a public endpoint that trusted a guessable session name, so
+   * anyone on the internet could inject inbound messages into a tenant's agent;
+   * and with one WAHA Core container per tenant, every gateway reports the
+   * session name 'default', so the name cannot tell tenants apart either.
+   * Configure each gateway's WHATSAPP_HOOK_URL with its own token.
+   */
+  @Post('webhook/:token')
+  @HttpCode(HttpStatus.OK)
+  tokenWebhook(@Param('token') token: string, @Body() body: Record<string, any>): { ok: true } {
+    return this.webhook(body, token);
+  }
+
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  webhook(@Body() body: Record<string, any>): { ok: true } {
+  webhook(@Body() body: Record<string, any>, token?: string): { ok: true } {
     // WAHA: { event:'message', session, payload:{ from, body, notifyName, participant, _data… } }
     const session: string | undefined = body?.session;
     const p = body?.payload ?? body;
@@ -39,7 +55,7 @@ export class WhatsappWebhookController {
     // causing duplicate replies. Fire-and-forget with error logging instead.
     if (from && text && !fromMe) {
       void this.service
-        .handleInbound({ session, from, name, text, isGroup, author, mentions })
+        .handleInbound({ token, session, from, name, text, isGroup, author, mentions })
         .catch((err) => this.logger.error(`handleInbound failed: ${err instanceof Error ? err.message : String(err)}`));
     }
     return { ok: true };

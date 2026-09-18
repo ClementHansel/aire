@@ -15,6 +15,7 @@ import { TenantBillingController, PlatformPaymentWebhookController } from './ten
 import { PlatformOpsService } from './platform-ops.service';
 import { PlatformTaxService } from './platform-tax.service';
 import { PlatformChatService } from './platform-chat.service';
+import { WaGatewayService } from './wa-gateway.service';
 import { DatabasePoolProvider } from '../auth/database.provider';
 import { AuthModule } from '../auth';
 import { AuditModule } from '../audit';
@@ -45,6 +46,7 @@ import { AgentModule } from '../agent';
     PlatformOpsService,
     PlatformTaxService,
     PlatformChatService,
+    WaGatewayService,
     DatabasePoolProvider,
   ],
   exports: [AdminService],

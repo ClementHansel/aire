@@ -221,7 +221,19 @@ services:
 
   # =============================================================================
   # WHATSAPP GATEWAY (WAHA — unofficial, QR-scan). Optional: only needed when a
-  # tenant chooses the WAHA provider. Kapso (cloud) needs no container.
+  # tenant chooses the WAHA provider. kirimdev (cloud) needs no container.
+  #
+  # ONE GATEWAY SERVES ONE TENANT. The image we run is tier CORE, which holds
+  # exactly ONE session and it must be named 'default' — so a second tenant
+  # cannot be given a line on this container, no matter what session name is
+  # configured. Each additional tenant gets its own container (see
+  # `waha-tenant2` below) registered under Admin → WhatsApp Gateways.
+  #
+  # WAHA_HOOK_URL must carry that tenant's wa_webhook_token (migration 103):
+  # the token is what identifies the inbound line. It has to, because every
+  # Core container reports the session name 'default', so the session name can
+  # no longer tell tenants apart — and it was publicly guessable anyway. Copy
+  # the URL from Admin → WhatsApp Gateways → Per-tenant transport.
   # =============================================================================
 
   waha:
@@ -229,7 +241,7 @@ services:
     container_name: aire-waha
     restart: unless-stopped
     environment:
-      WHATSAPP_HOOK_URL: http://backend:4000/api/whatsapp/webhook
+      WHATSAPP_HOOK_URL: ${WAHA_HOOK_URL:-http://backend:4000/api/whatsapp/webhook}
       WHATSAPP_DEFAULT_ENGINE: NOWEB
       WHATSAPP_HOOK_EVENTS: message
       WAHA_PRINT_QR: "false"
@@ -239,6 +251,31 @@ services:
       - "127.0.0.1:${WAHA_PORT:-3001}:3000"
     volumes:
       - waha-data:/app/.sessions
+    networks:
+      - aire-network
+
+  # A SECOND tenant's gateway. Behind the `waha2` compose profile, so it only
+  # starts when asked for:
+  #   docker compose --profile waha2 up -d waha-tenant2
+  # Then register http://waha-tenant2:3000 under Admin → WhatsApp Gateways,
+  # assign it to the tenant, and set WAHA2_HOOK_URL to that tenant's webhook
+  # URL. Copy this block for a third tenant.
+  waha-tenant2:
+    image: devlikeapro/waha:latest
+    container_name: aire-waha-tenant2
+    restart: unless-stopped
+    profiles: ["waha2"]
+    environment:
+      WHATSAPP_HOOK_URL: ${WAHA2_HOOK_URL:-}
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WHATSAPP_HOOK_EVENTS: message
+      WAHA_PRINT_QR: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "true"
+      WHATSAPP_API_KEY: ${WAHA2_API_KEY:-}
+    ports:
+      - "127.0.0.1:${WAHA2_PORT:-3002}:3000"
+    volumes:
+      - waha-tenant2-data:/app/.sessions
     networks:
       - aire-network
 
@@ -285,6 +322,10 @@ volumes:
   mosquitto_log:
     driver: local
   waha-data:
+    driver: local
+  # Separate volume per gateway: WAHA stores the paired device's credentials in
+  # .sessions, so sharing one volume would mean sharing one WhatsApp account.
+  waha-tenant2-data:
     driver: local
 
 # =============================================================================

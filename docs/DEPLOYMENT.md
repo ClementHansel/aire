@@ -228,7 +228,73 @@ does not survive the failure it exists for.
    sign-in (legal entity → branch → services → staff → finance).
 4. Per-tenant WhatsApp/AI credentials are configured by the tenant themselves
    under AI Agent, or by a super-admin via "view as".
+5. **Give the tenant its own WhatsApp gateway** — see section 8. Skipping this
+   leaves the tenant with no WhatsApp line at all (it will honestly report "Not
+   configured"); it does NOT quietly share the existing one.
 
 `ALLOW_SELF_SIGNUP` must stay `false` in production — `POST /api/auth/register`
 would otherwise let anyone create an active tenant, bypassing this flow, the
 vertical choice, and billing.
+
+## 8. WhatsApp gateways — one container per tenant
+
+The WAHA image we run is tier **CORE**, which serves exactly **one** session and
+it must be named `default`:
+
+```bash
+docker exec aire-waha sh -c 'curl -s http://localhost:3000/api/server/version \
+  -H "X-Api-Key: $WHATSAPP_API_KEY"'
+# {"version":"…","engine":"NOWEB","tier":"CORE",…}
+```
+
+So a session name cannot address a second tenant's line. Each tenant that needs
+WhatsApp gets **its own container**, registered under
+**Admin → WhatsApp Gateways**. (Upgrading to `devlikeapro/waha-plus` would allow
+several named sessions on one container and make the extra containers
+unnecessary — the registry keeps working either way.)
+
+Provisioning a gateway for tenant #2:
+
+```bash
+# 1. Start the second gateway (compose profile, so it stays off by default).
+docker compose --profile waha2 up -d waha-tenant2
+
+# 2. Admin → WhatsApp Gateways → Register gateway
+#      Name:     waha-tenant2
+#      Base URL: http://waha-tenant2:3000     (docker service name, not localhost)
+#      API key:  whatever WAHA2_API_KEY is set to
+#    "Check" should report reachable + tier CORE.
+
+# 3. Same page → Per-tenant transport → set the tenant's Gateway to it,
+#    then "Issue token" (or "Copy" an existing one) to get its inbound URL:
+#      /api/whatsapp/webhook/<token>
+
+# 4. Put that URL in .env so the container posts inbound to the right tenant,
+#    and restart it:
+#      WAHA2_HOOK_URL=http://backend:4000/api/whatsapp/webhook/<token>
+docker compose --profile waha2 up -d waha-tenant2
+
+# 5. The tenant sets its WhatsApp number + session name `default` under
+#    AI Agent, then Connect / Get QR and scans it on that tenant's phone.
+```
+
+**The token is the inbound identity** (migration 103). Every Core container
+reports the session name `default`, so the session name can no longer tell
+tenants apart — and `POST /api/whatsapp/webhook` was a public endpoint that
+trusted that guessable name, meaning anyone could inject messages into a
+tenant's agent. Two consequences:
+
+- Each container's `WHATSAPP_HOOK_URL` must carry **its own** tenant's token
+  (`WAHA_HOOK_URL` for the platform container, `WAHA2_HOOK_URL` for the second).
+- Once every container is re-pointed, set `WA_WEBHOOK_REQUIRE_TOKEN=true` on the
+  backend to close the tokenless route for good. Leave it unset during the
+  rollout: session-name resolution still works (with a warning in the log) so a
+  container you have not re-pointed yet keeps receiving messages.
+
+Rotating a token invalidates the old URL immediately — update the container's
+`WHATSAPP_HOOK_URL` in the same breath or that tenant stops receiving messages.
+
+Checking isolation at a glance: on **Admin → WhatsApp Gateways**, the
+Per-tenant transport table flags in red any two tenants sitting on the same
+gateway with the same session name. That combination means they are sharing one
+WhatsApp line.
