@@ -5,7 +5,7 @@ import { Role, JWTPayload } from '@aire/shared';
 import { Roles, CurrentUser } from '../../common/decorators';
 import { RolesGuard } from '../../common/guards';
 import { JwtAuthGuard } from '../auth/auth.guard';
-import { NotificationRendererService, fillForKey, sampleVars, type TemplateView } from './notification-renderer.service';
+import { NotificationRendererService, fillForKey, samplesOf, type TemplateView } from './notification-renderer.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { CATEGORY_LABELS, AUDIENCE_LABELS, getDefinition, unknownPlaceholders } from './notification-catalog';
 
@@ -111,13 +111,16 @@ export class NotificationTemplateController {
    */
   @Post(':tenantId/:key/preview')
   async preview(
+    @Param('tenantId') tenantId: string,
     @Param('key') key: string,
     @Body() dto: { body?: string },
   ): Promise<{ preview: string; unknownVariables: string[] }> {
     const def = this.definitionOr404(key);
-    const body = dto.body?.trim() ? dto.body : def.defaultBody;
+    // The route always carried :tenantId but this handler never bound it, so
+    // the preview could only ever show stock wording and stock samples.
+    const body = dto.body?.trim() ? dto.body : await this.renderer.defaultBodyForTenant(tenantId, key);
     return {
-      preview: fillForKey(key, body, sampleVars(def)),
+      preview: fillForKey(key, body, samplesOf(await this.renderer.variablesFor(tenantId, def))),
       unknownVariables: unknownPlaceholders(key, body),
     };
   }
@@ -138,8 +141,8 @@ export class NotificationTemplateController {
     const phone = (dto.phone ?? '').trim();
     if (!phone) throw new BadRequestException('Masukkan nomor WhatsApp tujuan uji coba.');
 
-    const body = dto.body?.trim() ? dto.body : def.defaultBody;
-    const text = `🧪 *Uji coba notifikasi*\n\n${fillForKey(key, body, sampleVars(def))}`;
+    const body = dto.body?.trim() ? dto.body : await this.renderer.defaultBodyForTenant(tenantId, key);
+    const text = `🧪 *Uji coba notifikasi*\n\n${fillForKey(key, body, samplesOf(await this.renderer.variablesFor(tenantId, def)))}`;
     const sent = await this.whatsapp.sendText(tenantId, phone, text).catch(() => false);
     return sent
       ? { sent: true }

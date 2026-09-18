@@ -93,6 +93,32 @@ describe('notification copy hygiene', () => {
     expect(problems, problems.join('\n')).toEqual([]);
   });
 
+  it('no variable SAMPLE hardcodes a brand, and vehicle samples have an alternative', () => {
+    // Samples are owner-facing: they fill the preview in the notification
+    // editor. A lab owner reading "Paket Cuci 10x · B 1234 XYZ" under a message
+    // whose real text is correct is the same confusion one layer out. And
+    // `AIRE-8F2K` puts one tenant's brand in every other tenant's screen.
+    const problems: string[] = [];
+    for (const def of NOTIFICATION_CATALOG) {
+      for (const v of def.variables) {
+        for (const { pattern, why } of FORBIDDEN_NAMES) {
+          if (pattern.test(v.sample)) problems.push(`${def.key}.${v.name} sample contains ${pattern} — ${why}`);
+        }
+        if (VEHICLE_WORDS.test(v.sample) || /\bB \d{4} [A-Z]{3}\b/.test(v.sample)) {
+          for (const vertical of NON_VEHICLE) {
+            const alt = v.sampleByVertical?.[vertical];
+            if (alt === undefined) {
+              problems.push(`${def.key}.${v.name}: sample "${v.sample}" is vehicle-specific but has no '${vertical}' sample`);
+            } else if (VEHICLE_WORDS.test(alt)) {
+              problems.push(`${def.key}.${v.name}: the '${vertical}' sample still names a vehicle`);
+            }
+          }
+        }
+      }
+    }
+    expect(problems, problems.join('\n')).toEqual([]);
+  });
+
   it('every legacy template alias resolves to a real catalogue entry', () => {
     // An alias pointing at a key that has been renamed degrades silently to
     // "unknown template, nothing sent" — a notification that just stops.

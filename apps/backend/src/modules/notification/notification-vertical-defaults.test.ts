@@ -133,6 +133,33 @@ describe('notification defaults follow the tenant vertical', () => {
     );
   });
 
+  it('the editor preview uses this tenant own samples, not a car wash ones', async () => {
+    // Samples are owner-facing. A lab owner reading a preview about
+    // "Paket Cuci 10x" under correct wording is the same confusion, one layer
+    // out from the customer.
+    const svc = new NotificationRendererService(createPool() as never);
+
+    const labRow = (await svc.listForTenant(LAB)).find((r) => r.key === 'voucher_purchased')!;
+    const washRow = (await svc.listForTenant(CARWASH)).find((r) => r.key === 'voucher_purchased')!;
+
+    expect(labRow.preview).not.toMatch(/cuci/i);
+    expect(labRow.variables.find((v) => v.name === 'voucherName')!.sample).toBe('Paket Layanan 10x');
+    expect(washRow.variables.find((v) => v.name === 'voucherName')!.sample).toBe('Paket Cuci 10x');
+  });
+
+  it('an empty sample means the variable does not apply, and its line vanishes', async () => {
+    // `plate` has no meaning for a lab. Its sample is '' and the variable is
+    // optional, so the preview drops the line — exactly as the sent message will.
+    const svc = new NotificationRendererService(createPool() as never);
+
+    const row = (await svc.listForTenant(LAB)).find((r) => r.key === 'queue_completion')!;
+    expect(row.variables.find((v) => v.name === 'plate')!.sample).toBe('');
+    expect(row.preview).not.toMatch(/plat/i);
+    expect(row.preview).not.toContain('{plate}');
+    // The rest of the message still renders.
+    expect(row.preview).toMatch(/selesai/i);
+  });
+
   it('the identity ask is in the catalogue, so it shows up in the owner editor', async () => {
     // The catalogue is what drives /dashboard/settings/notifications and the
     // tenant-facing notification document. A body inlined at a call site is

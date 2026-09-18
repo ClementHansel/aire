@@ -129,19 +129,52 @@ export class NotificationRendererService {
     return byVertical ?? def.defaultBody;
   }
 
+  /**
+   * This entry's variables with their samples resolved for the tenant.
+   *
+   * Samples are owner-facing — they fill the editor's preview — so the stock
+   * car-wash ones ("Paket Cuci 10x", "B 1234 XYZ") described the wrong business
+   * to everybody else. Resolved here rather than in the UI so the preview the
+   * server computes and the one the client recomputes from `variables[].sample`
+   * cannot disagree.
+   */
+  async variablesFor(tenantId: string, def: NotificationDefinition): Promise<NotificationDefinition['variables']> {
+    if (!def.variables.some((v) => v.sampleByVertical)) return def.variables;
+    const vertical = await this.verticalOf(tenantId);
+    if (!vertical) return def.variables;
+    return def.variables.map((v) => {
+      const alt = v.sampleByVertical?.[vertical as keyof NonNullable<typeof v.sampleByVertical>];
+      // `''` is a deliberate sample ("does not apply here"), so test for
+      // undefined rather than truthiness.
+      return alt === undefined ? v : { ...v, sample: alt };
+    });
+  }
+
+  /**
+   * The default body this tenant would get for a key: public wrapper over
+   * {@link defaultBodyFor} for callers that hold a key rather than a definition
+   * (the draft-preview and test-send endpoints). Returns '' for an unknown key.
+   */
+  async defaultBodyForTenant(tenantId: string, key: string): Promise<string> {
+    const def = getDefinition(key);
+    return def ? this.defaultBodyFor(tenantId, def) : '';
+  }
+
   /** Every catalogue entry, merged with this tenant's overrides. */
   async listForTenant(tenantId: string): Promise<TemplateView[]> {
     const overrides = await this.overrides(tenantId);
     return Promise.all(NOTIFICATION_CATALOG.map(async (def) => {
       const o = overrides.get(def.key);
       const body = o?.body?.trim() ? o.body : await this.defaultBodyFor(tenantId, def);
+      const variables = await this.variablesFor(tenantId, def);
       return {
         ...def,
+        variables,
         body,
         enabled: o ? o.enabled : true,
         customized: !!o?.body?.trim(),
         updatedAt: o?.updatedAt ?? null,
-        preview: fillTemplate(body, sampleVars(def), optionalVars(def)),
+        preview: fillTemplate(body, samplesOf(variables), optionalVars(def)),
       };
     }));
   }
@@ -243,9 +276,17 @@ export async function renderNotification(
   return def ? fillTemplate(def.defaultBody, vars, optionalVars(def)) : null;
 }
 
-/** The definition's sample values, keyed by variable name. */
+/** The definition's sample values, keyed by variable name (stock samples). */
 export function sampleVars(def: NotificationDefinition): Record<string, string> {
-  return Object.fromEntries(def.variables.map((v) => [v.name, v.sample]));
+  return samplesOf(def.variables);
+}
+
+/**
+ * Sample map from a variable list that may already have been resolved for a
+ * tenant by {@link NotificationRendererService.variablesFor}.
+ */
+export function samplesOf(variables: NotificationDefinition['variables']): Record<string, string> {
+  return Object.fromEntries(variables.map((v) => [v.name, v.sample]));
 }
 
 /** Which of a definition's variables may make their line disappear. */

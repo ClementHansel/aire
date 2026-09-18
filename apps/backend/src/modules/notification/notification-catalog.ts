@@ -66,6 +66,18 @@ export interface NotificationVariable {
   /** Shown in the editor preview so the owner sees a realistic message. */
   sample: string;
   /**
+   * Sample that replaces `sample` for particular verticals.
+   *
+   * Samples are owner-facing: they fill the preview in the notification editor.
+   * The stock ones describe a car wash ("Paket Cuci 10x", "Cuci Premium",
+   * "B 1234 XYZ"), so a calibration lab's owner read a preview about a car
+   * wash under a message whose real wording was already correct. An empty
+   * string is a legitimate value — it means "this variable does not apply
+   * here", and because these variables are optional their line then
+   * disappears from the preview exactly as it will in the sent message.
+   */
+  sampleByVertical?: Partial<Record<NotificationVertical, string>>;
+  /**
    * This variable is often absent, and a line built around it should VANISH
    * rather than be sent half-empty: "Berlaku sampai {expiryDate}." must not go
    * out as "Berlaku sampai ." for a voucher with no expiry.
@@ -208,9 +220,10 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Saat pelanggan membeli paket voucher di kasir dan nomor HP-nya tercatat. Berisi seluruh kode voucher yang baru terbit.',
     variables: [
       { name: 'customerName', description: 'Nama pembeli', sample: 'Budi' },
-      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x' },
+      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x',
+        sampleByVertical: { services: 'Paket Layanan 10x', fnb: 'Paket Minuman 10x', laundry: 'Paket Laundry 10x' } },
       { name: 'codeCount', description: 'Jumlah kode voucher', sample: '10' },
-      { name: 'codeList', description: 'Daftar kode voucher (otomatis, satu per baris)', sample: '1. AIRE-8F2K\n2. AIRE-9Q1M', optional: true },
+      { name: 'codeList', description: 'Daftar kode voucher (otomatis, satu per baris)', sample: '1. VCR-8F2K\n2. VCR-9Q1M', optional: true },
       { name: 'expiryDate', description: 'Tanggal kedaluwarsa voucher (kosong bila tanpa batas)', sample: '31 Desember 2026', optional: true },
     ],
     defaultBody: [
@@ -232,9 +245,10 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Saat pelanggan mendapat voucher bonus dari sebuah campaign/promo (bukan pembelian). Berisi kode voucher bonusnya.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
-      { name: 'voucherName', description: 'Nama paket voucher bonus', sample: 'Bonus Cuci Gratis' },
+      { name: 'voucherName', description: 'Nama paket voucher bonus', sample: 'Bonus Cuci Gratis',
+        sampleByVertical: { services: 'Bonus Layanan Gratis', fnb: 'Bonus Minuman Gratis', laundry: 'Bonus Laundry Gratis' } },
       { name: 'codeCount', description: 'Jumlah kode voucher', sample: '2' },
-      { name: 'codeList', description: 'Daftar kode voucher (otomatis, satu per baris)', sample: '1. AIRE-BON1\n2. AIRE-BON2', optional: true },
+      { name: 'codeList', description: 'Daftar kode voucher (otomatis, satu per baris)', sample: '1. VCR-BON1\n2. VCR-BON2', optional: true },
       { name: 'expiryDate', description: 'Tanggal kedaluwarsa voucher (kosong bila tanpa batas)', sample: '31 Desember 2026', optional: true },
     ],
     defaultBody: [
@@ -256,10 +270,11 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Saat satu atau lebih kode voucher ditukarkan di kasir, dan masih ada sisa kode. Dikirim ke pemilik voucher.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
-      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x' },
+      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x',
+        sampleByVertical: { services: 'Paket Layanan 10x', fnb: 'Paket Minuman 10x', laundry: 'Paket Laundry 10x' } },
       { name: 'usedDetail', description: 'Rincian pemakaian otomatis, mis. " (2 kode) di transaksi ORD-1042, hemat Rp100.000"', sample: ' di transaksi ORD-1042, hemat Rp50.000', optional: true },
       { name: 'remainingCount', description: 'Sisa kode voucher', sample: '8' },
-      { name: 'remainingCodes', description: 'Daftar sisa kode (hanya untuk pemilik voucher)', sample: '1. AIRE-8F2K\n2. AIRE-9Q1M', optional: true },
+      { name: 'remainingCodes', description: 'Daftar sisa kode (hanya untuk pemilik voucher)', sample: '1. VCR-8F2K\n2. VCR-9Q1M', optional: true },
     ],
     defaultBody: [
       'Halo kak {customerName}! 😊 Voucher *{voucherName}* berhasil digunakan{usedDetail}.',
@@ -279,7 +294,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     trigger:
       'Ketika kode voucher ditukarkan oleh orang yang bukan pemilik voucher (voucher memang bisa dibagikan). Penerima hanya diberi tahu jumlah sisanya — daftar kodenya tidak ikut dikirim karena itu milik orang lain.',
     variables: [
-      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x' },
+      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x',
+        sampleByVertical: { services: 'Paket Layanan 10x', fnb: 'Paket Minuman 10x', laundry: 'Paket Laundry 10x' } },
       { name: 'usedDetail', description: 'Rincian pemakaian otomatis', sample: ' di transaksi ORD-1042, hemat Rp50.000', optional: true },
       { name: 'remainingCount', description: 'Sisa kode voucher', sample: '8' },
     ],
@@ -300,7 +316,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     trigger: 'Sama seperti di atas, tetapi dikirim ketika kode voucher pelanggan sudah habis semua.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
-      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x' },
+      { name: 'voucherName', description: 'Nama paket voucher', sample: 'Paket Cuci 10x',
+        sampleByVertical: { services: 'Paket Layanan 10x', fnb: 'Paket Minuman 10x', laundry: 'Paket Laundry 10x' } },
       { name: 'usedDetail', description: 'Rincian pemakaian otomatis', sample: ' di transaksi ORD-1042, hemat Rp50.000', optional: true },
     ],
     defaultBody: [
@@ -350,8 +367,9 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Saat kasir menandai mobil pada papan antrian sebagai "selesai" dan nomor HP pelanggan tercatat. Mobil hanya dapat ditandai selesai setelah pesanannya lunas, sehingga pesan ini selalu dikirim setelah pembayaran.',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
-      { name: 'plate', description: 'Plat nomor kendaraan', sample: 'B 1234 XYZ', optional: true },
-      { name: 'outletName', description: 'Nama cabang', sample: 'Kencana Loka', optional: true },
+      { name: 'plate', description: 'Plat nomor kendaraan', sample: 'B 1234 XYZ',
+        sampleByVertical: { services: '', fnb: '', laundry: '' }, optional: true },
+      { name: 'outletName', description: 'Nama cabang', sample: 'Cabang Utama', optional: true },
     ],
     defaultBody: [
       'Halo kak {customerName}! ✨',
@@ -394,7 +412,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     audience: 'customer',
     trigger: 'Saat pelanggan mengajukan booking lewat WhatsApp dan permintaannya menunggu konfirmasi tim.',
     variables: [
-      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00', optional: true },
+      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00',
+        sampleByVertical: { services: 'Layanan Premium · 10 Agustus 2026 14:00', fnb: 'Meja 4 orang · 10 Agustus 2026 14:00', laundry: 'Laundry Kiloan · 10 Agustus 2026 14:00' }, optional: true },
     ],
     defaultBody: [
       'Terima kasih! Permintaan booking Anda kami terima ✅',
@@ -411,7 +430,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     trigger:
       'Saat tim cabang menyetujui booking — baik lewat balasan WhatsApp maupun lewat tautan konfirmasi dari portal pelanggan.',
     variables: [
-      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00', optional: true },
+      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00',
+        sampleByVertical: { services: 'Layanan Premium · 10 Agustus 2026 14:00', fnb: 'Meja 4 orang · 10 Agustus 2026 14:00', laundry: 'Laundry Kiloan · 10 Agustus 2026 14:00' }, optional: true },
     ],
     defaultBody: [
       'Booking Anda telah DIKONFIRMASI tim kami ✅',
@@ -427,7 +447,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     audience: 'customer',
     trigger: 'Saat tim cabang menolak permintaan booking pelanggan.',
     variables: [
-      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00', optional: true },
+      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00',
+        sampleByVertical: { services: 'Layanan Premium · 10 Agustus 2026 14:00', fnb: 'Meja 4 orang · 10 Agustus 2026 14:00', laundry: 'Laundry Kiloan · 10 Agustus 2026 14:00' }, optional: true },
     ],
     defaultBody: [
       'Maaf, booking Anda belum dapat kami konfirmasi 🙏',
@@ -444,7 +465,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     trigger:
       'Saat permintaan booking tidak dikonfirmasi tim sampai batas waktunya, sistem membatalkannya otomatis dan mengabari pelanggan.',
     variables: [
-      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00', optional: true },
+      { name: 'bookingSummary', description: 'Ringkasan booking (layanan, waktu)', sample: 'Cuci Premium · 10 Agustus 2026 14:00',
+        sampleByVertical: { services: 'Layanan Premium · 10 Agustus 2026 14:00', fnb: 'Meja 4 orang · 10 Agustus 2026 14:00', laundry: 'Laundry Kiloan · 10 Agustus 2026 14:00' }, optional: true },
     ],
     defaultBody: [
       'Halo kak, maaf banget ya 🙏 Booking kakak ({bookingSummary}) belum sempat tim kami konfirmasi jadi otomatis kedaluwarsa.',
@@ -461,7 +483,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Saat ada permintaan booking lewat WhatsApp. Dikirim ke nomor eskalasi tim agar bisa dibalas TERIMA / TOLAK.',
     variables: [
       { name: 'ref', description: 'Kode referensi booking untuk dibalas', sample: 'B7K2' },
-      { name: 'bookingSummary', description: 'Ringkasan booking', sample: 'Cuci Premium · 10 Agustus 2026 14:00', optional: true },
+      { name: 'bookingSummary', description: 'Ringkasan booking', sample: 'Cuci Premium · 10 Agustus 2026 14:00',
+        sampleByVertical: { services: 'Layanan Premium · 10 Agustus 2026 14:00', fnb: 'Meja 4 orang · 10 Agustus 2026 14:00', laundry: 'Laundry Kiloan · 10 Agustus 2026 14:00' }, optional: true },
       { name: 'customerPhone', description: 'Nomor HP pelanggan', sample: '628123456789' },
     ],
     defaultBody: [
@@ -481,10 +504,12 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     trigger:
       'Saat pelanggan membuat booking lewat portal/aplikasi. Dikirim ke nomor WhatsApp cabang beserta tautan konfirmasi.',
     variables: [
-      { name: 'outletName', description: 'Nama cabang', sample: 'Kencana Loka' },
+      { name: 'outletName', description: 'Nama cabang', sample: 'Cabang Utama' },
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
-      { name: 'plate', description: 'Plat nomor kendaraan', sample: 'B 1234 XYZ', optional: true },
-      { name: 'serviceName', description: 'Layanan yang dipesan', sample: 'Cuci Premium', optional: true },
+      { name: 'plate', description: 'Plat nomor kendaraan', sample: 'B 1234 XYZ',
+        sampleByVertical: { services: '', fnb: '', laundry: '' }, optional: true },
+      { name: 'serviceName', description: 'Layanan yang dipesan', sample: 'Cuci Premium',
+        sampleByVertical: { services: 'Layanan Premium', fnb: 'Paket Hemat', laundry: 'Laundry Kiloan' }, optional: true },
       { name: 'scheduledAt', description: 'Waktu booking', sample: '10 Agu 2026, 14.00' },
       { name: 'confirmUrl', description: 'Tautan konfirmasi / tolak', sample: 'https://app.useairin.id/confirm-booking/abc123' },
     ],
@@ -539,7 +564,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     trigger:
       'Saat asisten WhatsApp menyiapkan booking dari percakapan. Ringkasannya dibacakan ulang oleh sistem — bukan oleh model — lalu pelanggan membalas YA atau BATAL. Booking baru dibuat setelah balasan YA.',
     variables: [
-      { name: 'agentName', description: 'Nama asisten (persona) Anda', sample: 'Kalia' },
+      { name: 'agentName', description: 'Nama asisten (persona) Anda', sample: 'Asisten' },
       { name: 'bookingSummary', description: 'Ringkasan booking yang dibaca ulang sistem', sample: 'Kalibrasi Thermocouple · 20 September 2026 10:00' },
     ],
     defaultBody: [
@@ -572,7 +597,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Ditambahkan di bawah balasan pertama asisten WhatsApp bila pengirimnya belum dikenali. '
       + 'Dikirim maksimal satu kali per percakapan, supaya asisten bisa mengecek membership, voucher, atau membuat booking milik pelanggan tersebut.',
     variables: [
-      { name: 'agentName', description: 'Nama asisten (persona) Anda', sample: 'Kalia' },
+      { name: 'agentName', description: 'Nama asisten (persona) Anda', sample: 'Asisten' },
       { name: 'businessName', description: 'Nama bisnis Anda', sample: 'PT Dinamika Kalibrasi Indonesia', optional: true },
     ],
     defaultBody:
@@ -718,7 +743,7 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
       { name: 'campaignName', description: 'Nama campaign', sample: 'Promo Akhir Pekan' },
-      { name: 'codes', description: 'Kode voucher bila ada', sample: 'AIRE-PROMO1', optional: true },
+      { name: 'codes', description: 'Kode voucher bila ada', sample: 'VCR-PROMO1', optional: true },
       { name: 'expiryDate', description: 'Tanggal kedaluwarsa bila ada', sample: '31 Agustus 2026', optional: true },
     ],
     defaultBody: [
@@ -739,7 +764,8 @@ export const NOTIFICATION_CATALOG: NotificationDefinition[] = [
       'Saat asisten AI mendeteksi pelanggan sudah lama tidak datang dan mengirim penawaran (butuh toggle "retention offers" aktif).',
     variables: [
       { name: 'customerName', description: 'Nama pelanggan', sample: 'Budi' },
-      { name: 'offer', description: 'Isi penawaran', sample: 'diskon 20% untuk cuci berikutnya', optional: true },
+      { name: 'offer', description: 'Isi penawaran', sample: 'diskon 20% untuk cuci berikutnya',
+        sampleByVertical: { services: 'diskon 20% untuk layanan berikutnya', fnb: 'diskon 20% untuk pesanan berikutnya', laundry: 'diskon 20% untuk laundry berikutnya' }, optional: true },
     ],
     defaultBody: [
       'Halo kak {customerName}! 😊',
