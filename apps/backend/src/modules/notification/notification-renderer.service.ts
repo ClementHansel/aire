@@ -100,16 +100,7 @@ export class NotificationRendererService {
     if (override?.body?.trim()) {
       body = override.body;
     } else {
-      body = def.defaultBody;
-      // Only hit the database when this entry actually has per-vertical
-      // wording — most do not.
-      if (def.defaultBodyByVertical) {
-        const vertical = await this.verticalOf(tenantId);
-        const byVertical = vertical
-          ? def.defaultBodyByVertical[vertical as keyof typeof def.defaultBodyByVertical]
-          : undefined;
-        if (byVertical) body = byVertical;
-      }
+      body = await this.defaultBodyFor(tenantId, def);
     }
     return fillTemplate(body, vars, optionalVars(def));
   }
@@ -122,12 +113,28 @@ export class NotificationRendererService {
 
   // ── Reads for the settings UI ─────────────────────────────────────────────
 
+  /**
+   * Which default applies to this tenant: the vertical's wording when the entry
+   * has one, else the stock body. Shared by {@link render} and
+   * {@link listForTenant} so the editor always shows the text that will actually
+   * be sent — showing a car wash's wording to a calibration lab would reproduce
+   * the original bug one layer up.
+   */
+  private async defaultBodyFor(tenantId: string, def: NotificationDefinition): Promise<string> {
+    if (!def.defaultBodyByVertical) return def.defaultBody;
+    const vertical = await this.verticalOf(tenantId);
+    const byVertical = vertical
+      ? def.defaultBodyByVertical[vertical as keyof typeof def.defaultBodyByVertical]
+      : undefined;
+    return byVertical ?? def.defaultBody;
+  }
+
   /** Every catalogue entry, merged with this tenant's overrides. */
   async listForTenant(tenantId: string): Promise<TemplateView[]> {
     const overrides = await this.overrides(tenantId);
-    return NOTIFICATION_CATALOG.map((def) => {
+    return Promise.all(NOTIFICATION_CATALOG.map(async (def) => {
       const o = overrides.get(def.key);
-      const body = o?.body?.trim() ? o.body : def.defaultBody;
+      const body = o?.body?.trim() ? o.body : await this.defaultBodyFor(tenantId, def);
       return {
         ...def,
         body,
@@ -136,7 +143,7 @@ export class NotificationRendererService {
         updatedAt: o?.updatedAt ?? null,
         preview: fillTemplate(body, sampleVars(def), optionalVars(def)),
       };
-    });
+    }));
   }
 
   // ── Writes ────────────────────────────────────────────────────────────────

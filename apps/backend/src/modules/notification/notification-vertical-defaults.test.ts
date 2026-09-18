@@ -112,6 +112,27 @@ describe('notification defaults follow the tenant vertical', () => {
     expect(wash).toMatch(/plat mobil/i);
   });
 
+  it('the owner editor shows the same body the agent will actually send', async () => {
+    // Showing the car wash's wording to the lab would reproduce the original
+    // bug one layer up: the owner reads "plat kendaraannya" in the editor and
+    // still cannot tell where the sent text comes from.
+    const svc = new NotificationRendererService(createPool() as never);
+
+    const rows = await svc.listForTenant(LAB);
+    const row = rows.find((r) => r.key === 'customer_identity_ask');
+    expect(row).toBeDefined();
+    expect(row!.body).not.toMatch(/plat/i);
+    expect(row!.preview).not.toMatch(/plat/i);
+    expect(row!.customized).toBe(false); // it is a DEFAULT, not an override
+
+    const sent = await svc.render(LAB, 'customer_identity_ask', {
+      agentName: 'Kalia', businessName: 'PT Dinamika Kalibrasi Indonesia',
+    });
+    expect(sent).toBe(
+      row!.body.replace(/\{agentName\}/g, 'Kalia').replace(/\{businessName\}/g, 'PT Dinamika Kalibrasi Indonesia'),
+    );
+  });
+
   it('the identity ask is in the catalogue, so it shows up in the owner editor', async () => {
     // The catalogue is what drives /dashboard/settings/notifications and the
     // tenant-facing notification document. A body inlined at a call site is
