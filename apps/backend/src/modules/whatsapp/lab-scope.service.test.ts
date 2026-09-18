@@ -73,7 +73,11 @@ const ROW = {
   range_point_si: null,
   uncertainty: '0.41 kg',
   method: 'SNSU PK.M-02:2021',
+  accredited_until: '2031-06-13',
 };
+
+const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+const TOMORROW = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
 describe('LabScopeService.check', () => {
   it('requires EVERY token to match, so "termokopel k" cannot match type J', async () => {
@@ -127,6 +131,31 @@ describe('LabScopeService.check', () => {
     expect(out.inScope).toBe(false);
     expect(out.matches).toHaveLength(0);
     expect(out.note).toMatch(/escalate/i);
+  });
+
+  it('will not quote a lab whose accreditation has expired', async () => {
+    const stale = { ...ROW, lab: 'PT Lapsed', lk_number: 'LK-999-IDN', accredited_until: YESTERDAY };
+    const svc = new LabScopeService(poolWith([stale]));
+    const out = await svc.check('t1', 'Timbangan', 700, 'kg');
+    expect(out.inScope).toBe(false);
+    expect(out.matches).toHaveLength(0);
+    // Named, not a bare no: "we stopped being able to" is not "we never could".
+    expect(out.note).toMatch(/LK-999-IDN/);
+    expect(out.note).toMatch(/escalate/i);
+  });
+
+  it('keeps the live labs when only one of several has expired', async () => {
+    const stale = { ...ROW, lab: 'PT Lapsed', lk_number: 'LK-999-IDN', is_own_lab: false, accredited_until: YESTERDAY };
+    const live = { ...ROW, lab: 'PT Live', lk_number: 'LK-001-IDN', is_own_lab: false, accredited_until: TOMORROW };
+    const svc = new LabScopeService(poolWith([stale, live]));
+    const out = await svc.check('t1', 'Timbangan', 700, 'kg');
+    expect(out.inScope).toBe(true);
+    expect(out.matches.map((m) => m.lkNumber)).toEqual(['LK-001-IDN']);
+  });
+
+  it('treats a missing expiry date as usable rather than dropping the row', async () => {
+    const svc = new LabScopeService(poolWith([{ ...ROW, accredited_until: null }]));
+    expect((await svc.check('t1', 'Timbangan', 700, 'kg')).inScope).toBe(true);
   });
 
   it('matches a single-point entry exactly', async () => {

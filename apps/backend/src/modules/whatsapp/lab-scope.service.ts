@@ -41,7 +41,30 @@ const CANON: Record<string, Record<string, number>> = {
   ph: { ph: 1 },
   gas_percent: { '%': 1 },
   gas_ppm: { ppm: 1 },
-  tds: { 'mg/l': 1, ppm: 1 },
+  tds: { 'mg/l': 1, ppm: 1, 'g/l': 1e3 },
+  force: { n: 1, kn: 1e3, kgf: 9.80665, tf: 9806.65, gf: 0.00980665 },
+  torque: { nm: 1, 'n.m': 1, 'n m': 1, ncm: 0.01, 'kgf.m': 9.80665 },
+  length: { um: 1e-3, 'µm': 1e-3, mm: 1, cm: 10, m: 1e3, km: 1e6 },
+  angle: { deg: 1, '°': 1, derajat: 1 },
+  flow: { 'l/min': 1, lpm: 1, 'l/s': 60, 'm3/min': 1e3, 'm3/h': 16.6667, 'm3/jam': 16.6667 },
+  speed: { 'm/s': 1, 'km/h': 1 / 3.6, 'km/jam': 1 / 3.6 },
+  concentration: { 'mg/l': 1, ppm: 1, 'ug/ml': 1, 'µg/ml': 1 },
+  conductivity: { 'us/cm': 1, 'µs/cm': 1, 'ms/cm': 1e3 },
+  turbidity: { ntu: 1 },
+  viscosity: { cp: 1, cst: 1, mpas: 1 },
+  brix: { '%brix': 1, brix: 1, 'obrix': 1 },
+  wavelength: { nm: 1 },
+  light: { lux: 1, lx: 1 },
+  sound: { db: 1 },
+  charge: { pc: 1, nc: 1e3 },
+  energy_joule: { joule: 1, j: 1 },
+  heartrate: { bpm: 1 },
+  density: { 'g/cm3': 1, 'g/ml': 1 },
+  acceleration: { 'm/s2': 1 },
+  moisture_percent: { '%': 1 },
+  massflow: { 't/h': 1, 'ton/h': 1, 'ton/jam': 1 },
+  volumeflow_mlh: { 'ml/h': 1, 'ml/jam': 1 },
+  inclination: { 'mm/m': 1 },
 };
 
 /**
@@ -134,7 +157,8 @@ export class LabScopeService {
     const params: unknown[] = [tenantId, ...tokens.map((t) => `%${t}%`)];
 
     const sql = `
-      SELECT p.name AS lab, p.lk_number, p.is_own_lab, c.measurement_group, c.instrument,
+      SELECT p.name AS lab, p.lk_number, p.is_own_lab, p.accredited_until,
+             c.measurement_group, c.instrument,
              c.range_text, c.unit, c.quantity, c.range_min_si, c.range_max_si,
              c.range_point_si, c.uncertainty, c.method
         FROM lab_capabilities c
@@ -166,6 +190,32 @@ export class LabScopeService {
     });
 
     if (rows.length === 0) return { inScope: false, matches: [] };
+
+    // A KAN accreditation that has run out cannot be quoted, however good the
+    // range is. Drop those rows — but if they were the ONLY match, say so by
+    // name instead of returning a bare no, because "we stopped being able to"
+    // and "we never could" call for different replies and different follow-up.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const lapsed = new Set<string>();
+    const live = rows.filter((r) => {
+      const until = r.accredited_until == null ? null : new Date(String(r.accredited_until));
+      if (until && until < today) {
+        lapsed.add(`${String(r.lab)} (${String(r.lk_number)})`);
+        return false;
+      }
+      return true;
+    });
+    if (live.length === 0) {
+      return {
+        inScope: false,
+        matches: [],
+        note:
+          `Only ${[...lapsed].join(', ')} covers this, and that accreditation has ` +
+          `expired. Escalate to a human — do not tell the customer we can or cannot do it.`,
+      };
+    }
+    rows = live;
 
     // No magnitude given: report what we cover and let the assistant ask.
     if (value == null || !Number.isFinite(value) || !unit) {
