@@ -66,8 +66,8 @@ CANON = {
     "volumeflow_mlh": ("mL/h", {"mL/h": 1}),
     "heartrate": ("bpm", {"bpm": 1}),
     "inclination": ("mm/m", {"mm/m": 1}),
-    "force": ("N", {"N": 1, "kN": 1e3, "kgf": 9.80665}),
-    "torque": ("Nm", {"Nm": 1, "Ncm": 0.01, "kgf.m": 9.80665}),
+    "force": ("N", {"N": 1, "kN": 1e3, "kgf": 9.80665, "tf": 9806.65, "gf": 0.00980665}),
+    "torque": ("Nm", {"Nm": 1, "Ncm": 0.01, "kgf.m": 9.80665, "kgf.cm": 0.0980665}),
     "length": ("mm", {"um": 1e-3, "mm": 1, "cm": 10, "m": 1e3, "km": 1e6}),
     # RF/optical levels. dBm is logarithmic, so these are NOT convertible to or
     # comparable with a linear power quantity -- kept as their own scale.
