@@ -124,9 +124,16 @@ services:
       MIDTRANS_WEBHOOK_SECRET: ${MIDTRANS_WEBHOOK_SECRET:-}
       STRIPE_API_KEY: ${STRIPE_API_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      # WhatsApp (WAHA self-host). Provider/number/session are set per-tenant in the UI.
+      # WhatsApp (WAHA self-host). Provider/number/session are set per-tenant in
+      # the UI; extra gateways are registered under Admin -> WhatsApp Gateways
+      # and carry their own URL + key, so these two are the PLATFORM DEFAULT
+      # gateway only (the one a tenant with no gateway assigned uses).
       WAHA_URL: ${WAHA_URL:-http://waha:3000}
       WAHA_API_KEY: ${WAHA_API_KEY:-}
+      # Refuse inbound webhooks that carry no per-line token. Must be listed
+      # here to reach the container at all: compose passes only the variables
+      # this block names, so setting it in .env alone does nothing.
+      WA_WEBHOOK_REQUIRE_TOKEN: ${WA_WEBHOOK_REQUIRE_TOKEN:-}
       KIRIM_URL: ${KIRIM_URL:-https://api.kirimdev.com/v1}
       KIRIM_WEBHOOK_SECRET: ${KIRIM_WEBHOOK_SECRET:-}
       SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:-}
