@@ -30,9 +30,9 @@ describe('KioskController', () => {
 
       mockService.getQueueStatus.mockResolvedValueOnce(mockResult);
 
-      const result = await controller.getQueueStatus('ORD-001');
+      const result = await controller.getQueueStatus('tenant-1', 'ORD-001');
 
-      expect(mockService.getQueueStatus).toHaveBeenCalledWith('ORD-001');
+      expect(mockService.getQueueStatus).toHaveBeenCalledWith('tenant-1', 'ORD-001');
       expect(result).toEqual(mockResult);
     });
 

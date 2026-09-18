@@ -158,12 +158,23 @@ export class KioskService {
   }
 
   /**
-   * Look up queue status by order number.
-   * Returns position, estimated wait time, and current status.
+   * Look up queue status by order number, within one tenant.
+   *
+   * `tenantId` is REQUIRED even though the endpoint is public (a customer scans
+   * a QR; there is no login). Order numbers are `ORD-YYYYMMDD-NNN`, sequential
+   * PER OUTLET PER DAY, with no unique constraint across tenants — so every
+   * business trading on the same day mints the same `ORD-20260918-001`. Without
+   * a tenant predicate this returned whichever row Postgres reached first and
+   * handed out another tenant's `customer_name`, to an unauthenticated caller,
+   * from a guessable identifier. The sibling public endpoint (`getMenu`) already
+   * takes the tenant this way.
    *
    * Requirement 27.3: Display queue position and estimated wait time after order.
    */
-  async getQueueStatus(orderNumber: string): Promise<KioskQueueStatus> {
+  async getQueueStatus(tenantId: string, orderNumber: string): Promise<KioskQueueStatus> {
+    if (!tenantId || tenantId.trim() === '') {
+      throw new BadRequestException('tenantId is required');
+    }
     if (!orderNumber || orderNumber.trim() === '') {
       throw new BadRequestException('Order number is required');
     }
@@ -175,10 +186,10 @@ export class KioskService {
               vq.id AS queue_entry_id, vq.position, vq.status AS queue_status
        FROM orders o
        LEFT JOIN vehicle_queue vq ON vq.order_id = o.id
-       WHERE o.order_number = $1
+       WHERE o.tenant_id = $1 AND o.order_number = $2
        ORDER BY vq.created_at DESC
        LIMIT 1`,
-      [orderNumber.trim()],
+      [tenantId.trim(), orderNumber.trim()],
     );
 
     if (orderResult.rows.length === 0) {
@@ -230,8 +241,8 @@ export class KioskService {
     // only 'waiting' would report an empty queue to every kiosk customer.
     const aheadResult = await this.pool.query(
       `SELECT COUNT(*) as count FROM vehicle_queue
-       WHERE status IN ('waiting','serving') AND outlet_id = $1 AND position < $2`,
-      [row.outlet_id, row.position],
+       WHERE tenant_id = $1 AND status IN ('waiting','serving') AND outlet_id = $2 AND position < $3`,
+      [tenantId.trim(), row.outlet_id, row.position],
     );
 
     const entriesAhead = parseInt(aheadResult.rows[0].count, 10);
@@ -239,8 +250,8 @@ export class KioskService {
     // Count cars still on the board
     const totalResult = await this.pool.query(
       `SELECT COUNT(*) as count FROM vehicle_queue
-       WHERE status IN ('waiting','serving') AND outlet_id = $1`,
-      [row.outlet_id],
+       WHERE tenant_id = $1 AND status IN ('waiting','serving') AND outlet_id = $2`,
+      [tenantId.trim(), row.outlet_id],
     );
 
     const totalWaiting = parseInt(totalResult.rows[0].count, 10);

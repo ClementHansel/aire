@@ -63,9 +63,12 @@ export class KioskController {
   @Get('queue-status')
   @HttpCode(HttpStatus.OK)
   async getQueueStatus(
+    @Query('tenantId') tenantId: string,
     @Query('orderNumber') orderNumber: string,
   ): Promise<KioskQueueStatus> {
-    return this.kioskService.getQueueStatus(orderNumber);
+    // tenantId is required: order numbers repeat across tenants (see the
+    // service), and this endpoint is unauthenticated.
+    return this.kioskService.getQueueStatus(tenantId, orderNumber);
   }
 
   // --- Self-service ordering (kiosk-token authorized) ------------------------

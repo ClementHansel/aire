@@ -31,7 +31,6 @@
   "modules/inventory/inventory.service.ts": 2,
   "modules/kiosk/kiosk-order.service.ts": 2,
   "modules/kiosk/kiosk-token.guard.ts": 1,
-  "modules/kiosk/kiosk.service.ts": 3,
   "modules/legal-entity/legal-entity.service.ts": 1,
   "modules/me/me.service.ts": 3,
   "modules/membership/membership-admin.service.ts": 1,
