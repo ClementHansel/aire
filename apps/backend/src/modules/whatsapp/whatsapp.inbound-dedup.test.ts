@@ -268,3 +268,48 @@ describe('repeat guard — the real "membalas berulang"', () => {
     expect(pool.escalated).toEqual([]);
   });
 });
+
+describe('escalation must not page the assistant itself', () => {
+  /**
+   * Found live 2026-09-22: the Kalibrasi tenant's escalation_number WAS its own
+   * WhatsApp line, so every handover messaged the bot's own chat and no human
+   * ever saw it. With quote-escalation switched on, that would have silently
+   * swallowed exactly the requests the client wanted routed to a person.
+   */
+  function poolWithNumbers(escalation: string, waNumber: string) {
+    const pool = createPool();
+    const base = pool.query.getMockImplementation()!;
+    pool.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('SELECT * FROM agent_configs')) {
+        return {
+          rows: [{
+            tenant_id: TENANT_ID, base_prompt: 'b', product_knowledge: 'k', skills: null,
+            escalation_number: escalation, wa_number: waNumber, max_messages_per_day: 50,
+            wa_provider: 'waha', waha_session: 'sess', ai_reply_enabled: true,
+            routing_mode: 'builtin', per_branch_wa_enabled: false, waha_mock: true,
+          }],
+          rowCount: 1,
+        };
+      }
+      return base(sql, params);
+    });
+    const runtime = {
+      generate: vi.fn(async () => ({ text: '', escalate: true, mode: 'fluid', agentName: 'Kalia' })),
+    } as unknown as AgentRuntimeService;
+    return { pool, svc: new WhatsappService(pool as never, runtime) };
+  }
+
+  it('still marks the conversation escalated when the number is its own line', async () => {
+    // The Conversation Log is the real safety net — losing THAT would hide the
+    // customer entirely, which is worse than a missing page.
+    const { pool, svc } = poolWithNumbers('6285169416316', '6285169416316');
+    await svc.handleInbound({ tenantId: TENANT_ID, from: CUSTOMER, text: 'mau bicara dengan orang', messageId: 'E1' });
+    expect(pool.escalated).toEqual(['conv-1']);
+  });
+
+  it('pages normally when the escalation number is a different person', async () => {
+    const { pool, svc } = poolWithNumbers('628111222333', '6285169416316');
+    await svc.handleInbound({ tenantId: TENANT_ID, from: CUSTOMER, text: 'mau bicara dengan orang', messageId: 'E2' });
+    expect(pool.escalated).toEqual(['conv-1']);
+  });
+});

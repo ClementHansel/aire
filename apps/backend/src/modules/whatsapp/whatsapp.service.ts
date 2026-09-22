@@ -1341,6 +1341,23 @@ export class WhatsappService implements OnModuleInit {
     // Business API — so the team was never actually paged when a customer got
     // escalated. sendText is right here anyway: it is this very class.
     if (cfg?.escalation_number) {
+      // A tenant that set its escalation number to the bot's OWN line pages
+      // itself: the alert lands in the assistant's own chat, where nobody is
+      // looking, and the handover silently goes nowhere. Found live on the
+      // Kalibrasi tenant 2026-09-22, where escalation_number == wa_number.
+      //
+      // The conversation is already marked 'escalated' above, so it still shows
+      // up in the dashboard Conversation Log for a human to pick up — that is
+      // the real safety net. What is missing is the page, so say so loudly
+      // rather than pretending it was delivered.
+      if (this.sameNumber(cfg.escalation_number, cfg.wa_number ?? '')) {
+        this.logger.error(
+          `Tenant ${tenantId}: escalation number ${cfg.escalation_number} is the assistant's OWN WhatsApp line, `
+          + 'so nobody is paged when a customer is handed over. Set it to a staff number in Dashboard → WhatsApp. '
+          + `Conversation ${convId} is marked escalated and is visible in the Conversation Log.`,
+        );
+        return;
+      }
       try {
         const alert = await renderNotification(this.renderer, tenantId, 'escalation_alert', { from, reason });
         if (alert) await this.sendText(tenantId, cfg.escalation_number, alert, outletId);

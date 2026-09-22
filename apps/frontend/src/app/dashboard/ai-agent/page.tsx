@@ -75,6 +75,14 @@ export default function AiAgentPage() {
 
   if (!cfg) return <p className="text-text-muted">{t('dash.aiAgent.loading', 'Loading…')}</p>;
 
+  // Paging the number the assistant itself answers on means paging nobody: the
+  // alert lands in the assistant's own chat. Found live on a tenant whose
+  // escalation number WAS its bot line, so every handover went unseen.
+  const onlyDigits = (v: string | null | undefined) => (v ?? '').replace(/\D/g, '');
+  const escalationIsSelf =
+    onlyDigits(cfg.escalationNumber).length > 0
+    && onlyDigits(cfg.escalationNumber) === onlyDigits(cfg.waNumber);
+
   return (
     <div data-testid="ai-agent-page">
       <div className="flex items-center justify-between mb-6">
@@ -176,7 +184,15 @@ export default function AiAgentPage() {
         {/* Escalation */}
         <div className="card">
           <label className="block text-sm font-medium mb-1.5">{t('dash.aiAgent.escalationNumber', 'Escalation number')}</label>
+          <p className="text-xs text-text-muted mb-1.5">
+            {t('dash.aiAgent.escalationHelp', 'The person who gets notified when the assistant hands a chat to a human. Use a staff WhatsApp number — not the number the assistant itself answers on.')}
+          </p>
           <input className="input-field" value={cfg.escalationNumber ?? ''} onChange={(e) => set('escalationNumber', e.target.value)} placeholder={t('dash.aiAgent.escalationPlaceholder', '628xxxx (admin/supervisor)')} />
+          {escalationIsSelf && (
+            <p className="mt-2 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800" data-testid="escalation-self-warning">
+              {t('dash.aiAgent.escalationIsSelf', 'This is the same number your assistant replies from, so handover alerts would be sent to itself and nobody would see them. Enter a staff number instead. Escalated chats still appear in the Conversation Log.')}
+            </p>
+          )}
         </div>
 
         {/* Staff whitelist — saves per row, independent of the page's Save button. */}
