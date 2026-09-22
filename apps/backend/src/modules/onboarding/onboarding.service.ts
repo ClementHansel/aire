@@ -42,7 +42,7 @@ export class OnboardingService {
       `SELECT
          (SELECT COUNT(*) FROM legal_entities WHERE tenant_id = $1 AND is_active) AS legal,
          (SELECT COUNT(*) FROM outlets        WHERE tenant_id = $1)               AS branch,
-         (SELECT COUNT(*) FROM services       WHERE tenant_id = $1 AND is_active) AS service,
+         (SELECT COUNT(*) FROM services       WHERE tenant_id = $1 AND is_active AND deleted_at IS NULL) AS service,
          (SELECT COUNT(*) FROM users          WHERE tenant_id = $1 AND is_active AND role <> 'tenant_owner') AS staff,
          t.onboarding_completed_at, t.onboarding_state
        FROM tenants t WHERE t.id = $1`,

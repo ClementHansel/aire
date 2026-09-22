@@ -1,7 +1,8 @@
-import { Injectable, Inject, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DATABASE_POOL } from '../auth/database.provider';
 import { SettingsService } from '../settings/settings.service';
+import { DEFAULT_AGENT_STYLE, styleFromRow, type AgentStyle } from '../whatsapp/agent-style';
 
 export interface AgentConfigResponse {
   basePrompt: string | null;
@@ -76,6 +77,8 @@ export interface KnowledgeResponse {
   basePrompt: string | null;
   productKnowledge: string | null;
   skills: string | null;
+  /** How the assistant speaks and where it stops — tenant-owned (migration 105). */
+  style: AgentStyle;
   /** Per-category visibility flags for the customer AI (see CUSTOMER_KNOWLEDGE_CATEGORIES). */
   categories: Record<string, boolean>;
   /** Per-item visibility (overrides within an enabled category). */
@@ -85,6 +88,8 @@ export interface KnowledgeUpdateDto {
   basePrompt?: string | null;
   productKnowledge?: string | null;
   skills?: string | null;
+  /** Any subset of the style knobs; omitted fields keep their stored value. */
+  style?: Partial<AgentStyle>;
   categories?: Record<string, boolean>;
   itemVisibility?: { type: 'service' | 'promotion' | 'plan' | 'outlet'; id: string; visible: boolean }[];
   outletContacts?: { id: string; phone?: string | null; mapsUrl?: string | null; openingHours?: OpeningHours | null }[];
@@ -354,8 +359,13 @@ export class AgentConfigService {
   /** Read the product knowledge, skills, category flags, and per-item visibility. */
   async getKnowledge(tenantId: string): Promise<KnowledgeResponse> {
     const [cfg, svc, promo, plan, out] = await Promise.all([
-      this.pool.query('SELECT base_prompt, product_knowledge, skills, customer_knowledge FROM agent_configs WHERE tenant_id = $1', [tenantId]),
-      this.pool.query('SELECT id, name, customer_visible FROM services WHERE tenant_id = $1 AND is_active = true ORDER BY business_unit, sort_order, name', [tenantId]),
+      this.pool.query(
+        `SELECT base_prompt, product_knowledge, skills, customer_knowledge,
+                reply_style, reply_max_lines, knowledge_scope, style_instructions, escalate_on_quote
+           FROM agent_configs WHERE tenant_id = $1`,
+        [tenantId],
+      ),
+      this.pool.query('SELECT id, name, customer_visible FROM services WHERE tenant_id = $1 AND is_active = true AND deleted_at IS NULL ORDER BY business_unit, sort_order, name', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM promotions WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]),
       this.pool.query('SELECT id, name, customer_visible FROM membership_plans WHERE tenant_id = $1 AND is_active = true ORDER BY price', [tenantId]),
       this.pool.query('SELECT id, name, phone, maps_url, opening_hours, customer_visible FROM outlets WHERE tenant_id = $1 AND is_active = true ORDER BY name', [tenantId]),
@@ -369,6 +379,9 @@ export class AgentConfigService {
       basePrompt: r.base_prompt ?? null,
       productKnowledge: r.product_knowledge ?? null,
       skills: r.skills ?? null,
+      // A tenant with no row at all still gets the platform defaults, so the UI
+      // renders the same controls it would after the first save.
+      style: cfg.rows[0] ? styleFromRow(r) : DEFAULT_AGENT_STYLE,
       categories,
       items: {
         services: svc.rows.map(item),
@@ -381,13 +394,45 @@ export class AgentConfigService {
 
   /** Update product knowledge, skills, category flags, per-item visibility, and branch contacts. */
   async setKnowledge(tenantId: string, dto: KnowledgeUpdateDto): Promise<KnowledgeResponse> {
-    if (dto.basePrompt !== undefined || dto.productKnowledge !== undefined || dto.skills !== undefined || dto.categories !== undefined) {
+    if (dto.basePrompt !== undefined || dto.productKnowledge !== undefined || dto.skills !== undefined
+        || dto.categories !== undefined || dto.style !== undefined) {
       // Ensure a config row exists (defaults from migration 074/080), then update.
       await this.pool.query('INSERT INTO agent_configs (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING', [tenantId]).catch(() => undefined);
       const set: string[] = []; const v: unknown[] = [tenantId]; let i = 2;
       if (dto.basePrompt !== undefined) { set.push(`base_prompt = $${i++}`); v.push(dto.basePrompt); }
       if (dto.productKnowledge !== undefined) { set.push(`product_knowledge = $${i++}`); v.push(dto.productKnowledge); }
       if (dto.skills !== undefined) { set.push(`skills = $${i++}`); v.push(dto.skills); }
+      // Style knobs. Each is validated here rather than leaning on the CHECK
+      // constraints, so a bad payload is a 400 naming the field instead of a
+      // 500 carrying a Postgres constraint name.
+      const st = dto.style;
+      if (st?.replyStyle !== undefined) {
+        if (!['concise', 'balanced', 'detailed'].includes(st.replyStyle)) {
+          throw new BadRequestException('replyStyle must be concise, balanced or detailed');
+        }
+        set.push(`reply_style = $${i++}`); v.push(st.replyStyle);
+      }
+      if (st?.replyMaxLines !== undefined) {
+        const n = st.replyMaxLines;
+        // Null clears the ceiling. A ceiling below 2 would tell the agent to
+        // answer in one line, which cannot carry a greeting and an answer.
+        if (n !== null && (!Number.isInteger(n) || n < 2 || n > 40)) {
+          throw new BadRequestException('replyMaxLines must be a whole number between 2 and 40, or null');
+        }
+        set.push(`reply_max_lines = $${i++}`); v.push(n);
+      }
+      if (st?.knowledgeScope !== undefined) {
+        if (!['open', 'strict'].includes(st.knowledgeScope)) {
+          throw new BadRequestException('knowledgeScope must be open or strict');
+        }
+        set.push(`knowledge_scope = $${i++}`); v.push(st.knowledgeScope);
+      }
+      if (st?.styleInstructions !== undefined) {
+        set.push(`style_instructions = $${i++}`); v.push(st.styleInstructions?.trim() || null);
+      }
+      if (st?.escalateOnQuote !== undefined) {
+        set.push(`escalate_on_quote = $${i++}`); v.push(!!st.escalateOnQuote);
+      }
       if (dto.categories !== undefined) {
         // Only persist known category keys, coerced to booleans; merged into existing flags.
         const clean: Record<string, boolean> = {};

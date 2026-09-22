@@ -9,7 +9,7 @@
   "modules/admin/platform-tax.service.ts": 4,
   "modules/admin/platform-user.service.ts": 4,
   "modules/admin/wa-gateway.service.ts": 1,
-  "modules/agent-config/agent-config.service.ts": 1,
+  "modules/agent-config/agent-config.service.ts": 2,
   "modules/agent/agent-tools.service.ts": 5,
   "modules/agent/chat-store.service.ts": 6,
   "modules/audit/audit.service.ts": 1,

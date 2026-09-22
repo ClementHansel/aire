@@ -19,6 +19,8 @@ export interface ServiceQueryParams {
   active?: boolean;
   /** Exclude retail products (category='product'); they have their own API. */
   excludeProducts?: boolean;
+  /** Include archived services. Off by default; archived means gone from the catalog. */
+  includeArchived?: boolean;
 }
 
 /**
@@ -70,13 +72,14 @@ export class ServiceService {
 
     try {
       const result = await this.pool.query(
-        `INSERT INTO services (tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount, created_at`,
+        `INSERT INTO services (tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         RETURNING id, tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount, created_at`,
         [
           tenantId,
           dto.outletId ?? null,
           dto.name,
+          dto.description?.trim() || null,
           dto.category,
           businessUnit,
           dto.price,
@@ -168,7 +171,7 @@ export class ServiceService {
     const barcode = this.cleanBarcode(code);
     if (!barcode) return null;
 
-    const conditions = ['tenant_id = $1', 'barcode = $2', 'is_active = true'];
+    const conditions = ['tenant_id = $1', 'barcode = $2', 'is_active = true', 'deleted_at IS NULL'];
     const values: unknown[] = [tenantId, barcode];
     if (outletId) {
       conditions.push(
@@ -177,7 +180,7 @@ export class ServiceService {
       values.push(outletId);
     }
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
+      `SELECT id, tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE ${conditions.join(' AND ')}
        ORDER BY category, sort_order, name
@@ -198,6 +201,11 @@ export class ServiceService {
     const conditions: string[] = ['tenant_id = $1'];
     const values: unknown[] = [params.tenantId];
     let paramIndex = 2;
+
+    // Archived = deleted, as far as every catalog surface is concerned. The
+    // rows survive only so past order_items still resolve a name and a price;
+    // nothing but an explicit includeArchived should ever surface them.
+    if (!params.includeArchived) conditions.push('deleted_at IS NULL');
 
     if (params.category) {
       conditions.push(`category = $${paramIndex}`);
@@ -233,7 +241,7 @@ export class ServiceService {
     const whereClause = conditions.join(' AND ');
 
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
+      `SELECT id, tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE ${whereClause}
        ORDER BY category, sort_order, name`,
@@ -250,7 +258,7 @@ export class ServiceService {
    */
   async findOne(tenantId: string, id: string): Promise<ServiceDTO> {
     const result = await this.pool.query(
-      `SELECT id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
+      `SELECT id, tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount
        FROM services
        WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId],
@@ -291,6 +299,14 @@ export class ServiceService {
     if (dto.name !== undefined) {
       setClauses.push(`name = $${paramIndex}`);
       values.push(dto.name);
+      paramIndex++;
+    }
+
+    if (dto.description !== undefined) {
+      setClauses.push(`description = $${paramIndex}`);
+      // Blank clears it: an empty qualifier is noise next to the name, and the
+      // AI is told to quote the description verbatim when one exists.
+      values.push(dto.description?.trim() || null);
       paramIndex++;
     }
 
@@ -397,7 +413,7 @@ export class ServiceService {
         `UPDATE services
          SET ${setClauses.join(', ')}
          WHERE id = $${paramIndex} AND tenant_id = $${paramIndex + 1}
-         RETURNING id, tenant_id, outlet_id, name, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount`,
+         RETURNING id, tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount`,
         [...values, id, tenantId],
       );
     } catch (err) {
@@ -408,15 +424,28 @@ export class ServiceService {
   }
 
   /**
-   * Soft-deletes a service by setting is_active = false.
-   * Inactive services show as "Habis" (disabled) in POS.
+   * Removes a service from the tenant's catalog.
+   *
+   * Two outcomes, and the caller is told which:
+   *  - `deleted`  — the row was never sold, so it is physically gone.
+   *  - `archived` — the row has order lines, so it is marked `deleted_at` and
+   *                 disappears from the catalog while the sales history that
+   *                 references it stays exact.
+   *
+   * Both look the same to the user, which is the point. This used to fall back
+   * to `is_active = false`, which left the row sitting in the Services list
+   * flipped to "Inactive" — so after the Jan–Feb history import (which gave
+   * nearly every service order lines) Delete read as a button that did nothing.
+   * `is_active` means "temporarily not for sale"; it was never the right home
+   * for "remove this from my catalog", and overloading it made the two states
+   * indistinguishable.
    *
    * Requirements: 30.4
    */
   async remove(
     tenantId: string,
     id: string,
-  ): Promise<{ deleted: boolean; deactivated: boolean; orderLines: number }> {
+  ): Promise<{ deleted: boolean; archived: boolean; orderLines: number }> {
     // Verify exists first
     await this.findOne(tenantId, id);
 
@@ -424,10 +453,6 @@ export class ServiceService {
     // that has been sold is part of the sales history and erasing it would orphan
     // real revenue. Everything else pointing at a service is SET NULL or CASCADE,
     // so a service nobody ever sold is genuinely free to go.
-    //
-    // This used to ALWAYS soft-delete, which is why the outlet reported the
-    // button as broken: they clicked Delete, the row stayed in the list flipped
-    // to "Inactive", and nothing said why.
     const used = await this.pool.query(
       `SELECT COUNT(*)::text AS n FROM order_items WHERE service_id = $1`,
       [id],
@@ -440,20 +465,44 @@ export class ServiceService {
           id,
           tenantId,
         ]);
-        return { deleted: true, deactivated: false, orderLines: 0 };
+        return { deleted: true, archived: false, orderLines: 0 };
       } catch (err) {
         // 23503 = foreign_key_violation. Some table this method does not know
-        // about still points at the row; deactivating beats a 500.
+        // about still points at the row; archiving beats a 500.
         if ((err as { code?: string })?.code !== '23503') throw err;
       }
     }
 
+    // Archive. `is_active = false` rides along so anything still reading the old
+    // flag — a report, an integration, a cached client — also treats it as not
+    // for sale rather than as a live service that merely stopped being listed.
     await this.pool.query(
-      `UPDATE services SET is_active = false, updated_at = NOW()
-       WHERE id = $1 AND tenant_id = $2`,
+      `UPDATE services SET deleted_at = NOW(), is_active = false, updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
       [id, tenantId],
     );
-    return { deleted: false, deactivated: true, orderLines };
+    return { deleted: false, archived: true, orderLines };
+  }
+
+  /**
+   * Put an archived service back in the catalog. The safety net for a mis-click:
+   * archiving is invisible by design, so without this a wrong Delete on a
+   * service with sales history would be unrecoverable from the UI.
+   *
+   * Returns it inactive, not live — un-archiving restores the row, and the owner
+   * decides separately whether it is for sale again.
+   */
+  async restore(tenantId: string, id: string): Promise<ServiceDTO> {
+    const result = await this.pool.query(
+      `UPDATE services SET deleted_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
+       RETURNING id, tenant_id, outlet_id, name, description, category, business_unit, price, is_active, is_main_service, sort_order, category_id, brand_id, outlet_ids, barcode, dynamic_discount_enabled, dynamic_discount_kind, max_discount`,
+      [id, tenantId],
+    );
+    if (result.rows.length === 0) {
+      throw new NotFoundException(`No archived service with id ${id}`);
+    }
+    return this.mapRow(result.rows[0]);
   }
 
   /**
@@ -536,6 +585,7 @@ export class ServiceService {
       tenantId: row.tenant_id,
       outletId: row.outlet_id ?? null,
       name: row.name,
+      description: row.description ?? null,
       category: row.category as ServiceCategory,
       businessUnit: (row.business_unit ?? BusinessUnit.Aire) as BusinessUnit,
       categoryId: row.category_id ?? null,

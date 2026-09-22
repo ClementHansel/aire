@@ -2,6 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { Pool } from 'pg';
 import { normalizePhone, normalizePlate } from '@aire/shared';
 import { DATABASE_POOL } from '../auth/database.provider';
+import { formatRupiah } from './rupiah';
 
 /**
  * CustomerContextService — the SINGLE guarded gateway through which any WhatsApp
@@ -26,15 +27,15 @@ export interface ResolvedCustomer {
 
 export interface CustomerScopedContext {
   memberships: { plan: string; status: string; endDate: string; usesLeft: number | null; plates: string[] }[];
-  recentOrders: { orderNumber: string; status: string; total: number; createdAt: string }[];
+  recentOrders: { orderNumber: string; status: string; total: number; totalText: string; createdAt: string }[];
   activeQueue: { orderNumber: string; position: number; status: string } | null;
   voucherPacks: { quantity: number; redeemed: number; active: number; benefit: string }[];
   bookings: { service: string | null; scheduledAt: string; status: string }[];
 }
 
 export interface PublicInfo {
-  services: { unit: string; name: string; price: number }[];
-  plans: { name: string; price: number; durationMonths: number }[];
+  services: { unit: string; name: string; description?: string | null; price: number; priceText: string }[];
+  plans: { name: string; price: number; priceText: string; durationMonths: number }[];
   promotions: string[];
 }
 
@@ -177,6 +178,7 @@ export class CustomerContextService {
     );
     return r.rows.map((x: any) => ({
       orderNumber: x.order_number, status: x.status, total: Number(x.total),
+      totalText: formatRupiah(x.total) ?? `Rp ${Number(x.total)}`,
       createdAt: x.created_at instanceof Date ? x.created_at.toISOString() : x.created_at,
     }));
   }
@@ -341,6 +343,82 @@ export class CustomerContextService {
     }));
   }
 
+  /**
+   * SEARCH the price list instead of dumping it.
+   *
+   * `getPublicInfo` caps services at 60 rows, which was fine for a car wash
+   * with a dozen. A calibration lab's price list is 144 rows across eight
+   * scopes, so the cap silently truncated it: the agent could not see most of
+   * the catalog, and what it could see was far too much to quote in a WhatsApp
+   * message. Both failure modes are the same bug — the whole catalog was the
+   * only granularity on offer.
+   *
+   * Matching is deliberately forgiving: customers type "multimeter digital"
+   * for "Digital Multimeter" and "timbangan 30kg" for a weighing scale, so
+   * every word must appear SOMEWHERE in the name, description or grouping, in
+   * any order, rather than as one contiguous phrase.
+   *
+   * Returns `{ services, totalMatches, truncated }` so the agent can honestly
+   * say "there are 20 more" rather than implying it showed everything.
+   */
+  async searchServices(
+    tenantId: string,
+    outletId: string | null | undefined,
+    query: string | null,
+    limit = 12,
+  ): Promise<{ services: PublicInfo['services']; totalMatches: number; truncated: boolean }> {
+    const flags = await this.getKnowledgeFlags(tenantId);
+    if (!this.catOn(flags, 'service_prices')) return { services: [], totalMatches: 0, truncated: false };
+
+    const params: unknown[] = [tenantId];
+    // The tenant predicate stays in the SQL LITERAL below rather than joining
+    // this array, so the tenant-scope ratchet can see it. An interpolated
+    // `WHERE ${…}` is invisible to a static check, and this is the one
+    // predicate whose absence is a cross-tenant leak rather than a bug.
+    const where = [
+      'is_active = true',
+      'customer_visible = true',
+      'deleted_at IS NULL',
+    ];
+    if (outletId) {
+      params.push(outletId);
+      where.push(`(outlet_id = $${params.length} OR (outlet_id IS NULL AND (outlet_ids IS NULL OR outlet_ids = '{}')) OR $${params.length} = ANY(outlet_ids))`);
+    }
+
+    // Up to 6 terms: enough to narrow anything a customer actually types, and a
+    // bound on how much SQL one inbound message can generate.
+    const terms = (query ?? '')
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}.]+/u)
+      .map((w) => w.trim())
+      .filter((w) => w.length >= 2)
+      .slice(0, 6);
+    for (const term of terms) {
+      params.push(`%${term}%`);
+      const i = params.length;
+      where.push(`(LOWER(name) LIKE $${i} OR LOWER(COALESCE(description, '')) LIKE $${i} OR LOWER(COALESCE(business_unit, '')) LIKE $${i})`);
+    }
+
+    const rows = await this.pool.query(
+      `SELECT name, description, business_unit, price, COUNT(*) OVER () AS total
+         FROM services
+        WHERE tenant_id = $1 AND ${where.join(' AND ')}
+        ORDER BY business_unit, sort_order, name
+        LIMIT ${Math.max(1, Math.min(limit, 40))}`,
+      params,
+    );
+
+    const total = Number(rows.rows[0]?.total ?? 0);
+    return {
+      services: rows.rows.map((x: any) => ({
+        unit: x.business_unit, name: x.name, description: x.description ?? null,
+        price: Number(x.price), priceText: formatRupiah(x.price) ?? `Rp ${Number(x.price)}`,
+      })),
+      totalMatches: total,
+      truncated: total > rows.rows.length,
+    };
+  }
+
   /** Public, non-personal info every customer/prospect may see. */
   async getPublicInfo(tenantId: string, outletId?: string | null): Promise<PublicInfo> {
     const flags = await this.getKnowledgeFlags(tenantId);
@@ -355,8 +433,8 @@ export class CustomerContextService {
     const empty = { rows: [] as any[] };
     const [services, plans, promotions] = await Promise.all([
       this.catOn(flags, 'service_prices') ? this.pool.query(
-        `SELECT name, business_unit, price FROM services
-         WHERE tenant_id = $1 AND is_active = true AND customer_visible = true${outletClause}
+        `SELECT name, description, business_unit, price FROM services
+         WHERE tenant_id = $1 AND is_active = true AND customer_visible = true AND deleted_at IS NULL${outletClause}
          ORDER BY business_unit, sort_order, name LIMIT 60`,
         svcParams,
       ) : Promise.resolve(empty),
@@ -375,8 +453,14 @@ export class CustomerContextService {
       ).catch(() => empty) : Promise.resolve(empty),
     ]);
     return {
-      services: services.rows.map((x: any) => ({ unit: x.business_unit, name: x.name, price: Number(x.price) })),
-      plans: plans.rows.map((x: any) => ({ name: x.name, price: Number(x.price), durationMonths: x.duration_months })),
+      services: services.rows.map((x: any) => ({
+        unit: x.business_unit, name: x.name, description: x.description ?? null,
+        price: Number(x.price), priceText: formatRupiah(x.price) ?? `Rp ${Number(x.price)}`,
+      })),
+      plans: plans.rows.map((x: any) => ({
+        name: x.name, price: Number(x.price), priceText: formatRupiah(x.price) ?? `Rp ${Number(x.price)}`,
+        durationMonths: x.duration_months,
+      })),
       promotions: promotions.rows.map((x: any) => x.name),
     };
   }

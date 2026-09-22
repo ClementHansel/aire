@@ -283,7 +283,8 @@ export class AgentToolsService {
 
   private async listServices(tenantId: string): Promise<unknown[]> {
     const res = await this.pool.query(
-      `SELECT id, name, category, price, is_active FROM services WHERE tenant_id = $1 ORDER BY sort_order`,
+      `SELECT id, name, category, price, is_active FROM services
+       WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY sort_order`,
       [tenantId],
     );
     return res.rows.map((s) => ({ id: s.id, name: s.name, category: s.category, price: parseFloat(s.price), active: s.is_active }));

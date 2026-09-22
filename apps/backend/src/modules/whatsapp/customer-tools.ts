@@ -36,13 +36,24 @@ export const CUSTOMER_TOOLS: Record<CustomerToolName, ToolCatalogEntry> = {
   },
   get_service_prices: {
     name: 'get_service_prices',
-    description: 'Public list of active services with their unit and price.',
-    params: [],
+    description:
+      'Look up service prices. Parameter: query (optional) — SEARCH WORDS from what the customer asked, '
+      + 'e.g. "digital multimeter", "timbangan 30kg", "thermometer". '
+      + 'ALWAYS pass a query when the customer named a specific item: a full price list can be hundreds of rows and you will only be shown part of it. '
+      + 'Omit query only when they genuinely asked for the whole menu. '
+      + 'Returns each match with its exact name, a qualifier (measuring range / what is covered), and BOTH `price` (a number, for your reasoning only) and `priceText` (e.g. "Rp 1.250.000"). '
+      + 'QUOTE `priceText` TO THE CUSTOMER CHARACTER FOR CHARACTER — never retype or reformat the number yourself. '
+      + 'Also returns totalMatches and truncated — '
+      + 'when truncated is true, say how many more there are and offer to narrow it down instead of implying you listed everything. '
+      + 'An empty result means we do not list that item: do NOT invent a price, offer a similar one, or estimate.',
+    params: ['query'],
     readOnly: true,
   },
   get_membership_plans: {
     name: 'get_membership_plans',
-    description: 'Public list of membership plans with price and duration.',
+    description:
+      'Public list of membership plans. Each carries `priceText` (e.g. "Rp 299.000") alongside the numeric price — '
+      + 'quote `priceText` verbatim and never reformat the number yourself.',
     params: [],
     readOnly: true,
   },

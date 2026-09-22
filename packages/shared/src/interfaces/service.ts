@@ -10,6 +10,12 @@ export interface ServiceDTO {
   /** Null means the service applies to all outlets */
   outletId: string | null;
   name: string;
+  /**
+   * Short qualifier quoted alongside the name — the measuring range, package
+   * contents, or unit note that tells two same-named rows apart. The AI reads
+   * it verbatim; it never invents one.
+   */
+  description?: string | null;
   category: ServiceCategory;
   /** Business unit this service belongs to (AIRE car wash / LEAD detailing) */
   businessUnit: BusinessUnit;
@@ -38,6 +44,8 @@ export interface ServiceDTO {
  */
 export interface CreateServiceRequest {
   name: string;
+  /** Optional qualifier shown with the name (measuring range, package contents). */
+  description?: string | null;
   category: ServiceCategory;
   businessUnit?: BusinessUnit;
   categoryId?: string | null;
@@ -67,4 +75,6 @@ export interface ServiceQueryParams {
   businessUnit?: BusinessUnit;
   outletId?: string;
   active?: boolean;
+  /** Include archived (deleted) services. Off by default — archived means gone. */
+  includeArchived?: boolean;
 }

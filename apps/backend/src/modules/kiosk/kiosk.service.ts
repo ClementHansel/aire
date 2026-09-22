@@ -90,7 +90,7 @@ export class KioskService {
     const services = await this.pool.query(
       `SELECT id, name, category, business_unit, price, is_main_service
        FROM services
-       WHERE tenant_id = $1 AND is_active = true${outletClause}
+       WHERE tenant_id = $1 AND is_active = true AND deleted_at IS NULL${outletClause}
        ORDER BY business_unit, category, sort_order, name`,
       serviceParams,
     );

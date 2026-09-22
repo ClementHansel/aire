@@ -37,6 +37,15 @@ export class WhatsappWebhookController {
   webhook(@Body() body: Record<string, any>, token?: string): { ok: true } {
     // WAHA: { event:'message', session, payload:{ from, body, notifyName, participant, _data… } }
     const session: string | undefined = body?.session;
+    const event: string | undefined = typeof body?.event === 'string' ? body.event : undefined;
+    // WAHA emits a family of events on the same hook URL. Only a new inbound
+    // message is a reason to run the agent: `message.any` is the same message
+    // echoed (including our own sends), and `message.ack`/`message.reaction`/
+    // `message.revoked` are not messages at all. Subscribing to more than one of
+    // these is a supported WAHA configuration, and it used to mean the customer
+    // got an extra reply per extra event. An absent `event` is treated as a
+    // message so a gateway that posts a bare payload keeps working.
+    if (event && event !== 'message') return { ok: true };
     const p = body?.payload ?? body;
     const from: string | undefined = p?.from ?? p?.chatId ?? p?.sender;
     const text: string | undefined = p?.body ?? p?.text ?? p?.message;
@@ -49,13 +58,21 @@ export class WhatsappWebhookController {
     const author: string | undefined =
       p?.participant ?? p?.author ?? p?._data?.author ?? p?._data?.participant ?? undefined;
     const mentions = extractMentions(p);
+    // The gateway's own id for this message, used to drop re-deliveries. WEBJS
+    // reports a serialised id string, NOWEB a nested object.
+    const messageId: string | null = firstString(
+      p?.id,
+      p?.id?._serialized,
+      p?._data?.id?._serialized,
+      p?.key?.id,
+    );
     // ACK the gateway IMMEDIATELY and process in the background. The agent's
     // LLM tool-loop can take many seconds (esp. bookings); if we held the
     // connection open, WAHA/nginx would time out (504) and WAHA would retry,
     // causing duplicate replies. Fire-and-forget with error logging instead.
     if (from && text && !fromMe) {
       void this.service
-        .handleInbound({ token, session, from, name, text, isGroup, author, mentions })
+        .handleInbound({ token, session, from, name, text, isGroup, author, mentions, messageId })
         .catch((err) => this.logger.error(`handleInbound failed: ${err instanceof Error ? err.message : String(err)}`));
     }
     return { ok: true };
@@ -91,6 +108,12 @@ export class WhatsappWebhookController {
       .catch((err) => this.logger.error(`handleKirimWebhook failed: ${err instanceof Error ? err.message : String(err)}`));
     return { ok: true };
   }
+}
+
+/** First candidate that is actually a non-empty string, else null. */
+function firstString(...candidates: unknown[]): string | null {
+  for (const c of candidates) if (typeof c === 'string' && c.trim() !== '') return c;
+  return null;
 }
 
 /** Pull mentioned WhatsApp ids from the various shapes WAHA engines emit (WEBJS vs NOWEB). */

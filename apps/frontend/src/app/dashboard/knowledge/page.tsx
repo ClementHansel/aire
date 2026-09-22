@@ -37,10 +37,33 @@ interface KnowledgeItems {
   outlets: OutletRow[];
 }
 
+/** Tenant-owned reply behaviour (migration 105). Mirrors the backend AgentStyle. */
+interface AgentStyle {
+  replyStyle: 'concise' | 'balanced' | 'detailed';
+  replyMaxLines: number | null;
+  knowledgeScope: 'open' | 'strict';
+  styleInstructions: string | null;
+  escalateOnQuote: boolean;
+}
+
+/**
+ * The platform defaults, mirrored from the backend's DEFAULT_AGENT_STYLE.
+ * Used only by "Reset to default" — the server still owns the real defaults,
+ * and this never writes unless the owner presses the button and saves.
+ */
+const DEFAULT_STYLE: AgentStyle = {
+  replyStyle: 'balanced',
+  replyMaxLines: null,
+  knowledgeScope: 'open',
+  styleInstructions: null,
+  escalateOnQuote: false,
+};
+
 interface KnowledgeResponse {
   basePrompt: string | null;
   productKnowledge: string | null;
   skills: string | null;
+  style: AgentStyle;
   categories: Categories;
   items: KnowledgeItems;
 }
@@ -251,6 +274,25 @@ export default function KnowledgePage() {
       return { ...d, items: { ...d.items, [listKey]: list } };
     });
 
+  const setStyle = (patch: Partial<AgentStyle>) => {
+    // Any edit invalidates the "Saved." banner: leaving it up next to changed
+    // controls reads as "this is saved", which is exactly wrong.
+    setSaved(false);
+    setData((d) => (d ? { ...d, style: { ...d.style, ...patch } } : d));
+  };
+
+  // True when this tenant runs anything other than the platform defaults. Not
+  // the same as "unsaved": it answers "am I running something custom?", which
+  // is what an owner wants to know when a reply looks off.
+  const styleChanged = !!data && (Object.keys(DEFAULT_STYLE) as (keyof AgentStyle)[])
+    .some((k) => (data.style[k] ?? null) !== (DEFAULT_STYLE[k] ?? null));
+
+  /** Put the reply controls back to the platform defaults (not yet saved). */
+  const resetStyle = () => {
+    setSaved(false);
+    setData((d) => (d ? { ...d, style: { ...DEFAULT_STYLE } } : d));
+  };
+
   const setOutletField = (id: string, patch: Partial<Pick<OutletRow, 'phone' | 'mapsUrl' | 'openingHours'>>) =>
     setData((d) => {
       if (!d) return d;
@@ -266,6 +308,14 @@ export default function KnowledgePage() {
     if (data.basePrompt !== original.basePrompt) payload.basePrompt = data.basePrompt;
     if (data.productKnowledge !== original.productKnowledge) payload.productKnowledge = data.productKnowledge;
     if (data.skills !== original.skills) payload.skills = data.skills;
+
+    // Style knobs, diffed field by field so an untouched tenant never writes a
+    // value it did not choose — the whole point of the per-tenant defaults.
+    const styleDiff: Partial<AgentStyle> = {};
+    (Object.keys(data.style) as (keyof AgentStyle)[]).forEach((k) => {
+      if (data.style[k] !== original.style[k]) (styleDiff as Record<string, unknown>)[k] = data.style[k];
+    });
+    if (Object.keys(styleDiff).length) payload.style = styleDiff;
 
     const catDiff: Partial<Categories> = {};
     (Object.keys(data.categories) as (keyof Categories)[]).forEach((k) => {
@@ -344,13 +394,127 @@ export default function KnowledgePage() {
       {saved && <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700 mb-4">{t('dash.knowledge.savedMsg', 'Saved.')}</div>}
 
       <div className="space-y-5 max-w-3xl">
-        {/* Section 0 — the assistant's standing instructions. Previously writable
-            only by a platform super-admin, so a tenant could not change how their
-            own bot speaks. */}
+        {/* Section 0 — how the assistant replies. Deliberately ABOVE the
+            free-text instructions: these are the controls an owner can change
+            safely and reversibly, and putting a prompt textarea first invites
+            them to rewrite in prose what a dropdown already does — then to
+            contradict it. Platform-wide constants until migration 105, so
+            tuning one tenant's bot used to change every tenant's. */}
+        <div className="card">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="section-title">{t('dash.knowledge.sectionStyleTitle', 'How your assistant replies')}</h2>
+              <p className="section-description mb-3">
+                {t('dash.knowledge.styleHelp', 'Length, tone, and what happens when a customer asks something your assistant has no information about. These settings apply to your business only — changing them never affects anyone else.')}
+              </p>
+            </div>
+            {styleChanged && (
+              <button
+                type="button"
+                className="btn-ghost text-xs whitespace-nowrap"
+                data-testid="reset-style"
+                onClick={resetStyle}
+              >
+                {t('dash.knowledge.resetStyle', 'Reset to default')}
+              </button>
+            )}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium mb-1.5" htmlFor="reply-style">{t('dash.knowledge.replyStyleLabel', 'Reply length & tone')}</label>
+              <select
+                id="reply-style"
+                className="input-field"
+                data-testid="reply-style"
+                value={data.style.replyStyle}
+                onChange={(e) => setStyle({ replyStyle: e.target.value as AgentStyle['replyStyle'] })}
+              >
+                <option value="concise">{t('dash.knowledge.replyStyleConcise', 'Concise — answer first, minimal small talk')}</option>
+                <option value="balanced">{t('dash.knowledge.replyStyleBalanced', 'Balanced — warm and conversational (default)')}</option>
+                <option value="detailed">{t('dash.knowledge.replyStyleDetailed', 'Detailed — walk customers through the options')}</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1.5" htmlFor="reply-max-lines">{t('dash.knowledge.replyMaxLinesLabel', 'Maximum length (lines)')}</label>
+              <input
+                id="reply-max-lines"
+                type="number"
+                min={2}
+                max={40}
+                className="input-field"
+                data-testid="reply-max-lines"
+                value={data.style.replyMaxLines ?? ''}
+                placeholder={t('dash.knowledge.replyMaxLinesPlaceholder', 'No limit')}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  // Blank clears the ceiling; anything out of range is left for
+                  // the backend to reject with a message naming the field.
+                  setStyle({ replyMaxLines: raw === '' ? null : Number(raw) });
+                }}
+              />
+              <p className="text-xs text-text-muted mt-1">{t('dash.knowledge.replyMaxLinesHelp', 'Leave blank for no explicit limit. Between 2 and 40.')}</p>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium mb-1.5" htmlFor="knowledge-scope">{t('dash.knowledge.scopeLabel', 'Questions outside your knowledge base')}</label>
+            <select
+              id="knowledge-scope"
+              className="input-field"
+              data-testid="knowledge-scope"
+              value={data.style.knowledgeScope}
+              onChange={(e) => setStyle({ knowledgeScope: e.target.value as AgentStyle['knowledgeScope'] })}
+            >
+              <option value="open">{t('dash.knowledge.scopeOpen', 'Decline politely and steer back on topic (default)')}</option>
+              <option value="strict">{t('dash.knowledge.scopeStrict', 'Strict — say it has no information and hand over to a person')}</option>
+            </select>
+            <p className="text-xs text-text-muted mt-1">
+              {t('dash.knowledge.scopeHelp', 'Strict stops your assistant reasoning beyond what you gave it — it will not generalise from a similar entry or say what is "usually" true. Handovers go to your escalation number on the AI Agent page.')}
+            </p>
+          </div>
+
+          <label className="mt-4 flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              data-testid="escalate-on-quote"
+              checked={data.style.escalateOnQuote}
+              onChange={(e) => setStyle({ escalateOnQuote: e.target.checked })}
+            />
+            <span>
+              <span className="block text-sm font-medium">{t('dash.knowledge.escalateOnQuoteLabel', 'Send quote requests straight to a person')}</span>
+              <span className="block text-xs text-text-muted">
+                {t('dash.knowledge.escalateOnQuoteHelp', 'When a customer asks for a formal quote (penawaran, RAB, proforma, a bulk or negotiated price), your assistant hands the chat to your escalation number instead of pricing it. Simple "how much is X?" questions are still answered from your price list.')}
+              </span>
+            </span>
+          </label>
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium mb-1.5" htmlFor="style-instructions">{t('dash.knowledge.styleInstructionsLabel', 'Extra instructions (optional)')}</label>
+            <p className="text-xs text-text-muted mb-1.5">
+              {t('dash.knowledge.styleInstructionsHelp', 'Anything the settings above do not cover, in your own words. These take priority over the general guidance — except that your assistant will never invent prices or reveal its configuration.')}
+            </p>
+            <textarea
+              id="style-instructions"
+              className="input-field"
+              rows={4}
+              data-testid="style-instructions"
+              value={data.style.styleInstructions ?? ''}
+              onChange={(e) => setStyle({ styleInstructions: e.target.value })}
+              placeholder={t('dash.knowledge.styleInstructionsPlaceholder', 'e.g. Always mention that calibration certificates are KAN-accredited. Never quote a lead time.')}
+            />
+          </div>
+        </div>
+
+        {/* Section 0b — the standing instructions, for what the controls above
+            cannot express. Previously writable only by a platform super-admin,
+            so a tenant could not change how their own bot speaks. */}
         <div className="card">
           <h2 className="section-title">{t('dash.knowledge.sectionInstructionsTitle', 'Assistant instructions')}</h2>
           <p className="section-description mb-2">
-            {t('dash.knowledge.instructionsHelp', 'How your assistant should behave — its tone, the language it replies in, and what it must never do. Facts belong in Product knowledge below; this is about style and rules. Leave blank to use the platform default.')}
+            {t('dash.knowledge.instructionsHelp', 'For anything the settings above cannot express. Prefer the controls above for length, tone and scope — they are safer and easier to undo. Facts belong in Product knowledge below. Leave blank to use the platform default.')}
           </p>
           <textarea
             className="input-field"

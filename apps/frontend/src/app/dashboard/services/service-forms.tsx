@@ -12,6 +12,8 @@ export interface ServiceDTO {
   tenantId: string;
   outletId: string | null;
   name: string;
+  /** Qualifier shown with the name — measuring range, package contents, unit note. */
+  description?: string | null;
   category: 'car_wash' | 'product' | 'add_on';
   /** A business unit CODE the tenant owns (AIRIN-176) — no longer a fixed pair. */
   businessUnit: string;
@@ -30,6 +32,8 @@ export interface ServiceDTO {
   dynamicDiscountKind?: 'fixed' | 'percentage' | null;
   /** Per-item discount ceiling: Rupiah when kind='fixed', percent 0-100 when kind='percentage'. */
   maxDiscount?: number | null;
+  /** Set once the service has been removed from the catalog but kept for sales history. */
+  deletedAt?: string | null;
 }
 
 export type AppliesTo = 'service' | 'product' | 'both';
@@ -92,6 +96,7 @@ export const CATEGORY_KEYS: Record<ServiceDTO['category'], string> = {
 
 interface FormState {
   name: string;
+  description: string;
   category: ServiceDTO['category'];
   businessUnit: ServiceDTO['businessUnit'];
   categoryId: string;
@@ -165,6 +170,7 @@ export function ServiceModal({
     initial
       ? {
           name: initial.name,
+          description: initial.description ?? '',
           category: initial.category,
           businessUnit: initial.businessUnit ?? 'AIRE',
           categoryId: initial.categoryId ?? '',
@@ -186,6 +192,7 @@ export function ServiceModal({
         }
       : {
           name: '',
+          description: '',
           category: lockedCategory ?? 'car_wash',
           businessUnit: 'AIRE',
           categoryId: '',
@@ -222,6 +229,9 @@ export function ServiceModal({
     setError('');
     const payload = {
       name: form.name,
+      // Blank clears it. The AI quotes this verbatim next to the price, so an
+      // empty qualifier is better than a placeholder one.
+      description: form.description.trim() || null,
       category: lockedCategory ?? form.category,
       businessUnit: form.businessUnit,
       categoryId: form.categoryId || null,
@@ -266,6 +276,19 @@ export function ServiceModal({
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.services.name', 'Name')}</label>
             <input aria-label={t('dash.services.name', 'Name')} className="input-field" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1.5">{t('dash.services.description', 'Qualifier (optional)')}</label>
+            <p className="text-xs text-text-muted mb-1.5">
+              {t('dash.services.descriptionHelp', 'What tells this apart from a similarly-named item — a measuring range, what the package covers, a unit note. Shown with the price wherever this is quoted, including by the AI assistant.')}
+            </p>
+            <input
+              aria-label={t('dash.services.description', 'Qualifier (optional)')}
+              className="input-field"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder={t('dash.services.descriptionPlaceholder', 'e.g. -10 to 1000°C')}
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1.5">{t(BUSINESS_UNIT_LABEL.key, BUSINESS_UNIT_LABEL.fallback)}</label>

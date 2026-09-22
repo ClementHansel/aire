@@ -74,7 +74,7 @@ export class PortalBookingService {
     if (outlet.rows.length === 0) throw new BadRequestException('Unknown branch');
     let serviceName: string | null = null;
     if (dto.serviceId) {
-      const s = await this.pool.query<{ name: string }>(`SELECT name FROM services WHERE id = $1 AND tenant_id = $2`, [dto.serviceId, tenantId]);
+      const s = await this.pool.query<{ name: string }>(`SELECT name FROM services WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, [dto.serviceId, tenantId]);
       serviceName = s.rows[0]?.name ?? null;
     }
 

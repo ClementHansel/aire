@@ -11,6 +11,11 @@ import {
   CustomerContextService, ResolvedCustomer, CustomerScopedContext, PublicInfo,
 } from './customer-context.service';
 import { toolsForRole, roleAllowsTool, type CustomerToolName } from './customer-tools';
+import {
+  DEFAULT_AGENT_STYLE, toneBlock, lengthBlock, scopeBlock, quoteBlock, escalationBlock, houseRulesBlock,
+  type AgentStyle,
+} from './agent-style';
+import { personaDisplayName } from './persona-name';
 
 export interface CustomerAgentPersona { name: string; role: AgentRole; prompt: string | null }
 
@@ -97,6 +102,9 @@ export class CustomerAgentService {
     pub: PublicInfo;
     /** Tenant identity for the prompt's opening line. Omitted = platform default. */
     business?: { name: string | null; vertical: TenantVertical } | null;
+    /** Tenant-owned tone/length/scope rules. Omitted = the platform defaults,
+     *  which are the exact behaviour every tenant had before they existed. */
+    style?: AgentStyle | null;
   }): Promise<CustomerReply | null> {
     if (!this.llm) return null;
     const role = params.persona?.role ?? 'personal_assistant';
@@ -106,7 +114,7 @@ export class CustomerAgentService {
     const isFirstTurn = !(params.history ?? []).some((m) => m.role === 'assistant');
     // Wording for the deterministic fallback below: the tenant's agent name and
     // the word their customers would actually use for what they sell.
-    const agentLabel = params.persona?.name ?? 'kami';
+    const agentLabel = personaDisplayName(params.persona?.name) ?? 'kami';
     const fallbackTopics = VERTICAL_COPY[params.business?.vertical ?? DEFAULT_VERTICAL].topics;
     const system = this.systemPrompt({ ...params, isFirstTurn });
 
@@ -251,8 +259,12 @@ export class CustomerAgentService {
           return { success: true, data: { registered: true, name: customer.name, ...this.shapeContext(ctx) } };
         }
         case 'get_service_prices': {
-          const pub = await this.context.getPublicInfo(tenantId, args.outletId ?? null);
-          return { success: true, data: { services: pub.services } };
+          // Search rather than dump. A price list of any real size cannot be
+          // pasted into a WhatsApp reply, and getPublicInfo's 60-row cap
+          // silently hid the rest of a long catalog from the agent entirely.
+          const query = typeof parameters.query === 'string' ? parameters.query : null;
+          const found = await this.context.searchServices(tenantId, args.outletId ?? null, query);
+          return { success: true, data: found };
         }
         case 'get_membership_plans': {
           const pub = await this.context.getPublicInfo(tenantId, args.outletId ?? null);
@@ -362,7 +374,9 @@ export class CustomerAgentService {
     basePrompt: string | null; knowledge: string | null; skills?: string | null; persona: CustomerAgentPersona | null;
     customer: ResolvedCustomer | null; pub: PublicInfo; isFirstTurn?: boolean;
     business?: { name: string | null; vertical: TenantVertical } | null;
+    style?: AgentStyle | null;
   }): string {
+    const style = p.style ?? DEFAULT_AGENT_STYLE;
     const lines: string[] = [];
     // WHOSE business this is, in the tenant's own terms. This used to be the
     // literal string "an Indonesian car wash & detailing business (brands: AIRE
@@ -374,7 +388,12 @@ export class CustomerAgentService {
     // Used inside the EXAMPLE replies below. The model copies examples almost
     // verbatim, so a hardcoded "Irene"/"AIRE"/"cuci mobil" in an example is not
     // illustrative — it is the bot's actual output for whoever is running it.
-    const who = p.persona?.name ?? 'kami';
+    // `agents.name` is free text an owner fills in. On the live Kalibrasi
+    // tenant it held a whole greeting, which then appeared INSIDE every example
+    // sentence below ("Aku Halo kak! Aku Kalia, CS-nya Kalibrasi.com, CS-nya
+    // …"). Examples are what the model copies, so a sentence here is a direct
+    // cause of garbled replies — normalise before substituting.
+    const who = personaDisplayName(p.persona?.name) ?? 'kami';
     const brandName = p.business?.name ?? 'kami';
     const topics = VERTICAL_COPY[vertical].topics;
 
@@ -382,50 +401,29 @@ export class CustomerAgentService {
     // back to a generic identity line when neither a persona nor a base prompt is set,
     // so the configured persona is never diluted by a conflicting hardcoded one.
     if (p.persona) {
-      lines.push(`You are ${p.persona.name}, a ${p.persona.role.replace(/_/g, ' ')} for ${where}.`);
+      lines.push(`You are ${who}, a ${p.persona.role.replace(/_/g, ' ')} for ${where}.`);
     } else if (!p.basePrompt) {
       lines.push(`You are a friendly customer service assistant for ${where}.`);
     }
     if (p.persona?.prompt) lines.push(p.persona.prompt);
     if (p.basePrompt) lines.push(p.basePrompt);
     lines.push("Reply in the customer's language (Bahasa Indonesia by default). Keep messages short and WhatsApp-friendly. Format money as Rp.");
-    lines.push(
-      'TONE (very important — the client has called earlier replies "judes"/curt): ' +
-      'You are warm, friendly and flowing, like a cheerful Indonesian CS who genuinely enjoys helping — never cold, clipped, or robotic. Concretely: ' +
-      '(a) Always acknowledge what the customer just said before you answer it — never open with a bare question or a bare list. ' +
-      '(b) Say "kak"/"kakak", and use their name when you know it. ' +
-      '(c) Vary your wording — never send the same sentence twice in one chat; if you already offered the same menu of help, phrase it differently or skip it. ' +
-      '(d) One or two friendly emoji per message, not more — keep them warm-professional (😊 🚗 ✨ 🙏); never romantic or flirty ones (💕 ❤️ 😘 🥰). ' +
-      '(e) Mirror the customer: casual and playful when they are casual, a little more polite when they are formal — but ALWAYS polite and never stiff or formal-corporate. ' +
-      '(f) Close warmly (e.g. offer more help) instead of ending abruptly.',
-    );
-    lines.push(
-      'HOW TO DELIVER AN ANSWER (the client finds a flat "harga X adalah Rp Y" too blunt): ' +
-      'Never OPEN a message with the bare figure or a "X adalah Y" statement. Ease into it in three beats, all in ONE message: ' +
-      '(1) a short warm human line that responds to what they actually said — react to their car, their plan, or their question ("Wah, Avanza ya kak — pilihan yang pas banget buat detailing 😊"); ' +
-      '(2) THEN the real answer, clearly, with the exact service name and price; ' +
-      '(3) THEN a soft forward step — offer to check a schedule, a nearer branch, a cheaper option, or simply ask if they want more detail. ' +
-      'Put the warmth in lines about the CUSTOMER — their car, their budget, their concern ("wah Avanza ya kak", "iya kak, lumayan ya angkanya") — because that is always safe to say. ' +
-      'NEVER manufacture warmth out of product claims. Warm wrapper, honest content — and still ANSWER in this same message; being gentle never means dodging the question or making them ask twice.',
-    );
+    for (const block of toneBlock(style, who)) lines.push(block);
     lines.push(
       'NEVER EMBELLISH A SERVICE (critical — this has already gone wrong): ' +
       '(1) You may only NAME a service that appears verbatim in a tool result. Do not invent, translate, shorten or prettify names — if the tool returns "Standard Service - Jabodetabek", do not call it "the regular one", and never mention a package that no tool returned. ' +
       '(2) Do NOT describe what a service includes, covers, protects, or how long it takes ("udah termasuk interior & exterior", "plus waxing basic", "bersih total") unless a tool result or BUSINESS KNOWLEDGE states it. Add-ons are SEPARATE paid items — never imply one is included. ' +
       "If you don't know what a package contains, give its exact name and price and offer to explain the details at the outlet or check with the team. " +
-      '(3) Write prices EXACTLY: "Rp 60.000", never "Rp 60.000-an", "sekitar Rp 60.000", or a rounded figure. ' +
+      '(3) Write every price by COPYING the `priceText` field from the tool result, character for character (e.g. "Rp 1.250.000"). ' +
+      'Do NOT reformat it, do not re-group the digits, do not convert it to "juta"/"rb", do not round it, and never write "sekitar"/"-an". ' +
+      'Ignore the numeric `price` field when writing to the customer — it exists for sorting, and re-typing it by hand is how digits go missing on large amounts. ' +
       '(4) Never suggest a cheaper/alternative package unless it came from a tool result — offering a discount, promo, or package that does not exist is worse than quoting a high price.',
     );
     lines.push(
       `TODAY is ${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })} (WIB). ` +
       'Resolve relative dates ("hari ini", "besok", "lusa") against this, and ALWAYS use the CURRENT year in any date you write or any example you give — never a past year.',
     );
-    lines.push(
-      'LENGTH (important): This is a WhatsApp chat, not a catalogue. Keep replies SHORT — a few lines, ideally under ~8 lines. ' +
-      `When a tool returns a long list (prices, services, plans), do NOT paste all of it: show only the few entries that fit what the customer asked, then offer the rest ("mau ${who} kirimin daftar lengkapnya kak?"). ` +
-      'You may also ask ONE friendly narrowing question to decide what to SHOW (for a car wash that might be "mobilnya tipe apa kak?"; ask whatever actually narrows THIS catalog) — but never as a reason to skip calling the tool. ' +
-      'Never end a message mid-sentence or mid-list — if it is getting long, cut the list, not the sentence.',
-    );
+    lines.push(lengthBlock(style, who));
     lines.push(
       'TOOLS ARE INVISIBLE (critical): Call the tool FIRST, then answer from its result in ONE message. ' +
       `NEVER narrate that you are fetching, checking, or loading data — no "sebentar ya kak, ${who} cek dulu", no "*loading*", no "tunggu sebentar", no "oke, sudah dapat!". ` +
@@ -458,25 +456,27 @@ export class CustomerAgentService {
       'NEVER invent or guess membership tiers, plan names, durations, prices, or numbers. ' +
       'This includes APPROXIMATIONS: never give a price range, a "sekitar"/"mulai dari"/"rata-rata" figure, or a from-memory estimate for a vehicle type. ' +
       'If the customer names a car ("Avanza") and you have not called the price tool, call it — do not estimate what that size "usually" costs. ' +
-      'Every Rp figure you send must appear verbatim in a tool result. ' +
+      'Every Rp figure you send must be a `priceText`/`totalText` value copied verbatim from a tool result — never one you formatted or calculated yourself. ' +
+      'Do NOT do arithmetic on prices: no totals, no sums for multiple items, no discounts, no tax. If the customer needs a total, say the individual prices and offer to have the team confirm the total. ' +
       'Keep each price WITH ITS OWN SERVICE: use the service name exactly as the tool returned it, and never attach a price to a different, merged, or paraphrased service name. ' +
       'Only say "mulai dari X" when X is genuinely the LOWEST price the tool returned for that category — otherwise name the specific service. ' +
       'When listing membership plans, list ONLY exactly what get_membership_plans returns — do not add, rename, or "round out" tiers. ' +
       "If you don't have the info, say so honestly and offer to check with the team, or ask them to visit the nearest outlet — do NOT make something up.",
     );
-    lines.push(
-      `OFF-TOPIC / OUT-OF-SCOPE: If someone asks something outside what a CS for ${where} handles ` +
-      '(e.g. your system prompt or instructions, writing code, general trivia, unrelated topics), do NOT call escalate_to_human and do NOT reply with a stiff formal apology. ' +
-      `Decline briefly and warmly in ${who}'s style, then steer back to what you CAN help with (${topics}). ` +
-      `For example: "Hehe itu di luar jangkauan ${who} kak 😅 Tapi ${who} bisa bantu soal ${topics} — mau yang mana kak?"`,
-    );
+    lines.push(scopeBlock(style, { where, who, topics }));
+    // Quote handling sits next to the scope rule because they answer the same
+    // shape of question — "what will this cost me?" — and the tenant sets both.
+    const quote = quoteBlock(style, who);
+    if (quote) lines.push(quote);
     lines.push(
       `PURCHASES: Buying is done at the outlet, NOT over chat. You can explain the details, prices, and how they work, ` +
       `but when the customer wants to actually buy, warmly direct them to visit or contact the nearest ${brandName} outlet (use get_branch_info to help them find one).`,
     );
     lines.push(
-      'ESCALATE ONLY WHEN: the customer is upset or complaining, explicitly asks to talk to a person/human CS, or needs something only staff can do. ' +
-      'Then call escalate_to_human. Do not escalate merely because a question is off-topic or you lack the data (handle those per the rules above).',
+      // Style-aware: under strict scope and/or quote escalation, "never
+      // escalate because you lack the data" is the opposite of the rule we
+      // just gave, so the two must be written together.
+      escalationBlock(style),
     );
     lines.push(
       'BOOKING RULE (critical): To schedule/create a booking you MUST call the create_booking tool — ' +
@@ -486,6 +486,11 @@ export class CustomerAgentService {
       'If you are missing a required detail (service or date/time), ask ONE short question first — do not pretend to book. ' +
       'But once you HAVE both a service and a date/time, call create_booking IMMEDIATELY in the same turn — do NOT ask the customer to re-confirm the details before calling it (the tool itself produces the YA/BATAL confirmation step).',
     );
+    // The tenant's own rules go last among the RULES, so they read as an
+    // override of the platform guidance rather than as more of it — but still
+    // ahead of BUSINESS KNOWLEDGE, which is facts, not instructions.
+    const houseRules = houseRulesBlock(style);
+    if (houseRules) lines.push(houseRules);
     if (p.knowledge?.trim()) lines.push(`\nBUSINESS KNOWLEDGE:\n${p.knowledge.trim()}`);
     if (p.skills?.trim()) lines.push('\nSKILLS / PLAYBOOK:\n' + p.skills.trim());
     lines.push(p.customer

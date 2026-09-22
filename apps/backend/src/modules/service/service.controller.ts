@@ -62,6 +62,7 @@ export class ServiceController {
     @Query('outletId') outletId?: string,
     @Query('active') active?: string,
     @Query('includeProducts') includeProducts?: string,
+    @Query('includeArchived') includeArchived?: string,
   ): Promise<ServiceDTO[]> {
     // Retail products have their own API (/api/products). This endpoint returns
     // services only unless a caller explicitly opts in with includeProducts=true.
@@ -72,6 +73,7 @@ export class ServiceController {
       outletId: outletId ?? undefined,
       active: active !== undefined ? active === 'true' : undefined,
       excludeProducts: includeProducts !== 'true',
+      includeArchived: includeArchived === 'true',
     });
   }
 
@@ -117,16 +119,32 @@ export class ServiceController {
   }
 
   /**
+   * POST /api/services/:id/restore
+   * Puts an archived service back in the catalog (inactive), for a mis-clicked
+   * delete. Archiving is invisible by design, so this is the only way back.
+   */
+  @Post(':id/restore')
+  @HttpCode(HttpStatus.OK)
+  async restore(
+    @CurrentUser() user: JWTPayload,
+    @Param('id') id: string,
+  ): Promise<ServiceDTO> {
+    return this.serviceService.restore(user.tenant_id, id);
+  }
+
+  /**
    * DELETE /api/services/:id
-   * Soft-deletes a service by setting is_active = false.
-   * Inactive services appear as "Habis" (disabled) in POS.
+   * Removes a service from the catalog. Physically deleted when it was never
+   * sold; otherwise archived (`deleted_at`), which hides it everywhere while
+   * the order lines that reference it keep resolving. Either way it is gone
+   * from the tenant's catalog — see ServiceService.remove.
    */
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   async remove(
     @CurrentUser() user: JWTPayload,
     @Param('id') id: string,
-  ): Promise<{ deleted: boolean; deactivated: boolean; orderLines: number }> {
+  ): Promise<{ deleted: boolean; archived: boolean; orderLines: number }> {
     return this.serviceService.remove(user.tenant_id, id);
   }
 }

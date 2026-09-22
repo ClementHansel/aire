@@ -57,6 +57,7 @@ describe('ServiceService', () => {
         tenantId: 'tenant-001',
         outletId: null,
         name: 'Super Wash',
+        description: null,
         category: 'car_wash',
         businessUnit: 'AIRE',
         price: 50000,
@@ -78,15 +79,16 @@ describe('ServiceService', () => {
       expect(params[0]).toBe('tenant-001');
       expect(params[1]).toBeNull(); // outlet_id
       expect(params[2]).toBe('Super Wash');
-      expect(params[3]).toBe('car_wash');
-      expect(params[4]).toBe('AIRE'); // business_unit (defaults to AIRE)
-      expect(params[5]).toBe(50000);
-      expect(params[6]).toBe(true); // is_active
-      expect(params[7]).toBe(true); // is_main_service (car_wash default)
-      expect(params[8]).toBe(0); // sort_order
-      expect(params[13]).toBe(false); // dynamic_discount_enabled defaults false
-      expect(params[14]).toBeNull(); // dynamic_discount_kind
-      expect(params[15]).toBeNull(); // max_discount
+      expect(params[3]).toBeNull(); // description (none given)
+      expect(params[4]).toBe('car_wash');
+      expect(params[5]).toBe('AIRE'); // business_unit (defaults to AIRE)
+      expect(params[6]).toBe(50000);
+      expect(params[7]).toBe(true); // is_active
+      expect(params[8]).toBe(true); // is_main_service (car_wash default)
+      expect(params[9]).toBe(0); // sort_order
+      expect(params[14]).toBe(false); // dynamic_discount_enabled defaults false
+      expect(params[15]).toBeNull(); // dynamic_discount_kind
+      expect(params[16]).toBeNull(); // max_discount
     });
 
     it('should default is_main_service to true for car_wash category', async () => {
@@ -99,7 +101,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[7]).toBe(true); // is_main_service defaults to true
+      expect(params[8]).toBe(true); // is_main_service defaults to true
     });
 
     it('should default is_main_service to false for product category', async () => {
@@ -115,7 +117,7 @@ describe('ServiceService', () => {
       });
 
       const insertCall = mockPool.query.mock.calls.find((c: unknown[]) => String(c[0]).includes('INSERT INTO services'))!;
-      expect(insertCall[1][7]).toBe(false); // is_main_service defaults to false for product
+      expect(insertCall[1][8]).toBe(false); // is_main_service defaults to false for product
     });
 
     it('should default is_main_service to false for add_on category', async () => {
@@ -129,7 +131,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[7]).toBe(false); // is_main_service defaults to false for add_on
+      expect(params[8]).toBe(false); // is_main_service defaults to false for add_on
     });
 
     it('should allow explicit is_main_service override', async () => {
@@ -144,7 +146,7 @@ describe('ServiceService', () => {
       });
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[7]).toBe(false); // explicit override
+      expect(params[8]).toBe(false); // explicit override
     });
 
     it('should set outlet_id when provided', async () => {
@@ -197,9 +199,9 @@ describe('ServiceService', () => {
       expect(result.maxDiscount).toBe(15);
 
       const [, params] = mockPool.query.mock.calls[0];
-      expect(params[13]).toBe(true);
-      expect(params[14]).toBe('percentage');
-      expect(params[15]).toBe(15);
+      expect(params[14]).toBe(true);
+      expect(params[15]).toBe('percentage');
+      expect(params[16]).toBe(15);
     });
   });
 
@@ -494,10 +496,10 @@ describe('ServiceService', () => {
       const [sql, params] = mockPool.query.mock.calls[2];
       expect(sql).toContain('DELETE FROM services');
       expect(params).toEqual(['svc-001', 'tenant-001']);
-      expect(result).toEqual({ deleted: true, deactivated: false, orderLines: 0 });
+      expect(result).toEqual({ deleted: true, archived: false, orderLines: 0 });
     });
 
-    it('deactivates instead, and reports the count, when the service has sales history', async () => {
+    it('archives instead, and reports the count, when the service has sales history', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
       mockPool.query.mockResolvedValueOnce({ rows: [{ n: '17' }] }); // order-line count
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // update
@@ -505,13 +507,16 @@ describe('ServiceService', () => {
       const result = await service.remove('tenant-001', 'svc-001');
 
       const [sql, params] = mockPool.query.mock.calls[2];
-      expect(sql).toContain('UPDATE services SET is_active = false');
+      // Archived, not merely deactivated: `is_active = false` left the row in
+      // the Services list and made Delete look broken (client feedback
+      // 2026-09-22). `deleted_at` is what removes it from the catalog.
+      expect(sql).toContain('UPDATE services SET deleted_at = NOW()');
       expect(params).toEqual(['svc-001', 'tenant-001']);
       // The count is what lets the UI say WHY.
-      expect(result).toEqual({ deleted: false, deactivated: true, orderLines: 17 });
+      expect(result).toEqual({ deleted: false, archived: true, orderLines: 17 });
     });
 
-    it('falls back to deactivating when another table still references it (23503)', async () => {
+    it('falls back to archiving when another table still references it (23503)', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
       mockPool.query.mockResolvedValueOnce({ rows: [{ n: '0' }] }); // order-line count
       mockPool.query.mockRejectedValueOnce(Object.assign(new Error('fk'), { code: '23503' }));
@@ -519,9 +524,63 @@ describe('ServiceService', () => {
 
       const result = await service.remove('tenant-001', 'svc-001');
 
-      expect(result).toEqual({ deleted: false, deactivated: true, orderLines: 0 });
+      expect(result).toEqual({ deleted: false, archived: true, orderLines: 0 });
     });
 
+    it('also clears is_active when archiving, so old is_active readers agree', async () => {
+      // Archiving is the new signal, but reports, integrations and any client
+      // still holding the old contract only know is_active. Leaving it true
+      // would have them treat an archived row as a live, purchasable service.
+      mockPool.query.mockResolvedValueOnce({ rows: [mockServiceRow] }); // findOne
+      mockPool.query.mockResolvedValueOnce({ rows: [{ n: '3' }] }); // order-line count
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // update
+
+      await service.remove('tenant-001', 'svc-001');
+
+      const [sql] = mockPool.query.mock.calls[2];
+      expect(sql).toContain('is_active = false');
+    });
+
+    it('excludes archived rows from the catalog listing by default', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      await service.findAll({ tenantId: 'tenant-001' });
+
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('deleted_at IS NULL');
+    });
+
+    it('includes archived rows only when explicitly asked', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      await service.findAll({ tenantId: 'tenant-001', includeArchived: true });
+
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).not.toContain('deleted_at IS NULL');
+    });
+  });
+
+  describe('restore', () => {
+    it('un-archives a row and leaves it inactive', async () => {
+      // Restoring recovers the record; putting it back on sale is a separate,
+      // deliberate edit, so restore must not flip is_active on the owner's behalf.
+      mockPool.query.mockResolvedValueOnce({ rows: [{ ...mockServiceRow, is_active: false }] });
+
+      const result = await service.restore('tenant-001', 'svc-001');
+
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('deleted_at = NULL');
+      expect(sql).not.toMatch(/SET[^;]*is_active\s*=/);
+      expect(result.isActive).toBe(false);
+    });
+
+    it('refuses to "restore" a row that was never archived', async () => {
+      // The UPDATE is guarded by `deleted_at IS NOT NULL`, so a live row
+      // matches nothing — report that rather than returning a silent success.
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      await expect(service.restore('tenant-001', 'svc-001')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('remove — not found', () => {
     it('should throw NotFoundException when removing nonexistent service', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 

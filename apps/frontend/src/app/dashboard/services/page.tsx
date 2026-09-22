@@ -46,6 +46,9 @@ export default function ServicesPage() {
   const [fBusinessUnit, setFBusinessUnit] = useState('');
   const [fBrand, setFBrand] = useState('');
   const [fCategory, setFCategory] = useState('');
+  // Archived services are hidden by design — Delete is supposed to make a row
+  // disappear. This is the way back for a mis-click, not a normal view.
+  const [showArchived, setShowArchived] = useState(false);
 
   const brandById = useCallback((id: string | null) => id ? brands.find((b) => b.id === id) ?? null : null, [brands]);
   const categoryById = useCallback((id: string | null) => id ? categories.find((c) => c.id === id) ?? null : null, [categories]);
@@ -55,7 +58,7 @@ export default function ServicesPage() {
     setError('');
     try {
       const [data, cats, brs, outs] = await Promise.all([
-        api.get<ServiceDTO[]>('/services'),
+        api.get<ServiceDTO[]>(showArchived ? '/services?includeArchived=true' : '/services'),
         api.get<Category[]>('/categories').catch(() => [] as Category[]),
         api.get<Brand[]>('/brands').catch(() => [] as Brand[]),
         api.get<BranchLite[]>('/outlets').catch(() => [] as BranchLite[]),
@@ -70,13 +73,16 @@ export default function ServicesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showArchived, t]);
 
   useEffect(() => { load(); }, [load]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return services.filter((s) => {
+      // In the archived view show ONLY archived rows, so "Archived" is a place
+      // you go rather than a mix you have to read a badge to tell apart.
+      if (showArchived !== Boolean(s.deletedAt)) return false;
       if (q && !s.name.toLowerCase().includes(q)) return false;
       if (fBusinessUnit && (s.businessUnit ?? 'AIRE') !== fBusinessUnit) return false;
       if (fBrand && s.brandId !== fBrand) return false;
@@ -87,29 +93,45 @@ export default function ServicesPage() {
       if (fBranch && scope.length > 0 && !scope.includes(fBranch)) return false;
       return true;
     });
-  }, [services, search, fBusinessUnit, fBrand, fCategory, fBranch]);
+  }, [services, search, fBusinessUnit, fBrand, fCategory, fBranch, showArchived]);
 
   const filtersActive = Boolean(search.trim() || fBranch || fBusinessUnit || fBrand || fCategory);
   const clearFilters = () => { setSearch(''); setFBranch(''); setFBusinessUnit(''); setFBrand(''); setFCategory(''); };
 
-  // Delete really deletes when the service was never sold. When it HAS been,
-  // `order_items.service_id ON DELETE RESTRICT` protects the sales history and
-  // the backend deactivates instead — so say that, with the number of
-  // transactions, rather than reloading a list where the row is still sitting
-  // there and letting the user conclude the button is broken.
+  // Delete removes the service from the catalog either way: physically when it
+  // was never sold, otherwise by archiving it (`deleted_at`), because
+  // `order_items.service_id ON DELETE RESTRICT` protects the sales history.
+  //
+  // What matters for the UI is that BOTH outcomes make the row disappear. The
+  // old behaviour flipped it to "Inactive" and left it in the list, which after
+  // the Jan-Feb history import (nearly every service now has order lines) read
+  // as a Delete button that did nothing.
   const handleDelete = async (id: string) => {
     if (!confirm(t('dash.services.confirmDelete', 'Delete this service?'))) return;
     setNotice(null);
     try {
-      const res = await api.delete<{ deleted: boolean; deactivated: boolean; orderLines: number }>(`/services/${id}`);
+      const res = await api.delete<{ deleted: boolean; archived: boolean; orderLines: number }>(`/services/${id}`);
       await load();
-      if (res && res.deleted === false) {
+      if (res && res.archived) {
         setNotice(
-          t('dash.services.deactivatedInstead', 'This service is used in {n} past transaction(s), so it cannot be deleted without breaking the sales history. It has been deactivated instead and will no longer appear in POS.').replace('{n}', String(res.orderLines)),
+          t('dash.services.archivedInstead', 'Removed from your catalog. It appears in {n} past transaction(s), so the record is kept for your sales history — you can find it under Archived.').replace('{n}', String(res.orderLines)),
         );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('dash.services.deleteFailed', 'Delete failed'));
+    }
+  };
+
+  // Undo for a mis-clicked delete. Comes back inactive: restoring recovers the
+  // row, putting it back on sale is a separate, deliberate edit.
+  const handleRestore = async (id: string) => {
+    setNotice(null);
+    try {
+      await api.post(`/services/${id}/restore`, {});
+      await load();
+      setNotice(t('dash.services.restored', 'Service restored to your catalog as Inactive. Edit it to put it back on sale.'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('dash.services.restoreFailed', 'Restore failed'));
     }
   };
 
@@ -124,6 +146,13 @@ export default function ServicesPage() {
           <p className="mt-1 text-sm text-text-secondary">{t('dash.services.subtitle', 'Manage your service menu and pricing. Active services appear on the POS menu.')}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className={showArchived ? 'btn-primary' : 'btn-secondary'}
+            data-testid="toggle-archived-btn"
+            onClick={() => setShowArchived((v) => !v)}
+          >
+            {showArchived ? t('dash.services.backToCatalog', '← Back to catalog') : t('dash.services.viewArchived', 'Archived')}
+          </button>
           <button className="btn-secondary" data-testid="rename-types-btn" onClick={() => setTypeLabelsOpen(true)}>{t('dash.services.renameTypes', 'Rename types')}</button>
           <button className="btn-primary" data-testid="add-service-btn" onClick={openAdd}>{t('dash.services.addBtn', '+ Add Service')}</button>
         </div>
@@ -222,6 +251,9 @@ export default function ServicesPage() {
                 <tr key={s.id} className="hover:bg-surface-sunken/30 transition-colors" data-testid={`service-row-${s.id}`}>
                   <td className="px-5 py-3.5">
                     <div className="text-sm font-medium text-text-primary">{s.name}</div>
+                    {s.description ? (
+                      <div className="text-xs text-text-secondary">{s.description}</div>
+                    ) : null}
                     {(() => { const b = brandById(s.brandId); return b ? (
                       <span className="mt-1 inline-flex items-center gap-1.5 text-xs text-text-muted">
                         <span className="w-2 h-2 rounded-full" style={{ background: b.color }} />
@@ -257,12 +289,22 @@ export default function ServicesPage() {
                   </td>
                   <td className="px-5 py-3.5 text-sm text-text-primary text-right font-mono">Rp {s.price.toLocaleString('id-ID')}</td>
                   <td className="px-5 py-3.5 text-center">
-                    <span className={`badge ${s.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{s.isActive ? t('dash.services.active', 'Active') : t('dash.services.inactive', 'Inactive')}</span>
+                    {s.deletedAt ? (
+                      <span className="badge bg-amber-50 text-amber-700">{t('dash.services.archived', 'Archived')}</span>
+                    ) : (
+                      <span className={`badge ${s.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{s.isActive ? t('dash.services.active', 'Active') : t('dash.services.inactive', 'Inactive')}</span>
+                    )}
                   </td>
                   <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                    <button className="btn-ghost text-xs" onClick={() => setRecipeFor(s)}>{t('dash.services.recipe', 'Recipe')}</button>
-                    <button className="btn-ghost text-xs" onClick={() => openEdit(s)}>{t('dash.services.edit', 'Edit')}</button>
-                    <button className="btn-ghost text-xs text-error" onClick={() => handleDelete(s.id)}>{t('dash.services.delete', 'Delete')}</button>
+                    {s.deletedAt ? (
+                      <button className="btn-ghost text-xs" data-testid={`restore-${s.id}`} onClick={() => handleRestore(s.id)}>{t('dash.services.restore', 'Restore')}</button>
+                    ) : (
+                      <>
+                        <button className="btn-ghost text-xs" onClick={() => setRecipeFor(s)}>{t('dash.services.recipe', 'Recipe')}</button>
+                        <button className="btn-ghost text-xs" onClick={() => openEdit(s)}>{t('dash.services.edit', 'Edit')}</button>
+                        <button className="btn-ghost text-xs text-error" onClick={() => handleDelete(s.id)}>{t('dash.services.delete', 'Delete')}</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

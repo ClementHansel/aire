@@ -10,6 +10,7 @@ import { DEFAULT_VERTICAL, VERTICAL_COPY, type TenantVertical } from '@aire/shar
 import {
   CustomerContextService, ResolvedCustomer, CustomerScopedContext, PublicInfo,
 } from './customer-context.service';
+import type { AgentStyle } from './agent-style';
 
 export type Intent = 'human' | 'status' | 'membership' | 'price' | 'booking' | 'voucher' | 'hours' | 'greeting' | 'unknown';
 
@@ -125,6 +126,9 @@ export class AgentRuntimeService {
     knowledge: string | null;
     skills?: string | null;
     history: ChatMessage[];
+    /** Tenant-owned tone/length/scope rules, read from agent_configs by the
+     *  caller (which already has the row). Omitted = platform defaults. */
+    style?: AgentStyle | null;
   }): Promise<ReplyResult> {
     const intent = this.detectIntent(params.text);
     const agent = await this.selectAgent(params.tenantId, intent);
@@ -158,6 +162,7 @@ export class AgentRuntimeService {
         customer,
         pub,
         business,
+        style: params.style ?? null,
       });
       if (fluid) {
         const proposedBooking = fluid.toolsUsed.some((t) => t.tool === 'create_booking' && t.ok);

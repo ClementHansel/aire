@@ -17,6 +17,7 @@ import { KnowledgeDocsService } from '../agent-config/knowledge-docs.service';
 // import cycle (see agent/staff-chat.port.ts for the full explanation).
 import { STAFF_CHAT, type StaffChatPort } from '../agent/staff-chat.port';
 import { runPrivileged } from '../../common/tenant-context';
+import { styleFromRow } from './agent-style';
 
 interface AgentCfgRow {
   tenant_id: string; base_prompt: string | null; product_knowledge: string | null;
@@ -26,6 +27,14 @@ interface AgentCfgRow {
   kirim_api_key: string | null; kirim_phone_id: string | null; ai_reply_enabled: boolean;
   // Per-tenant simulation toggle (migration 068). Effective mock = env global OR this.
   waha_mock?: boolean;
+  // Tenant-owned agent style, scope and quote handling (migration 105). Read
+  // through styleFromRow(), which supplies the pre-105 behaviour for any tenant
+  // that has not set them.
+  reply_style?: string | null;
+  reply_max_lines?: number | null;
+  knowledge_scope?: string | null;
+  style_instructions?: string | null;
+  escalate_on_quote?: boolean | null;
   // n8n agent-builder routing (migration 038). Present because config() does SELECT *.
   routing_mode?: 'builtin' | 'n8n'; n8n_flow_id?: string | null; bridge_token?: string | null;
   // Per-branch WhatsApp opt-in (migration 067). When true, config(tenantId, outletId)
@@ -810,6 +819,7 @@ export class WhatsappService implements OnModuleInit {
             await this.handleInbound({
               tenantId: resolved.tenantId, outletId: resolved.outletId,
               from: msg.from, name, text: msg.text.body,
+              messageId: typeof msg.id === 'string' ? msg.id : null,
             });
           } catch (e) {
             this.logger.error(`kirim handleInbound failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -820,7 +830,16 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Inbound (from WAHA/kirimdev webhook) ─────────────────────────────────────
-  async handleInbound(params: { tenantId?: string; outletId?: string | null; token?: string; session?: string; from: string; name?: string; text: string; isGroup?: boolean; author?: string | null; mentions?: string[] }): Promise<void> {
+  async handleInbound(params: {
+    tenantId?: string; outletId?: string | null; token?: string; session?: string;
+    from: string; name?: string; text: string; isGroup?: boolean; author?: string | null; mentions?: string[];
+    /**
+     * The gateway's own id for this message. Present = we can tell a
+     * re-delivery from a customer who genuinely sent the same text twice, and
+     * drop it. Absent (simulate-inbound, an older gateway) = process as before.
+     */
+    messageId?: string | null;
+  }): Promise<void> {
     // Resolve tenant + branch. Order matters:
     //  1. an explicit tenantId (simulate-inbound, kirimdev — already resolved),
     //  2. the webhook TOKEN, the authenticated inbound identity,
@@ -856,6 +875,22 @@ export class WhatsappService implements OnModuleInit {
       }
     }
     if (!tenantId || !params.from || !params.text) return;
+
+    // DE-DUPLICATION. The webhook ACKs immediately and runs the agent in the
+    // background, so a gateway is free to re-deliver: a WAHA reconnect replays
+    // recent messages, a proxy timeout triggers a retry, and subscribing to both
+    // `message` and `message.any` delivers each message twice. Every one of
+    // those produced a SECOND full agent run and a second reply to the customer
+    // ("AI agent membalas berulang", client feedback 2026-09-22).
+    //
+    // The claim has to happen here rather than in the controller: the tenant is
+    // only known after token/session resolution, and a message id is only unique
+    // within a gateway. It also has to happen before `addMessage`, or a
+    // redelivery would at minimum duplicate the conversation log.
+    if (!(await this.claimInboundMessage(tenantId, params.messageId))) {
+      this.logger.debug(`WhatsApp webhook: duplicate delivery of message ${params.messageId}; dropped`);
+      return;
+    }
 
     // Ignore non-conversational WhatsApp system chats: status/story updates
     // (`status@broadcast`), broadcast lists (`…@broadcast`) and channel
@@ -1031,6 +1066,7 @@ export class WhatsappService implements OnModuleInit {
       knowledge: (await this.knowledgeDocs?.composeKnowledge(tenantId, cfg.product_knowledge)) ?? cfg.product_knowledge,
       skills: cfg.skills,
       history,
+      style: styleFromRow(cfg),
     });
     if (result.escalate || !result.text) {
       await this.escalate(tenantId, conv.id, cfg, params.from, params.text, outletId);
@@ -1070,6 +1106,24 @@ export class WhatsappService implements OnModuleInit {
       if (ask) outText = `${outText}\n\n${ask}`;
       await this.markIdentityPrompted(conv.id);
     }
+    // REPEAT GUARD. "AI agent membalas berulang" (client, 2026-09-22) turned out
+    // not to be duplicate deliveries but the bot sending the SAME canned line
+    // over and over: the live Kalibrasi log shows its fallback reply three times
+    // in one conversation, because the customer kept asking a question it had no
+    // data to answer ("minta penawaran harga…", then "harga").
+    //
+    // Repeating a reply that already failed cannot succeed — the customer has
+    // read it and asked again. So the second identical answer in a row becomes a
+    // handover instead. This is the deterministic backstop for the prompt's
+    // "vary your wording" rule, which is advice a model can ignore.
+    if (!result.proposedBooking && (await this.isRepeatOfLastReply(tenantId, conv.id, outText))) {
+      this.logger.warn(
+        `Tenant ${tenantId} conversation ${conv.id}: agent produced the same reply twice; escalating instead of repeating it`,
+      );
+      await this.escalate(tenantId, conv.id, cfg, params.from, 'Assistant repeated itself — it could not answer', outletId);
+      return;
+    }
+
     await this.addMessage(tenantId, conv.id, 'outbound', outText, true, result.agentName);
     await this.pool.query(
       `UPDATE wa_conversations SET messages_today = CASE WHEN messages_day = $2 THEN messages_today + 1 ELSE 1 END, messages_day = $2 WHERE id = $1`,
@@ -1308,6 +1362,85 @@ export class WhatsappService implements OnModuleInit {
   }
 
   // ── Conversation store ───────────────────────────────────────────────────────
+  /**
+   * Claim an inbound message id for this tenant. Returns true when WE are the
+   * first to see it (process the message) and false when the gateway already
+   * delivered it (drop silently).
+   *
+   * Three deliberate choices:
+   *  - No id means no claim. `simulate-inbound` and any gateway that does not
+   *    send one keep working exactly as before; de-duplication is an
+   *    improvement where the data allows it, never a new reason to drop a real
+   *    customer message.
+   *  - A failed INSERT also returns true. If the dedup table is unreachable the
+   *    right failure is an occasional duplicate reply, not a bot that has gone
+   *    silent for everyone.
+   *  - Pruning rides along on the insert path (a sampled sweep) rather than
+   *    needing a scheduled job: the table is pure garbage after a day, and a
+   *    redelivery never arrives that late.
+   */
+  private async claimInboundMessage(tenantId: string, messageId?: string | null): Promise<boolean> {
+    const id = messageId?.trim();
+    if (!id) return true;
+    try {
+      const res = await this.pool.query(
+        `INSERT INTO wa_inbound_events (tenant_id, message_id)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id, message_id) DO NOTHING`,
+        [tenantId, id],
+      );
+      if ((res.rowCount ?? 0) === 0) return false;
+      // ~1 in 200 inserts pays for the cleanup. Scoped to the tenant we just
+      // wrote for: a busy tenant then prunes its own rows often and a quiet one
+      // rarely, which is the right shape, and it keeps the sweep inside the
+      // tenant boundary rather than being a cross-tenant statement that happens
+      // to be harmless today.
+      if (Math.random() < 0.005) {
+        await this.pool
+          .query(
+            `DELETE FROM wa_inbound_events
+              WHERE tenant_id = $1 AND received_at < NOW() - INTERVAL '1 day'`,
+            [tenantId],
+          )
+          .catch(() => undefined);
+      }
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `WhatsApp inbound de-duplication unavailable (${err instanceof Error ? err.message : String(err)}); `
+        + 'processing the message anyway — a duplicate reply beats a dropped one',
+      );
+      return true;
+    }
+  }
+
+  /**
+   * Is this exactly what we told them last time?
+   *
+   * Compares against the most recent AI outbound message in the conversation,
+   * ignoring case and whitespace so a cosmetic difference does not let the same
+   * answer through. Staff messages are excluded — a human deliberately repeating
+   * themselves is not the failure this guards.
+   *
+   * On any error it returns false: the cost of missing a repeat is one duplicate
+   * message, the cost of a false positive is escalating a perfectly good reply.
+   */
+  private async isRepeatOfLastReply(tenantId: string, convId: string, text: string): Promise<boolean> {
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+    try {
+      const r = await this.pool.query<{ body: string }>(
+        `SELECT body FROM wa_messages
+          WHERE tenant_id = $1 AND conversation_id = $2 AND direction = 'outbound' AND from_ai = true
+          ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, convId],
+      );
+      const last = r.rows[0]?.body;
+      return !!last && norm(last) === norm(text);
+    } catch {
+      return false;
+    }
+  }
+
   private async upsertConversation(tenantId: string, chatId: string, name?: string, outletId?: string | null): Promise<{ id: string; ai_enabled: boolean; messages_today: number; messages_day: string | null; identified_customer_id?: string | null; identity_prompted?: boolean; customer_name?: string | null; chat_session_id?: string | null }> {
     const phone = chatId.replace(/@.*/, '');
     // Conflict target matches uq_wa_conv_tenant_outlet_chat (migration 067): a
