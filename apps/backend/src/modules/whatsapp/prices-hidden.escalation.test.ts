@@ -149,6 +149,9 @@ describe('a reply that promises a handover escalates', () => {
     'Digital Multimeter 3.5 Digit Rp 750.000 kak. Mau Kalia bantu jadwalkan?',
     'Silakan hubungi tim kami di 021-555 kak',
     'Mau Kalia hubungkan sekarang?',
+    // Live misfires after deploy: a full price answer plus an upsell line.
+    '*Digital Multimeter 3.5 Digit:* Rp 750.000\n\nUntuk penawaran resmi, lama pengerjaan, dan penjemputan alat, saya perlu sambungkan ke tim kami ya. Mau saya hubungi mereka? 🙏',
+    '*Analog Multimeter*: Rp 750.000\n\nUntuk penawaran resmi atau jumlah banyak, Kalia sambungkan ke tim kami ya? 🙏',
   ])('ignores: %s', (t) => expect(promisesHandover(t)).toBe(false));
 
   it('the model saying it hands over, without calling the tool, still escalates', async () => {

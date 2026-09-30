@@ -56,7 +56,13 @@ export function isPureGreeting(text: string): boolean {
 const HANDOVER_PROMISE =
   /\b(?:sambung(?:kan|in)?|teruskan|terusin|hubungkan|hubungin|oper(?:kan|in)?|alihkan)\b[^.!?\n]{0,30}\b(?:ke|dengan|sama)\s+(?:tim|team|staf|staff|admin|cs|petugas|rekan)\b/i;
 export function promisesHandover(text: string): boolean {
-  return HANDOVER_PROMISE.test(text ?? '');
+  const t = text ?? '';
+  // A reply that already QUOTES a price answered the question; its handover
+  // line is an upsell ("untuk penawaran resmi, Kalia sambungkan ke tim ya?").
+  // Escalating it replaced the whole price list with the canned handover
+  // message — 2 of 6 live multimeter replies right after the 381369f deploy.
+  if (/\bRp\s?\d/i.test(t)) return false;
+  return HANDOVER_PROMISE.test(t);
 }
 
 export interface CustomerReply {
