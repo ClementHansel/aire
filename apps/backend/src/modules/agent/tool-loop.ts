@@ -118,6 +118,21 @@ export function parseAction(content: string): ParsedAction {
         }
         return { kind: 'final', tool: '', message: parsed.message, via: 'json' };
       }
+      // The tool NAME in the action slot: {"action":"escalate_to_human","parameters":{…}}.
+      // Live 2026-09-30 (Kalibrasi) the model answered a price-list request this
+      // way twice in a row; rejecting it as unparseable ended in the canned
+      // fallback and the escalation it plainly asked for never happened. The
+      // intent is unambiguous, so run it — an unknown name comes back from the
+      // executor as an error the model can correct, like any other bad tool.
+      if (
+        typeof parsed.action === 'string'
+        && parsed.action !== 'tool'
+        && parsed.action !== 'final'
+        && /^[a-z][a-z0-9_]*$/.test(parsed.action)
+        && (parsed.parameters === undefined || (typeof parsed.parameters === 'object' && parsed.parameters !== null))
+      ) {
+        return { kind: 'tool', tool: parsed.action, parameters: parsed.parameters ?? {}, reasoning: parsed.reasoning, message: '' };
+      }
     } catch {
       /* fall through */
     }

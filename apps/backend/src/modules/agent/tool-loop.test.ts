@@ -36,6 +36,17 @@ const SCRATCHPAD = [
 ].join(' ');
 
 describe('parseAction', () => {
+  it('accepts the tool name in the action slot (live Kalibrasi 2026-09-30)', () => {
+    const a = parseAction('{"action":"escalate_to_human","reasoning":"x","parameters":{"reason":"price list"}}');
+    expect(a.kind).toBe('tool');
+    expect(a.tool).toBe('escalate_to_human');
+    expect(a.parameters).toEqual({ reason: 'price list' });
+  });
+
+  it('does not turn a malformed final into a tool named "final"', () => {
+    expect(parseAction('{"action":"final","message":null}').kind).toBe('unparseable');
+  });
+
   it('parses a fenced tool call', () => {
     const a = parseAction('```json\n{"action":"tool","tool":"get_x","parameters":{"a":1}}\n```');
     expect(a.kind).toBe('tool');

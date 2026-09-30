@@ -235,6 +235,8 @@ export class AgentRuntimeService {
       }
 
       case 'price': {
+        // Prices switched off for the AI: a person answers, not "coming soon".
+        if (pub.pricesHidden) return { text: '', escalate: true };
         if (pub.services.length) {
           const top = pub.services.slice(0, 12).map((s) => `• [${s.unit}] ${s.name}: ${fmt(s.price)}`).join('\n');
           return { text: `${hi} 😊 Ini sebagian layanan & harga kami ya kak:\n${top}\n\nKalau kakak mau harga layanan tertentu, sebut aja namanya — ${me} bantu cek ${emoji}`, escalate: false };

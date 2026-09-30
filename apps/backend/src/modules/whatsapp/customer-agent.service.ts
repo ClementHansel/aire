@@ -45,6 +45,20 @@ export function isPureGreeting(text: string): boolean {
   return PURE_GREETING.test(t);
 }
 
+/**
+ * True when a reply TELLS the customer they are being passed to the team
+ * ("biar Kalia sambungkan ke tim kami ya", "kami teruskan ke tim").
+ *
+ * Live 2026-09-30 the model wrote exactly that for a price-list request but
+ * never called escalate_to_human, so nobody was paged and the customer waited
+ * on a promise. A reply that promises a handover must BE one.
+ */
+const HANDOVER_PROMISE =
+  /\b(?:sambung(?:kan|in)?|teruskan|terusin|hubungkan|hubungin|oper(?:kan|in)?|alihkan)\b[^.!?\n]{0,30}\b(?:ke|dengan|sama)\s+(?:tim|team|staf|staff|admin|cs|petugas|rekan)\b/i;
+export function promisesHandover(text: string): boolean {
+  return HANDOVER_PROMISE.test(text ?? '');
+}
+
 export interface CustomerReply {
   text: string;
   /** True when the agent decided the conversation needs a human. */
@@ -173,6 +187,10 @@ export class CustomerAgentService {
     const text = isFirstTurn || isPureGreeting(params.text)
       ? loop.reply
       : this.stripLeadingGreeting(loop.reply);
+    if (!escalate && promisesHandover(text)) {
+      this.logger.warn(`Tenant ${params.tenantId}: reply promised a handover without escalate_to_human; escalating`);
+      escalate = true;
+    }
     return { text, escalate, toolsUsed: loop.toolsUsed, bookingSummary };
   }
 
@@ -264,7 +282,25 @@ export class CustomerAgentService {
           // silently hid the rest of a long catalog from the agent entirely.
           const query = typeof parameters.query === 'string' ? parameters.query : null;
           const found = await this.context.searchServices(tenantId, args.outletId ?? null, query);
-          return { success: true, data: found };
+          if (found.hidden) {
+            // The tenant turned prices off for the AI. Hand over deterministically
+            // (`escalate` here is what reply() and WhatsappService act on) rather
+            // than trusting the model to escalate — an empty list made it flail
+            // into the canned fallback instead (Kalibrasi, 2026-09-30).
+            return {
+              success: true,
+              data: {
+                pricesShared: false,
+                escalate: true,
+                reason: 'Customer asked for prices; this business does not share prices in chat',
+                note: 'Prices are not shared in this chat. Do NOT state, estimate or guess any price — the team will follow up with the customer.',
+              },
+            };
+          }
+          return {
+            success: true,
+            data: { services: found.services, totalMatches: found.totalMatches, truncated: found.truncated },
+          };
         }
         case 'get_membership_plans': {
           const pub = await this.context.getPublicInfo(tenantId, args.outletId ?? null);

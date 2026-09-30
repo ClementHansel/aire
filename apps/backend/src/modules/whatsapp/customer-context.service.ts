@@ -37,7 +37,24 @@ export interface PublicInfo {
   services: { unit: string; name: string; description?: string | null; price: number; priceText: string }[];
   plans: { name: string; price: number; priceText: string; durationMonths: number }[];
   promotions: string[];
+  /** True when the tenant switched "Service prices" off for the AI — distinct
+   *  from an empty catalog, because the right answer then is a human, not "we
+   *  have no prices yet". */
+  pricesHidden?: boolean;
 }
+
+/**
+ * Words that ask ABOUT a price rather than name the thing priced. Only used for
+ * the one retry in searchServices after an every-word search found nothing, so
+ * a row whose name really contains one ("Kalibrasi 4 Gas") is still found by
+ * the first, strict pass.
+ */
+const GENERIC_SEARCH_WORDS = new Set([
+  'harga', 'harganya', 'berapa', 'brp', 'biaya', 'biayanya', 'tarif', 'ongkos', 'price', 'pricelist', 'list',
+  'daftar', 'cost', 'jasa', 'layanan', 'service', 'servis', 'kalibrasi', 'kalibrasinya', 'calibration',
+  'calibrate', 'pengujian', 'uji', 'alat', 'minta', 'mau', 'saya', 'untuk', 'buat', 'yang', 'dan', 'atau',
+  'ada', 'nya', 'dong', 'kak', 'per',
+]);
 
 @Injectable()
 export class CustomerContextService {
@@ -360,15 +377,20 @@ export class CustomerContextService {
    *
    * Returns `{ services, totalMatches, truncated }` so the agent can honestly
    * say "there are 20 more" rather than implying it showed everything.
+   *
+   * `hidden` = the tenant turned prices off for the AI. It must not look like
+   * "no match": on 2026-09-30 Kalibrasi had the toggle off, every price
+   * question came back as an empty list, and the model flailed into the
+   * "kurang nangkep" fallback instead of handing the customer to a person.
    */
   async searchServices(
     tenantId: string,
     outletId: string | null | undefined,
     query: string | null,
     limit = 12,
-  ): Promise<{ services: PublicInfo['services']; totalMatches: number; truncated: boolean }> {
+  ): Promise<{ services: PublicInfo['services']; totalMatches: number; truncated: boolean; hidden: boolean }> {
     const flags = await this.getKnowledgeFlags(tenantId);
-    if (!this.catOn(flags, 'service_prices')) return { services: [], totalMatches: 0, truncated: false };
+    if (!this.catOn(flags, 'service_prices')) return { services: [], totalMatches: 0, truncated: false, hidden: true };
 
     const params: unknown[] = [tenantId];
     // The tenant predicate stays in the SQL LITERAL below rather than joining
@@ -393,6 +415,32 @@ export class CustomerContextService {
       .map((w) => w.trim())
       .filter((w) => w.length >= 2)
       .slice(0, 6);
+    const cap = Math.max(1, Math.min(limit, 40));
+    const first = await this.queryServices(where, params, terms, cap);
+    if (first.totalMatches > 0) return first;
+
+    // Requiring every word is right for "digital multimeter", but the model pads
+    // queries with request words and the business's own generic noun: live
+    // 2026-09-30 it searched "multimeter kalibrasi", and since no multimeter
+    // row's name says "kalibrasi" the search matched nothing — four priced
+    // multimeters, and the customer got "kurang nangkep". So retry once without
+    // those words, still requiring EVERY remaining one. Deliberately not "match
+    // any word": that returned Rp 8.500.000 gas-analyser rows for "harga
+    // kalibrasi timbangan", because "kalibrasi" was the only word that hit.
+    const meaningful = terms.filter((t) => !GENERIC_SEARCH_WORDS.has(t));
+    if (meaningful.length === terms.length) return first;
+    return this.queryServices(where, params, meaningful, cap);
+  }
+
+  /** Every-word price search; `baseParams[0]` is the tenant id bound to `tenant_id = $1`. */
+  private async queryServices(
+    baseWhere: string[],
+    baseParams: unknown[],
+    terms: string[],
+    cap: number,
+  ): Promise<{ services: PublicInfo['services']; totalMatches: number; truncated: boolean; hidden: boolean }> {
+    const params = [...baseParams];
+    const where = [...baseWhere];
     for (const term of terms) {
       params.push(`%${term}%`);
       const i = params.length;
@@ -404,7 +452,7 @@ export class CustomerContextService {
          FROM services
         WHERE tenant_id = $1 AND ${where.join(' AND ')}
         ORDER BY business_unit, sort_order, name
-        LIMIT ${Math.max(1, Math.min(limit, 40))}`,
+        LIMIT ${cap}`,
       params,
     );
 
@@ -416,6 +464,7 @@ export class CustomerContextService {
       })),
       totalMatches: total,
       truncated: total > rows.rows.length,
+      hidden: false,
     };
   }
 
@@ -462,6 +511,7 @@ export class CustomerContextService {
         durationMonths: x.duration_months,
       })),
       promotions: promotions.rows.map((x: any) => x.name),
+      pricesHidden: !this.catOn(flags, 'service_prices'),
     };
   }
 }
